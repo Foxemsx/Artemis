@@ -153,8 +153,8 @@ export default function ThemeSetup({ onComplete }: Props) {
                   <Zap size={18} style={{ color: '#d4a853' }} />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold" style={{ color: '#f0f0f0' }}>Free Models</p>
-                  <p className="text-[11px]" style={{ color: '#666' }}>Start without billing</p>
+                  <p className="text-sm font-semibold" style={{ color: '#f0f0f0' }}>AI Providers</p>
+                  <p className="text-[11px]" style={{ color: '#666' }}>Providers may offer free tiers</p>
                 </div>
               </div>
             </motion.div>
@@ -162,7 +162,19 @@ export default function ThemeSetup({ onComplete }: Props) {
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.8 }}
+              transition={{ delay: 0.7 }}
+              className="max-w-md mx-auto mb-6"
+            >
+              <p className="text-sm px-6 py-3 rounded-xl" style={{ color: '#888', backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                <strong style={{ color: '#f0f0f0' }}>Artemis is free & open source.</strong>{' '}
+                We do not provide AI models. Providers like OpenCode may offer free models—check their pricing before you start.
+              </p>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.85 }}
               className="flex flex-col items-center gap-3"
             >
               <motion.button
@@ -410,7 +422,7 @@ export default function ThemeSetup({ onComplete }: Props) {
               className="text-sm mb-8 leading-relaxed"
               style={{ color: '#a0a0a0' }}
             >
-              Enter an API key to power Artemis. Get one from{' '}
+              Enter your OpenCode Zen API key to power Artemis. Get one from{' '}
               <a
                 href="https://opencode.ai"
                 target="_blank"
@@ -420,8 +432,7 @@ export default function ThemeSetup({ onComplete }: Props) {
               >
                 OpenCode Zen
                 <ExternalLink size={12} />
-              </a>
-              {' '}(recommended), or use your own from Anthropic, OpenAI, or other providers.
+              </a>.
             </motion.p>
 
             <motion.div
@@ -480,7 +491,7 @@ export default function ThemeSetup({ onComplete }: Props) {
                 <div>
                   <p className="text-sm font-medium mb-1" style={{ color: '#f0f0f0' }}>Free models available</p>
                   <p className="text-xs leading-relaxed" style={{ color: '#888' }}>
-                    OpenCode Zen offers free models like GPT 5 Nano and Big Pickle - no billing required to get started.
+                    OpenCode Zen offers free models most of the time (like GPT 5 Nano and Big Pickle) — check their current pricing before you start.
                   </p>
                 </div>
               </div>
