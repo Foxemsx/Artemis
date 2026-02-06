@@ -1,0 +1,40 @@
+{
+  "name": "artemis",
+  "version": "0.1.0",
+  "description": "Artemis — AI-powered development environment for OpenCode sessions",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "postinstall": "npx @electron/rebuild -f -w node-pty || echo node-pty rebuild skipped"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@opencode-ai/sdk": "^1.1.53",
+    "@xterm/addon-fit": "^0.9.0",
+    "@xterm/addon-web-links": "^0.10.0",
+    "@xterm/xterm": "^5.4.0",
+    "framer-motion": "^10.18.0",
+    "lucide-react": "^0.312.0",
+    "node-pty": "^1.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-markdown": "^10.1.0",
+    "react-resizable-panels": "^4.6.2",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.17",
+    "electron": "^28.1.0",
+    "postcss": "^8.4.33",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.11",
+    "vite-plugin-electron": "^0.28.0"
+  }
+}
