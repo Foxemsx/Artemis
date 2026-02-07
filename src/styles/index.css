@@ -86,6 +86,240 @@
   color-scheme: light;
 }
 
+/* ─── Cyberpunk Theme ──────────────────────────────────────────────────── */
+[data-theme="cyberpunk"] {
+  --bg-primary: #0b0014;
+  --bg-secondary: #130020;
+  --bg-card: #1a0030;
+  --bg-elevated: #24003e;
+  --bg-hover: #2e0050;
+
+  --text-primary: #e0d0ff;
+  --text-secondary: #a080d0;
+  --text-muted: #604090;
+
+  --accent: #ff2ecb;
+  --accent-rgb: 255, 46, 203;
+  --accent-secondary: #00f0ff;
+  --accent-secondary-rgb: 0, 240, 255;
+  --accent-glow: rgba(255, 46, 203, 0.12);
+
+  --border-subtle: rgba(255, 46, 203, 0.08);
+  --border-default: rgba(255, 46, 203, 0.15);
+
+  --glass-bg: rgba(11, 0, 20, 0.88);
+  --glass-border: rgba(255, 46, 203, 0.10);
+
+  --shadow-card: 0 4px 24px rgba(255, 46, 203, 0.15);
+  --shadow-elevated: 0 8px 40px rgba(255, 46, 203, 0.20);
+
+  --titlebar-bg: #080010;
+  --sidebar-bg: #0a0018;
+  --activity-bg: #0a0018;
+  --statusbar-bg: #080010;
+
+  --success: #00ff88;
+  --warning: #ffaa00;
+  --error: #ff2255;
+
+  color-scheme: dark;
+}
+
+/* ─── Nord Theme ───────────────────────────────────────────────────────── */
+[data-theme="nord"] {
+  --bg-primary: #2e3440;
+  --bg-secondary: #3b4252;
+  --bg-card: #434c5e;
+  --bg-elevated: #4c566a;
+  --bg-hover: #525d73;
+
+  --text-primary: #eceff4;
+  --text-secondary: #d8dee9;
+  --text-muted: #7b88a1;
+
+  --accent: #88c0d0;
+  --accent-rgb: 136, 192, 208;
+  --accent-secondary: #81a1c1;
+  --accent-secondary-rgb: 129, 161, 193;
+  --accent-glow: rgba(136, 192, 208, 0.10);
+
+  --border-subtle: rgba(236, 239, 244, 0.06);
+  --border-default: rgba(236, 239, 244, 0.10);
+
+  --glass-bg: rgba(46, 52, 64, 0.88);
+  --glass-border: rgba(136, 192, 208, 0.08);
+
+  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.25);
+  --shadow-elevated: 0 8px 40px rgba(0, 0, 0, 0.35);
+
+  --titlebar-bg: #272c36;
+  --sidebar-bg: #2a303c;
+  --activity-bg: #2a303c;
+  --statusbar-bg: #272c36;
+
+  --success: #a3be8c;
+  --warning: #ebcb8b;
+  --error: #bf616a;
+
+  color-scheme: dark;
+}
+
+/* ─── Monokai Theme ────────────────────────────────────────────────────── */
+[data-theme="monokai"] {
+  --bg-primary: #272822;
+  --bg-secondary: #2d2e27;
+  --bg-card: #35362f;
+  --bg-elevated: #3e3d37;
+  --bg-hover: #464540;
+
+  --text-primary: #f8f8f2;
+  --text-secondary: #c8c8b8;
+  --text-muted: #75715e;
+
+  --accent: #f92672;
+  --accent-rgb: 249, 38, 114;
+  --accent-secondary: #a6e22e;
+  --accent-secondary-rgb: 166, 226, 46;
+  --accent-glow: rgba(249, 38, 114, 0.10);
+
+  --border-subtle: rgba(248, 248, 242, 0.06);
+  --border-default: rgba(248, 248, 242, 0.10);
+
+  --glass-bg: rgba(39, 40, 34, 0.88);
+  --glass-border: rgba(249, 38, 114, 0.08);
+
+  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.30);
+  --shadow-elevated: 0 8px 40px rgba(0, 0, 0, 0.45);
+
+  --titlebar-bg: #1e1f1a;
+  --sidebar-bg: #22231e;
+  --activity-bg: #22231e;
+  --statusbar-bg: #1e1f1a;
+
+  --success: #a6e22e;
+  --warning: #e6db74;
+  --error: #f92672;
+
+  color-scheme: dark;
+}
+
+/* ─── Solarized Dark Theme ─────────────────────────────────────────────── */
+[data-theme="solarized"] {
+  --bg-primary: #002b36;
+  --bg-secondary: #073642;
+  --bg-card: #0a3d49;
+  --bg-elevated: #0e4652;
+  --bg-hover: #124f5b;
+
+  --text-primary: #fdf6e3;
+  --text-secondary: #93a1a1;
+  --text-muted: #586e75;
+
+  --accent: #b58900;
+  --accent-rgb: 181, 137, 0;
+  --accent-secondary: #268bd2;
+  --accent-secondary-rgb: 38, 139, 210;
+  --accent-glow: rgba(181, 137, 0, 0.12);
+
+  --border-subtle: rgba(253, 246, 227, 0.06);
+  --border-default: rgba(253, 246, 227, 0.10);
+
+  --glass-bg: rgba(0, 43, 54, 0.88);
+  --glass-border: rgba(181, 137, 0, 0.08);
+
+  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.30);
+  --shadow-elevated: 0 8px 40px rgba(0, 0, 0, 0.45);
+
+  --titlebar-bg: #001f28;
+  --sidebar-bg: #00232d;
+  --activity-bg: #00232d;
+  --statusbar-bg: #001f28;
+
+  --success: #859900;
+  --warning: #cb4b16;
+  --error: #dc322f;
+
+  color-scheme: dark;
+}
+
+/* ─── Dracula Theme ────────────────────────────────────────────────────── */
+[data-theme="dracula"] {
+  --bg-primary: #282a36;
+  --bg-secondary: #2e303e;
+  --bg-card: #343746;
+  --bg-elevated: #3c3f52;
+  --bg-hover: #44475a;
+
+  --text-primary: #f8f8f2;
+  --text-secondary: #c0c0d0;
+  --text-muted: #6272a4;
+
+  --accent: #bd93f9;
+  --accent-rgb: 189, 147, 249;
+  --accent-secondary: #ff79c6;
+  --accent-secondary-rgb: 255, 121, 198;
+  --accent-glow: rgba(189, 147, 249, 0.12);
+
+  --border-subtle: rgba(248, 248, 242, 0.06);
+  --border-default: rgba(248, 248, 242, 0.10);
+
+  --glass-bg: rgba(40, 42, 54, 0.88);
+  --glass-border: rgba(189, 147, 249, 0.08);
+
+  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.30);
+  --shadow-elevated: 0 8px 40px rgba(0, 0, 0, 0.45);
+
+  --titlebar-bg: #1e1f29;
+  --sidebar-bg: #21222c;
+  --activity-bg: #21222c;
+  --statusbar-bg: #1e1f29;
+
+  --success: #50fa7b;
+  --warning: #f1fa8c;
+  --error: #ff5555;
+
+  color-scheme: dark;
+}
+
+/* ─── Rose Pine Theme ──────────────────────────────────────────────────── */
+[data-theme="rosepine"] {
+  --bg-primary: #191724;
+  --bg-secondary: #1f1d2e;
+  --bg-card: #26233a;
+  --bg-elevated: #2e2b42;
+  --bg-hover: #36334a;
+
+  --text-primary: #e0def4;
+  --text-secondary: #908caa;
+  --text-muted: #6e6a86;
+
+  --accent: #ebbcba;
+  --accent-rgb: 235, 188, 186;
+  --accent-secondary: #c4a7e7;
+  --accent-secondary-rgb: 196, 167, 231;
+  --accent-glow: rgba(235, 188, 186, 0.10);
+
+  --border-subtle: rgba(224, 222, 244, 0.06);
+  --border-default: rgba(224, 222, 244, 0.10);
+
+  --glass-bg: rgba(25, 23, 36, 0.88);
+  --glass-border: rgba(235, 188, 186, 0.08);
+
+  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.35);
+  --shadow-elevated: 0 8px 40px rgba(0, 0, 0, 0.50);
+
+  --titlebar-bg: #14121f;
+  --sidebar-bg: #16141f;
+  --activity-bg: #16141f;
+  --statusbar-bg: #14121f;
+
+  --success: #9ccfd8;
+  --warning: #f6c177;
+  --error: #eb6f92;
+
+  color-scheme: dark;
+}
+
 /* ─── Base Reset ────────────────────────────────────────────────────────── */
 * {
   margin: 0;
@@ -250,6 +484,13 @@ html, body, #root {
   border-radius: 4px;
 }
 
+/* Suppress focus ring on chat input elements (handled via border/shadow) */
+.chat-input-box:focus-visible,
+.chat-input-box *:focus-visible,
+.chat-input-box textarea:focus-visible {
+  outline: none;
+}
+
 /* ─── Subtle Noise Overlay (Premium Texture) ────────────────────────────── */
 .noise-overlay::after {
   content: '';
@@ -356,6 +597,15 @@ html, body, #root {
   font-weight: 600;
 }
 
+/* ─── No Scrollbar Utility ──────────────────────────────────────────────── */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
 /* ─── Reduced Motion ────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -363,4 +613,11 @@ html, body, #root {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ─── Minimum Window Size Support ───────────────────────────────────────── */
+/* Ensure app is usable at small sizes */
+#root {
+  min-width: 600px;
+  min-height: 400px;
 }

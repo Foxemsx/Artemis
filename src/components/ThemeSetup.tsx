@@ -1,15 +1,31 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Sun, Moon, ArrowRight, Key, Shield, SkipForward, ExternalLink, Zap, Code2, Users, Sparkles } from 'lucide-react'
+import { ArrowRight, Key, Shield, SkipForward, ExternalLink, Zap, Code2, Users, Sparkles, Server, Check } from 'lucide-react'
+import type { Theme } from '../types'
+
+type Provider = 'zen' | 'zai'
 
 interface Props {
-  onComplete: (theme: string, apiKey?: string) => void
+  onComplete: (theme: string, apiKeys?: { provider: Provider; key: string }[]) => void
 }
 
+const SETUP_THEMES: { id: Theme; name: string; accent: string; bg: string; card: string; text: string }[] = [
+  { id: 'dark', name: 'Midnight', accent: '#d4a853', bg: '#0a0a0a', card: '#1a1a1a', text: '#f0f0f0' },
+  { id: 'light', name: 'Daylight', accent: '#b8860b', bg: '#fafafa', card: '#ffffff', text: '#1a1a1a' },
+  { id: 'cyberpunk', name: 'Cyberpunk', accent: '#ff2ecb', bg: '#0b0014', card: '#1a0030', text: '#e0d0ff' },
+  { id: 'nord', name: 'Nord', accent: '#88c0d0', bg: '#2e3440', card: '#434c5e', text: '#eceff4' },
+  { id: 'monokai', name: 'Monokai', accent: '#f92672', bg: '#272822', card: '#35362f', text: '#f8f8f2' },
+  { id: 'solarized', name: 'Solarized', accent: '#b58900', bg: '#002b36', card: '#0a3d49', text: '#fdf6e3' },
+  { id: 'dracula', name: 'Dracula', accent: '#bd93f9', bg: '#282a36', card: '#343746', text: '#f8f8f2' },
+  { id: 'rosepine', name: 'Rose Pine', accent: '#ebbcba', bg: '#191724', card: '#26233a', text: '#e0def4' },
+]
+
 export default function ThemeSetup({ onComplete }: Props) {
-  const [selected, setSelected] = useState<'dark' | 'light' | null>(null)
+  const [selected, setSelected] = useState<Theme | null>(null)
   const [step, setStep] = useState<'welcome' | 'theme' | 'apikey'>('welcome')
-  const [apiKey, setApiKey] = useState('')
+  const [selectedProvider, setSelectedProvider] = useState<Provider>('zen')
+  const [zenApiKey, setZenApiKey] = useState('')
+  const [zaiApiKey, setZaiApiKey] = useState('')
 
   return (
     <div
@@ -84,7 +100,7 @@ export default function ThemeSetup({ onComplete }: Props) {
               className="text-lg mb-6"
               style={{ color: '#a0a0a0' }}
             >
-              An open-source AI agent for developers, inspired by{' '}
+              An open-source AI agent for developers powered by{' '}
               <a
                 href="https://opencode.ai"
                 target="_blank"
@@ -94,7 +110,20 @@ export default function ThemeSetup({ onComplete }: Props) {
                 onMouseEnter={(e) => e.currentTarget.style.textDecoration = 'underline'}
                 onMouseLeave={(e) => e.currentTarget.style.textDecoration = 'none'}
               >
-                OpenCode
+                OpenCode Zen
+                <ExternalLink size={14} />
+              </a>{' '}
+              and{' '}
+              <a
+                href="https://z.ai"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 transition-colors"
+                style={{ color: '#d4a853' }}
+                onMouseEnter={(e) => e.currentTarget.style.textDecoration = 'underline'}
+                onMouseLeave={(e) => e.currentTarget.style.textDecoration = 'none'}
+              >
+                Z.AI
                 <ExternalLink size={14} />
               </a>
             </motion.p>
@@ -153,13 +182,13 @@ export default function ThemeSetup({ onComplete }: Props) {
                   <Zap size={18} style={{ color: '#d4a853' }} />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold" style={{ color: '#f0f0f0' }}>AI Providers</p>
-                  <p className="text-[11px]" style={{ color: '#666' }}>Providers may offer free tiers</p>
+                  <p className="text-sm font-semibold" style={{ color: '#f0f0f0' }}>Multiple Providers</p>
+                  <p className="text-[11px]" style={{ color: '#666' }}>OpenCode Zen + Z.AI GLM</p>
                 </div>
               </div>
             </motion.div>
 
-            <motion.div
+             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.7 }}
@@ -167,7 +196,7 @@ export default function ThemeSetup({ onComplete }: Props) {
             >
               <p className="text-sm px-6 py-3 rounded-xl" style={{ color: '#888', backgroundColor: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
                 <strong style={{ color: '#f0f0f0' }}>Artemis is free & open source.</strong>{' '}
-                We do not provide AI models. Providers like OpenCode may offer free models—check their pricing before you start.
+                We support multiple AI providers. Both OpenCode Zen and Z.AI offer free models—check their pricing before you start.
               </p>
             </motion.div>
 
@@ -238,118 +267,51 @@ export default function ThemeSetup({ onComplete }: Props) {
               Select your preferred appearance. You can always change this later in settings.
             </motion.p>
 
-            <div className="grid grid-cols-2 gap-6 mb-10 max-w-xl mx-auto">
-              {/* Dark */}
-              <motion.button
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.4 }}
-                whileHover={{ y: -4 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setSelected('dark')}
-                className="rounded-2xl p-[2px] text-left transition-all duration-200"
-                style={{
-                  background: selected === 'dark' 
-                    ? 'linear-gradient(135deg, #d4a853, #e8c97a)' 
-                    : 'rgba(255,255,255,0.08)',
-                  boxShadow: selected === 'dark' ? '0 0 40px rgba(212, 168, 83, 0.2)' : 'none',
-                }}
-              >
-                <div className="rounded-[14px] p-5" style={{ background: '#141414' }}>
-                  {/* Preview window */}
-                  <div 
-                    className="rounded-lg overflow-hidden mb-4" 
-                    style={{ 
-                      background: '#0a0a0a', 
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      boxShadow: '0 4px 20px rgba(0,0,0,0.3)'
+            <div className="grid grid-cols-4 gap-4 mb-10 max-w-2xl mx-auto">
+              {SETUP_THEMES.map((t, i) => {
+                const isActive = selected === t.id
+                return (
+                  <motion.button
+                    key={t.id}
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.35 + i * 0.05 }}
+                    whileHover={{ y: -3, scale: 1.03 }}
+                    whileTap={{ scale: 0.97 }}
+                    onClick={() => setSelected(t.id)}
+                    className="rounded-xl p-[2px] text-left transition-all duration-200"
+                    style={{
+                      background: isActive
+                        ? `linear-gradient(135deg, ${t.accent}, ${t.accent}88)`
+                        : 'rgba(255,255,255,0.08)',
+                      boxShadow: isActive ? `0 0 30px ${t.accent}33` : 'none',
                     }}
                   >
-                    <div className="h-6 flex items-center px-3 gap-1.5" style={{ background: '#080808', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                      <div className="w-2 h-2 rounded-full" style={{ background: '#c0392b' }} />
-                      <div className="w-2 h-2 rounded-full" style={{ background: '#d4a853' }} />
-                      <div className="w-2 h-2 rounded-full" style={{ background: '#4ade80' }} />
-                    </div>
-                    <div className="h-24 p-3 flex gap-3">
-                      <div className="w-16 shrink-0" style={{ background: 'rgba(255,255,255,0.03)', borderRadius: 6 }} />
-                      <div className="flex-1 space-y-2">
-                        <div className="w-full h-2 rounded" style={{ background: 'rgba(255,255,255,0.08)' }} />
-                        <div className="w-4/5 h-2 rounded" style={{ background: 'rgba(255,255,255,0.05)' }} />
-                        <div className="w-3/5 h-2 rounded" style={{ background: 'rgba(255,255,255,0.03)' }} />
+                    <div className="rounded-[10px] overflow-hidden" style={{ background: '#141414' }}>
+                      {/* Mini preview */}
+                      <div className="h-14 relative" style={{ backgroundColor: t.bg }}>
+                        <div className="absolute top-2 left-2 space-y-1">
+                          <div className="h-1 w-8 rounded-full" style={{ backgroundColor: t.text, opacity: 0.4 }} />
+                          <div className="h-1 w-5 rounded-full" style={{ backgroundColor: t.text, opacity: 0.2 }} />
+                        </div>
+                        <div className="absolute bottom-1.5 inset-x-2 h-4 rounded-sm" style={{ backgroundColor: t.card }}>
+                          <div className="h-1 w-1/2 mt-1.5 ml-1.5 rounded-full" style={{ backgroundColor: t.accent, opacity: 0.5 }} />
+                        </div>
+                        <div className="absolute top-2 right-2 w-2.5 h-2.5 rounded-full" style={{ backgroundColor: t.accent }} />
+                        {isActive && (
+                          <div className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ backgroundColor: t.accent }}>
+                            <Check size={9} strokeWidth={3} style={{ color: '#000' }} />
+                          </div>
+                        )}
+                      </div>
+                      {/* Label */}
+                      <div className="px-2.5 py-2">
+                        <p className="text-[11px] font-semibold" style={{ color: '#f0f0f0' }}>{t.name}</p>
                       </div>
                     </div>
-                  </div>
-                  
-                  <div className="flex items-center gap-3">
-                    <div 
-                      className="w-10 h-10 rounded-lg flex items-center justify-center"
-                      style={{ background: selected === 'dark' ? 'rgba(212, 168, 83, 0.15)' : 'rgba(255,255,255,0.05)' }}
-                    >
-                      <Moon size={18} style={{ color: selected === 'dark' ? '#d4a853' : '#666' }} />
-                    </div>
-                    <div>
-                      <p className="text-base font-bold" style={{ color: '#f0f0f0' }}>Dark Mode</p>
-                      <p className="text-xs" style={{ color: '#888' }}>Easy on the eyes, perfect for coding</p>
-                    </div>
-                  </div>
-                </div>
-              </motion.button>
-
-              {/* Light */}
-              <motion.button
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.4 }}
-                whileHover={{ y: -4 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setSelected('light')}
-                className="rounded-2xl p-[2px] text-left transition-all duration-200"
-                style={{
-                  background: selected === 'light' 
-                    ? 'linear-gradient(135deg, #d4a853, #e8c97a)' 
-                    : 'rgba(255,255,255,0.08)',
-                  boxShadow: selected === 'light' ? '0 0 40px rgba(212, 168, 83, 0.2)' : 'none',
-                }}
-              >
-                <div className="rounded-[14px] p-5" style={{ background: '#141414' }}>
-                  {/* Preview window */}
-                  <div 
-                    className="rounded-lg overflow-hidden mb-4" 
-                    style={{ 
-                      background: '#fafafa', 
-                      border: '1px solid rgba(0,0,0,0.08)',
-                      boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
-                    }}
-                  >
-                    <div className="h-6 flex items-center px-3 gap-1.5" style={{ background: '#eeeeee', borderBottom: '1px solid rgba(0,0,0,0.05)' }}>
-                      <div className="w-2 h-2 rounded-full" style={{ background: '#c0392b' }} />
-                      <div className="w-2 h-2 rounded-full" style={{ background: '#d4a853' }} />
-                      <div className="w-2 h-2 rounded-full" style={{ background: '#4ade80' }} />
-                    </div>
-                    <div className="h-24 p-3 flex gap-3" style={{ background: '#ffffff' }}>
-                      <div className="w-16 shrink-0" style={{ background: 'rgba(0,0,0,0.03)', borderRadius: 6 }} />
-                      <div className="flex-1 space-y-2">
-                        <div className="w-full h-2 rounded" style={{ background: 'rgba(0,0,0,0.08)' }} />
-                        <div className="w-4/5 h-2 rounded" style={{ background: 'rgba(0,0,0,0.05)' }} />
-                        <div className="w-3/5 h-2 rounded" style={{ background: 'rgba(0,0,0,0.03)' }} />
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center gap-3">
-                    <div 
-                      className="w-10 h-10 rounded-lg flex items-center justify-center"
-                      style={{ background: selected === 'light' ? 'rgba(212, 168, 83, 0.15)' : 'rgba(255,255,255,0.05)' }}
-                    >
-                      <Sun size={18} style={{ color: selected === 'light' ? '#d4a853' : '#666' }} />
-                    </div>
-                    <div>
-                      <p className="text-base font-bold" style={{ color: '#f0f0f0' }}>Light Mode</p>
-                      <p className="text-xs" style={{ color: '#888' }}>Clean and bright workspace</p>
-                    </div>
-                  </div>
-                </div>
-              </motion.button>
+                  </motion.button>
+                )
+              })}
             </div>
 
             <AnimatePresence>
@@ -415,52 +377,134 @@ export default function ThemeSetup({ onComplete }: Props) {
               Connect your AI
             </motion.h2>
 
-            <motion.p
+             <motion.p
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.3 }}
-              className="text-sm mb-8 leading-relaxed"
+              className="text-sm mb-6 leading-relaxed"
               style={{ color: '#a0a0a0' }}
             >
-              Enter your OpenCode Zen API key to power Artemis. Get one from{' '}
-              <a
-                href="https://opencode.ai"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1"
-                style={{ color: '#d4a853' }}
-              >
-                OpenCode Zen
-                <ExternalLink size={12} />
-              </a>.
+              Choose your AI provider and enter your API key. Both OpenCode Zen and Z.AI are supported.
             </motion.p>
 
+            {/* Provider Selection */}
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
+              className="grid grid-cols-2 gap-3 mb-6"
+            >
+              <button
+                onClick={() => setSelectedProvider('zen')}
+                className="flex items-center gap-3 p-4 rounded-xl text-left transition-all duration-200"
+                style={{
+                  backgroundColor: selectedProvider === 'zen' ? 'rgba(212, 168, 83, 0.15)' : '#141414',
+                  border: `2px solid ${selectedProvider === 'zen' ? '#d4a853' : 'rgba(255,255,255,0.1)'}`,
+                }}
+              >
+                <div 
+                  className="w-10 h-10 rounded-lg flex items-center justify-center"
+                  style={{ 
+                    backgroundColor: selectedProvider === 'zen' ? 'rgba(212, 168, 83, 0.2)' : 'rgba(255,255,255,0.05)',
+                  }}
+                >
+                  <Server size={20} style={{ color: selectedProvider === 'zen' ? '#d4a853' : '#666' }} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold" style={{ color: '#f0f0f0' }}>OpenCode Zen</p>
+                  <p className="text-[11px]" style={{ color: '#888' }}>Multiple AI models</p>
+                </div>
+              </button>
+
+              <button
+                onClick={() => setSelectedProvider('zai')}
+                className="flex items-center gap-3 p-4 rounded-xl text-left transition-all duration-200"
+                style={{
+                  backgroundColor: selectedProvider === 'zai' ? 'rgba(212, 168, 83, 0.15)' : '#141414',
+                  border: `2px solid ${selectedProvider === 'zai' ? '#d4a853' : 'rgba(255,255,255,0.1)'}`,
+                }}
+              >
+                <div 
+                  className="w-10 h-10 rounded-lg flex items-center justify-center"
+                  style={{ 
+                    backgroundColor: selectedProvider === 'zai' ? 'rgba(212, 168, 83, 0.2)' : 'rgba(255,255,255,0.05)',
+                  }}
+                >
+                  <Sparkles size={20} style={{ color: selectedProvider === 'zai' ? '#d4a853' : '#666' }} />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold" style={{ color: '#f0f0f0' }}>Z.AI</p>
+                  <p className="text-[11px]" style={{ color: '#888' }}>GLM models</p>
+                </div>
+              </button>
+            </motion.div>
+
+            {/* API Key Input */}
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.5 }}
               className="mb-6"
             >
-              <input
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="zen-... or sk-..."
-                className="w-full px-5 py-4 rounded-xl text-base outline-none transition-all duration-150"
-                style={{
-                  backgroundColor: '#141414',
-                  color: '#f0f0f0',
-                  border: '2px solid rgba(255,255,255,0.1)',
-                }}
-                onFocus={(e) => {
-                  e.currentTarget.style.borderColor = '#d4a853'
-                  e.currentTarget.style.boxShadow = '0 0 0 4px rgba(212, 168, 83, 0.1)'
-                }}
-                onBlur={(e) => {
-                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
-                  e.currentTarget.style.boxShadow = 'none'
-                }}
-              />
+              {selectedProvider === 'zen' ? (
+                <>
+                  <input
+                    type="password"
+                    value={zenApiKey}
+                    onChange={(e) => setZenApiKey(e.target.value)}
+                    placeholder="zen-... or sk-..."
+                    className="w-full px-5 py-4 rounded-xl text-base outline-none transition-all duration-150"
+                    style={{
+                      backgroundColor: '#141414',
+                      color: '#f0f0f0',
+                      border: '2px solid rgba(255,255,255,0.1)',
+                    }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = '#d4a853'
+                      e.currentTarget.style.boxShadow = '0 0 0 4px rgba(212, 168, 83, 0.1)'
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
+                      e.currentTarget.style.boxShadow = 'none'
+                    }}
+                  />
+                  <p className="text-[11px] mt-2 text-center" style={{ color: '#666' }}>
+                    Get your key from{' '}
+                    <a href="https://opencode.ai" target="_blank" rel="noopener noreferrer" style={{ color: '#d4a853' }}>
+                      opencode.ai
+                    </a>
+                  </p>
+                </>
+              ) : (
+                <>
+                  <input
+                    type="password"
+                    value={zaiApiKey}
+                    onChange={(e) => setZaiApiKey(e.target.value)}
+                    placeholder="zai-..."
+                    className="w-full px-5 py-4 rounded-xl text-base outline-none transition-all duration-150"
+                    style={{
+                      backgroundColor: '#141414',
+                      color: '#f0f0f0',
+                      border: '2px solid rgba(255,255,255,0.1)',
+                    }}
+                    onFocus={(e) => {
+                      e.currentTarget.style.borderColor = '#d4a853'
+                      e.currentTarget.style.boxShadow = '0 0 0 4px rgba(212, 168, 83, 0.1)'
+                    }}
+                    onBlur={(e) => {
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)'
+                      e.currentTarget.style.boxShadow = 'none'
+                    }}
+                  />
+                  <p className="text-[11px] mt-2 text-center" style={{ color: '#666' }}>
+                    Get your key from{' '}
+                    <a href="https://z.ai/manage-apikey/apikey-list" target="_blank" rel="noopener noreferrer" style={{ color: '#d4a853' }}>
+                      z.ai
+                    </a>
+                  </p>
+                </>
+              )}
             </motion.div>
 
             {/* Security & info notice */}
@@ -483,7 +527,7 @@ export default function ThemeSetup({ onComplete }: Props) {
                 </div>
               </div>
 
-              <div
+               <div
                 className="flex items-start gap-3 text-left p-4 rounded-xl"
                 style={{ backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
               >
@@ -491,7 +535,7 @@ export default function ThemeSetup({ onComplete }: Props) {
                 <div>
                   <p className="text-sm font-medium mb-1" style={{ color: '#f0f0f0' }}>Free models available</p>
                   <p className="text-xs leading-relaxed" style={{ color: '#888' }}>
-                    OpenCode Zen offers free models most of the time (like GPT 5 Nano and Big Pickle) — check their current pricing before you start.
+                    Both providers offer free models — OpenCode Zen (GPT 5 Nano, Big Pickle) and Z.AI (GLM 4.7 Free). Check current pricing before you start.
                   </p>
                 </div>
               </div>
@@ -504,7 +548,7 @@ export default function ThemeSetup({ onComplete }: Props) {
               className="flex items-center gap-4 justify-center"
             >
               <button
-                onClick={() => onComplete(selected || 'dark')}
+                onClick={() => onComplete(selected || 'dark', undefined)}
                 className="px-6 py-3 rounded-xl text-sm font-medium flex items-center gap-2 transition-all duration-150"
                 style={{
                   backgroundColor: 'transparent',
@@ -524,14 +568,19 @@ export default function ThemeSetup({ onComplete }: Props) {
                 Skip for now
               </button>
 
-              <button
-                onClick={() => onComplete(selected || 'dark', apiKey || undefined)}
-                disabled={!apiKey.trim()}
+               <button
+                onClick={() => {
+                  const apiKeys: { provider: Provider; key: string }[] = []
+                  if (zenApiKey.trim()) apiKeys.push({ provider: 'zen', key: zenApiKey.trim() })
+                  if (zaiApiKey.trim()) apiKeys.push({ provider: 'zai', key: zaiApiKey.trim() })
+                  onComplete(selected || 'dark', apiKeys.length > 0 ? apiKeys : undefined)
+                }}
+                disabled={!zenApiKey.trim() && !zaiApiKey.trim()}
                 className="px-8 py-3 rounded-xl text-base font-bold flex items-center gap-2 transition-all duration-150"
                 style={{
-                  backgroundColor: apiKey.trim() ? '#d4a853' : '#1a1a1a',
-                  color: apiKey.trim() ? '#000' : '#555',
-                  boxShadow: apiKey.trim() ? '0 8px 30px rgba(212, 168, 83, 0.3)' : 'none',
+                  backgroundColor: (zenApiKey.trim() || zaiApiKey.trim()) ? '#d4a853' : '#1a1a1a',
+                  color: (zenApiKey.trim() || zaiApiKey.trim()) ? '#000' : '#555',
+                  boxShadow: (zenApiKey.trim() || zaiApiKey.trim()) ? '0 8px 30px rgba(212, 168, 83, 0.3)' : 'none',
                 }}
               >
                 Finish Setup

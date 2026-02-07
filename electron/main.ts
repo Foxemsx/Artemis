@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { spawn, exec, type ChildProcess } from 'child_process'
+import { registerAgentIPC } from './api'
 
 // node-pty is a native module - import with fallback
 let ptyModule: typeof import('node-pty') | null = null
@@ -46,12 +47,12 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
-    minWidth: 900,
-    minHeight: 650,
+    minWidth: 800,
+    minHeight: 600,
     frame: false,
     backgroundColor: '#0a0a0a',
     title: 'Artemis',
-    icon: undefined,
+    icon: path.join(__dirname, '../resources/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -172,6 +173,129 @@ ipcMain.handle('fs:stat', async (_e, filePath: string) => {
   }
 })
 
+// ─── IPC: Create Directory ─────────────────────────────────────────────────
+ipcMain.handle('fs:createDir', async (_e, dirPath: string) => {
+  try {
+    await fs.promises.mkdir(dirPath, { recursive: true })
+  } catch (err: any) {
+    console.error('fs:createDir error:', err.message)
+    throw err
+  }
+})
+
+// ─── IPC: Delete File/Directory ──────────────────────────────────────────
+ipcMain.handle('fs:delete', async (_e, targetPath: string) => {
+  try {
+    const stat = await fs.promises.stat(targetPath)
+    if (stat.isDirectory()) {
+      await fs.promises.rm(targetPath, { recursive: true, force: true })
+    } else {
+      await fs.promises.unlink(targetPath)
+    }
+  } catch (err: any) {
+    console.error('fs:delete error:', err.message)
+    throw err
+  }
+})
+
+// ─── IPC: Tool Execution ──────────────────────────────────────────────────
+ipcMain.handle('tools:runCommand', async (_e, command: string, cwd: string) => {
+  return new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
+    const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh'
+    const shellArgs = process.platform === 'win32' ? ['/c', command] : ['-c', command]
+    
+    const child = spawn(shell, shellArgs, {
+      cwd,
+      env: { ...process.env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    
+    let stdout = ''
+    let stderr = ''
+    
+    child.stdout?.on('data', (data: Buffer) => { stdout += data.toString() })
+    child.stderr?.on('data', (data: Buffer) => { stderr += data.toString() })
+    
+    // Timeout after 60 seconds
+    const timeout = setTimeout(() => {
+      child.kill()
+      resolve({ stdout: stdout.slice(0, 50000), stderr: 'Command timed out after 60 seconds', exitCode: -1 })
+    }, 60000)
+    
+    child.on('close', (code: number | null) => {
+      clearTimeout(timeout)
+      resolve({
+        stdout: stdout.slice(0, 50000),
+        stderr: stderr.slice(0, 10000),
+        exitCode: code ?? -1,
+      })
+    })
+    
+    child.on('error', (err: Error) => {
+      clearTimeout(timeout)
+      resolve({ stdout: '', stderr: err.message, exitCode: -1 })
+    })
+  })
+})
+
+ipcMain.handle('tools:searchFiles', async (_e, pattern: string, dirPath: string) => {
+  const results: { file: string; line: number; text: string }[] = []
+  const maxResults = 50
+  const maxDepth = 8
+  
+  const ignoreDirs = new Set([
+    'node_modules', '.git', 'dist', 'build', '.next', '__pycache__',
+    '.venv', 'venv', '.cache', 'coverage', '.idea', '.vscode',
+  ])
+  
+  async function searchDir(dir: string, depth: number) {
+    if (depth > maxDepth || results.length >= maxResults) return
+    
+    try {
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (results.length >= maxResults) break
+        
+        const fullPath = path.join(dir, entry.name)
+        
+        if (entry.isDirectory()) {
+          if (!ignoreDirs.has(entry.name) && !entry.name.startsWith('.')) {
+            await searchDir(fullPath, depth + 1)
+          }
+        } else if (entry.isFile()) {
+          // Skip binary/large files
+          try {
+            const stat = await fs.promises.stat(fullPath)
+            if (stat.size > 500000) continue // Skip files > 500KB
+          } catch { continue }
+          
+          try {
+            const content = await fs.promises.readFile(fullPath, 'utf-8')
+            const lines = content.split('\n')
+            const regex = new RegExp(pattern, 'gi')
+            
+            for (let i = 0; i < lines.length && results.length < maxResults; i++) {
+              if (regex.test(lines[i])) {
+                results.push({
+                  file: fullPath,
+                  line: i + 1,
+                  text: lines[i].trim().slice(0, 200),
+                })
+              }
+              regex.lastIndex = 0 // Reset regex
+            }
+          } catch {
+            // Skip files that can't be read as text
+          }
+        }
+      }
+    } catch {}
+  }
+  
+  await searchDir(dirPath, 0)
+  return results
+})
+
 // ─── IPC: OpenCode Server Management ───────────────────────────────────────
 ipcMain.handle('opencode:startServer', async (_e, cwd: string, port: number) => {
   // Kill existing server if running
@@ -289,15 +413,6 @@ ipcMain.handle('session:kill', (_e, { id }: { id: string }) => {
   sessions.delete(id)
 })
 
-ipcMain.handle('session:checkOpenCode', async () => {
-  return new Promise<boolean>((resolve) => {
-    const cmd = process.platform === 'win32' ? 'where opencode' : 'which opencode'
-    exec(cmd, (error) => {
-      resolve(!error)
-    })
-  })
-})
-
 // ─── IPC: Zen API Proxy (to bypass CORS) ────────────────────────────────────
 ipcMain.handle('zen:request', async (_e, options: {
   url: string
@@ -342,11 +457,17 @@ ipcMain.handle('zen:streamRequest', async (event, options: {
   body?: string
 }) => {
   try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 60000) // 60 second timeout
+    
     const response = await fetch(options.url, {
       method: options.method,
       headers: options.headers,
       body: options.body,
+      signal: controller.signal,
     })
+    
+    clearTimeout(timeoutId)
 
     if (!response.ok) {
       const errorText = await response.text()
@@ -392,6 +513,14 @@ ipcMain.handle('zen:streamRequest', async (event, options: {
 
     return { ok: true, status: response.status }
   } catch (err: any) {
+    if (err.name === 'AbortError') {
+      mainWindow?.webContents.send(`zen:stream:${options.requestId}`, {
+        type: 'error',
+        data: 'Request timed out. The model may be overloaded or unavailable — try again or switch to a different model.',
+      })
+      return { ok: false, status: 0, error: 'Request timeout' }
+    }
+    
     mainWindow?.webContents.send(`zen:stream:${options.requestId}`, {
       type: 'error',
       data: err.message || 'Network error',
@@ -399,6 +528,12 @@ ipcMain.handle('zen:streamRequest', async (event, options: {
     return { ok: false, status: 0, error: err.message }
   }
 })
+
+// ─── Agent API System ─────────────────────────────────────────────────────
+// Register the new provider-agnostic agent IPC handlers.
+// This wires up: agent:run, agent:abort, agent:getTools, agent:executeTool,
+// agent:httpRequest, agent:httpStream, and agent:activeRuns.
+registerAgentIPC(() => mainWindow)
 
 // ─── App Lifecycle ─────────────────────────────────────────────────────────
 app.whenReady().then(createWindow)

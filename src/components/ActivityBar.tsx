@@ -1,4 +1,4 @@
-import { Files, MessageSquare, Settings } from 'lucide-react'
+import { Files, MessageSquare, Settings, AlertCircle, Search } from 'lucide-react'
 import type { ActivityView } from '../types'
 
 interface Props {
@@ -10,14 +10,16 @@ interface Props {
 
 const ITEMS: { view: ActivityView; icon: typeof Files; label: string }[] = [
   { view: 'files', icon: Files, label: 'Explorer' },
+  { view: 'search', icon: Search, label: 'Search' },
   { view: 'chat', icon: MessageSquare, label: 'Chat' },
+  { view: 'problems', icon: AlertCircle, label: 'Problems' },
   { view: 'settings', icon: Settings, label: 'Settings' },
 ]
 
 export default function ActivityBar({ activeView, onViewChange, isReady, hasApiKey }: Props) {
   return (
     <div
-      className="flex flex-col items-center w-12 shrink-0 py-2 no-select"
+      className="flex flex-col items-center w-[52px] shrink-0 py-2.5 gap-1 no-select"
       style={{
         backgroundColor: 'var(--activity-bg)',
         borderRight: '1px solid var(--border-subtle)',
@@ -30,7 +32,7 @@ export default function ActivityBar({ activeView, onViewChange, isReady, hasApiK
             key={view}
             onClick={() => onViewChange(view)}
             title={label}
-            className="relative w-10 h-10 flex items-center justify-center rounded-lg mb-0.5 transition-colors duration-100"
+            className="relative w-10 h-10 flex items-center justify-center rounded-lg transition-all duration-150"
             style={{
               color: isActive ? 'var(--accent)' : 'var(--text-muted)',
               backgroundColor: isActive ? 'var(--accent-glow)' : 'transparent',
@@ -60,9 +62,11 @@ export default function ActivityBar({ activeView, onViewChange, isReady, hasApiK
             {/* Connection indicator on chat icon */}
             {view === 'chat' && (
               <div
-                className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full"
+                className="absolute top-1 right-1 w-2 h-2 rounded-full"
                 style={{
-                  backgroundColor: hasApiKey && isReady ? 'var(--success)' : hasApiKey ? 'var(--warning)' : 'var(--text-muted)',
+                  backgroundColor: hasApiKey && isReady ? 'var(--success)' : hasApiKey ? 'var(--warning)' : 'transparent',
+                  border: hasApiKey ? 'none' : 'none',
+                  boxShadow: hasApiKey && isReady ? '0 0 6px rgba(74, 222, 128, 0.4)' : 'none',
                 }}
                 title={hasApiKey && isReady ? 'Connected' : hasApiKey ? 'Connecting...' : 'No API key'}
               />
@@ -71,7 +75,6 @@ export default function ActivityBar({ activeView, onViewChange, isReady, hasApiK
         )
       })}
 
-      {/* Spacer pushes nothing — keeps icons at top */}
       <div className="flex-1" />
     </div>
   )

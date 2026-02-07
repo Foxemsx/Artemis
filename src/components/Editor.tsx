@@ -1,22 +1,30 @@
-import { useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import MonacoEditor from '@monaco-editor/react'
-import { X } from 'lucide-react'
+import { X, Clipboard } from 'lucide-react'
 import type { EditorTab, Theme } from '../types'
+import ContextMenu, { type MenuItem } from './ContextMenu'
+import ConfirmDialog from './ConfirmDialog'
 
 interface Props {
   tabs: EditorTab[]
   activeTabPath: string | null
   onSelectTab: (path: string) => void
   onCloseTab: (path: string) => void
+  onCloseOtherTabs?: (path: string) => void
+  onCloseAllTabs?: () => void
+  onCloseTabsToRight?: (path: string) => void
   onSave: (path: string, content: string) => void
   onContentChange: (path: string, content: string) => void
   theme: Theme
 }
 
 export default function Editor({
-  tabs, activeTabPath, onSelectTab, onCloseTab, onSave, onContentChange, theme,
+  tabs, activeTabPath, onSelectTab, onCloseTab, onCloseOtherTabs, onCloseAllTabs, onCloseTabsToRight,
+  onSave, onContentChange, theme,
 }: Props) {
   const activeTab = tabs.find((t) => t.path === activeTabPath) || null
+  const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; path: string } | null>(null)
+  const [confirmClose, setConfirmClose] = useState<{ path: string; action: 'close' | 'closeOthers' | 'closeAll' | 'closeRight' } | null>(null)
 
   const handleEditorChange = useCallback((value: string | undefined) => {
     if (activeTab && value !== undefined) {
@@ -32,6 +40,54 @@ export default function Editor({
       }
     }
   }, [activeTab, onSave])
+
+  const handleTabContextMenu = useCallback((e: React.MouseEvent, path: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setTabContextMenu({ x: e.clientX, y: e.clientY, path })
+  }, [])
+
+  const tryCloseTab = useCallback((path: string) => {
+    const tab = tabs.find(t => t.path === path)
+    if (tab?.isDirty) {
+      setConfirmClose({ path, action: 'close' })
+    } else {
+      onCloseTab(path)
+    }
+  }, [tabs, onCloseTab])
+
+  const getTabMenuItems = useCallback((path: string): MenuItem[] => {
+    const tabIndex = tabs.findIndex(t => t.path === path)
+    return [
+      { label: 'Close', onClick: () => tryCloseTab(path), shortcut: 'Ctrl+W' },
+      { label: 'Close Others', onClick: () => {
+        const dirtyOthers = tabs.filter(t => t.path !== path && t.isDirty)
+        if (dirtyOthers.length > 0) {
+          setConfirmClose({ path, action: 'closeOthers' })
+        } else {
+          onCloseOtherTabs?.(path)
+        }
+      }, disabled: tabs.length <= 1 },
+      { label: 'Close All', onClick: () => {
+        const dirtyTabs = tabs.filter(t => t.isDirty)
+        if (dirtyTabs.length > 0) {
+          setConfirmClose({ path, action: 'closeAll' })
+        } else {
+          onCloseAllTabs?.()
+        }
+      }},
+      { label: 'Close to the Right', onClick: () => {
+        const rightDirty = tabs.filter((t, i) => i > tabIndex && t.isDirty)
+        if (rightDirty.length > 0) {
+          setConfirmClose({ path, action: 'closeRight' })
+        } else {
+          onCloseTabsToRight?.(path)
+        }
+      }, disabled: tabIndex >= tabs.length - 1 },
+      { separator: true },
+      { label: 'Copy Path', icon: Clipboard, onClick: () => navigator.clipboard.writeText(path) },
+    ]
+  }, [tabs, tryCloseTab, onCloseOtherTabs, onCloseAllTabs, onCloseTabsToRight])
 
   // Empty state
   if (tabs.length === 0) {
@@ -83,6 +139,7 @@ export default function Editor({
                 borderBottom: isActive ? '1px solid var(--accent)' : '1px solid transparent',
               }}
               onClick={() => onSelectTab(tab.path)}
+              onContextMenu={(e) => handleTabContextMenu(e, tab.path)}
             >
               <span className="truncate max-w-[120px]">
                 {tab.isDirty && <span style={{ color: 'var(--accent)' }}>&#9679; </span>}
@@ -91,7 +148,7 @@ export default function Editor({
               <button
                 onClick={(e) => {
                   e.stopPropagation()
-                  onCloseTab(tab.path)
+                  tryCloseTab(tab.path)
                 }}
                 className="p-0.5 rounded transition-colors duration-75"
                 style={{ color: 'var(--text-muted)' }}
@@ -111,6 +168,58 @@ export default function Editor({
         })}
       </div>
 
+      {/* Tab Context Menu */}
+      {tabContextMenu && (
+        <ContextMenu
+          x={tabContextMenu.x}
+          y={tabContextMenu.y}
+          items={getTabMenuItems(tabContextMenu.path)}
+          onClose={() => setTabContextMenu(null)}
+        />
+      )}
+
+      {/* Unsaved Changes Dialog */}
+      {confirmClose && (
+        <ConfirmDialog
+          title="Unsaved Changes"
+          message="Do you want to save the changes before closing? Your changes will be lost if you don't save them."
+          confirmLabel="Save"
+          dangerLabel="Discard"
+          cancelLabel="Cancel"
+          fileName={confirmClose.action === 'close' ? confirmClose.path.split(/[\\/]/).pop() || '' : undefined}
+          onConfirm={() => {
+            // Save all dirty tabs involved, then close
+            const { path, action } = confirmClose
+            if (action === 'close') {
+              const tab = tabs.find(t => t.path === path)
+              if (tab) onSave(tab.path, tab.content)
+              onCloseTab(path)
+            } else if (action === 'closeOthers') {
+              tabs.filter(t => t.path !== path && t.isDirty).forEach(t => onSave(t.path, t.content))
+              onCloseOtherTabs?.(path)
+            } else if (action === 'closeAll') {
+              tabs.filter(t => t.isDirty).forEach(t => onSave(t.path, t.content))
+              onCloseAllTabs?.()
+            } else if (action === 'closeRight') {
+              const idx = tabs.findIndex(t => t.path === path)
+              tabs.filter((t, i) => i > idx && t.isDirty).forEach(t => onSave(t.path, t.content))
+              onCloseTabsToRight?.(path)
+            }
+            setConfirmClose(null)
+          }}
+          onDanger={() => {
+            // Discard and close without saving
+            const { path, action } = confirmClose
+            if (action === 'close') onCloseTab(path)
+            else if (action === 'closeOthers') onCloseOtherTabs?.(path)
+            else if (action === 'closeAll') onCloseAllTabs?.()
+            else if (action === 'closeRight') onCloseTabsToRight?.(path)
+            setConfirmClose(null)
+          }}
+          onCancel={() => setConfirmClose(null)}
+        />
+      )}
+
       {/* Monaco Editor */}
       {activeTab && (
         <div className="flex-1 overflow-hidden">
@@ -118,7 +227,7 @@ export default function Editor({
             key={activeTab.path}
             defaultValue={activeTab.content}
             language={activeTab.language}
-            theme={theme === 'dark' ? 'vs-dark' : 'vs'}
+            theme={theme === 'light' ? 'vs' : 'vs-dark'}
             onChange={handleEditorChange}
             options={{
               fontSize: 13,
@@ -136,8 +245,12 @@ export default function Editor({
               wordWrap: 'off',
               automaticLayout: true,
               bracketPairColorization: { enabled: true },
-              guides: { bracketPairs: true },
-              // Hide whitespace indicators
+              guides: {
+                bracketPairs: false,
+                indentation: false,
+                highlightActiveIndentation: false,
+              },
+              // Hide whitespace indicators and indent guides
               renderWhitespace: 'none',
               renderControlCharacters: false,
             }}

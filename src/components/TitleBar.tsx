@@ -1,7 +1,16 @@
 import { useState, useEffect } from 'react'
-import { Minus, Square, X, Copy } from 'lucide-react'
+import { Minus, Square, X, Copy, PanelLeft, PanelRight, Terminal, Settings } from 'lucide-react'
 
-export default function TitleBar() {
+interface Props {
+  onToggleSidebar?: () => void
+  onToggleChat?: () => void
+  onNewTerminal?: () => void
+  onOpenSettings?: () => void
+  sidebarVisible?: boolean
+  chatVisible?: boolean
+}
+
+export default function TitleBar({ onToggleSidebar, onToggleChat, onNewTerminal, onOpenSettings, sidebarVisible = true, chatVisible = true }: Props) {
   const [isMaximized, setIsMaximized] = useState(false)
 
   useEffect(() => {
@@ -35,8 +44,76 @@ export default function TitleBar() {
         </span>
       </div>
 
-      {/* Window Controls */}
+      {/* Action Buttons + Window Controls */}
       <div className="titlebar-no-drag flex items-center -mr-1">
+        {/* Toolbar Actions */}
+        <div className="flex items-center gap-0.5 mr-2" style={{ borderRight: '1px solid var(--border-subtle)', paddingRight: '8px' }}>
+          <button
+            onClick={onToggleSidebar}
+            className="w-7 h-7 flex items-center justify-center rounded-md transition-colors duration-100"
+            style={{ color: sidebarVisible ? 'var(--accent)' : 'var(--text-muted)' }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent'
+            }}
+            title="Toggle Sidebar (Ctrl+B)"
+          >
+            <PanelLeft size={14} strokeWidth={1.5} />
+          </button>
+
+          <button
+            onClick={onToggleChat}
+            className="w-7 h-7 flex items-center justify-center rounded-md transition-colors duration-100"
+            style={{ color: chatVisible ? 'var(--accent)' : 'var(--text-muted)' }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent'
+            }}
+            title="Toggle Chat Panel"
+          >
+            <PanelRight size={14} strokeWidth={1.5} />
+          </button>
+
+          <button
+            onClick={onNewTerminal}
+            className="w-7 h-7 flex items-center justify-center rounded-md transition-colors duration-100"
+            style={{ color: 'var(--text-muted)' }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
+              e.currentTarget.style.color = 'var(--text-secondary)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent'
+              e.currentTarget.style.color = 'var(--text-muted)'
+            }}
+            title="New Terminal (Ctrl+`)"
+          >
+            <Terminal size={13} strokeWidth={1.5} />
+          </button>
+
+          <button
+            onClick={onOpenSettings}
+            className="w-7 h-7 flex items-center justify-center rounded-md transition-colors duration-100"
+            style={{ color: 'var(--text-muted)' }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
+              e.currentTarget.style.color = 'var(--text-secondary)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent'
+              e.currentTarget.style.color = 'var(--text-muted)'
+            }}
+            title="Settings (Ctrl+,)"
+          >
+            <Settings size={13} strokeWidth={1.5} />
+          </button>
+        </div>
+
+        {/* Window Controls */}
         <button
           onClick={() => window.artemis.window.minimize()}
           className="w-10 h-8 flex items-center justify-center transition-colors duration-100"

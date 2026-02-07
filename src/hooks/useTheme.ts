@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { Theme } from '../types'
 
+const ALL_THEMES: Theme[] = ['dark', 'light', 'cyberpunk', 'nord', 'monokai', 'solarized', 'dracula', 'rosepine']
+
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>('dark')
   const [isLoaded, setIsLoaded] = useState(false)
 
   useEffect(() => {
     window.artemis.store.get('theme').then((saved: Theme | undefined) => {
-      const t = saved || 'dark'
+      const t = (saved && ALL_THEMES.includes(saved)) ? saved : 'dark'
       document.documentElement.setAttribute('data-theme', t)
       setThemeState(t)
       setIsLoaded(true)
@@ -21,7 +23,8 @@ export function useTheme() {
   }, [])
 
   const toggleTheme = useCallback(() => {
-    const next: Theme = theme === 'dark' ? 'light' : 'dark'
+    const idx = ALL_THEMES.indexOf(theme)
+    const next = ALL_THEMES[(idx + 1) % ALL_THEMES.length]
     setTheme(next)
   }, [theme, setTheme])
 

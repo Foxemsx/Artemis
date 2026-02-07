@@ -1,7 +1,9 @@
 // ─── Theme & Navigation ──────────────────────────────────────────────────────
-export type Theme = 'dark' | 'light'
-export type ActivityView = 'files' | 'chat' | 'terminal' | 'settings'
-export type AgentMode = 'builder' | 'planner'
+export type Theme = 'dark' | 'light' | 'cyberpunk' | 'nord' | 'monokai' | 'solarized' | 'dracula' | 'rosepine'
+export type ActivityView = 'files' | 'chat' | 'terminal' | 'settings' | 'problems' | 'search'
+export type AgentMode = 'builder' | 'planner' | 'chat'
+export type EditApprovalMode = 'allow-all' | 'session-only' | 'ask'
+export type AIProvider = 'zen' | 'zai'
 
 // ─── Project ─────────────────────────────────────────────────────────────────
 export interface Project {
@@ -32,12 +34,13 @@ export interface EditorTab {
 export interface ChatSession {
   id: string
   title: string
+  projectId?: string
   createdAt: string
   updatedAt: string
 }
 
 export interface MessagePart {
-  type: 'text' | 'tool-call' | 'tool-result'
+  type: 'text' | 'tool-call' | 'tool-result' | 'thinking' | 'reasoning'
   text?: string
   toolCall?: {
     id: string
@@ -50,6 +53,32 @@ export interface MessagePart {
     success: boolean
     output: string
   }
+  thinking?: {
+    steps: AgentStep[]
+    duration: number // in milliseconds
+    isComplete: boolean
+  }
+  reasoning?: {
+    content: string
+    isComplete: boolean
+  }
+}
+
+// ─── Agent Step (for thinking/planning blocks) ───────────────────────────────
+export interface AgentStep {
+  id: string
+  type: 'thinking' | 'tool-call' | 'tool-result' | 'plan' | 'summary'
+  content: string
+  toolCall?: {
+    name: string
+    args: Record<string, unknown>
+  }
+  toolResult?: {
+    success: boolean
+    output: string
+  }
+  timestamp: number
+  duration?: number // how long this step took
 }
 
 export interface ChatMessage {
@@ -59,6 +88,13 @@ export interface ChatMessage {
   parts: MessagePart[]
   model?: string
   createdAt: string
+  // Agent thinking metadata
+  agentMeta?: {
+    startTime: number
+    endTime?: number
+    totalSteps: number
+    isThinking: boolean
+  }
 }
 
 // ─── Providers / Models ──────────────────────────────────────────────────────
@@ -73,6 +109,30 @@ export interface Model {
   name: string
   providerId: string
   providerName: string
+  aiProvider: AIProvider  // 'zen' for OpenCode Zen, 'zai' for Z.AI
+  maxTokens?: number
+  contextWindow?: number
+  pricing?: {
+    input: number   // per 1M tokens
+    output: number  // per 1M tokens
+  }
+  free?: boolean
+  description?: string
+}
+
+// ─── Session Token Tracking ──────────────────────────────────────────────────
+export interface SessionTokenUsage {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  estimatedCost: number   // in USD
+}
+
+// ─── Workspace / Multi-Project ───────────────────────────────────────────────
+export interface Workspace {
+  id: string
+  projects: Project[]
+  activeProjectId: string | null
 }
 
 // ─── PTY Session (for regular terminal, not chat) ────────────────────────────
@@ -106,47 +166,3 @@ export function detectLanguage(filename: string): string {
   return EXT_TO_LANG[ext] || 'plaintext'
 }
 
-// ─── Window API (exposed by preload.ts) ──────────────────────────────────────
-declare global {
-  interface Window {
-    artemis: {
-      session: {
-        create: (id: string, cwd: string) => Promise<{ success?: boolean; error?: string }>
-        write: (id: string, data: string) => Promise<void>
-        resize: (id: string, cols: number, rows: number) => Promise<void>
-        kill: (id: string) => Promise<void>
-        onData: (id: string, callback: (data: string) => void) => () => void
-        onExit: (id: string, callback: (code: number) => void) => () => void
-        checkOpenCode: () => Promise<boolean>
-      }
-      dialog: {
-        openFolder: () => Promise<{ path: string; name: string } | null>
-      }
-      store: {
-        get: (key: string) => Promise<any>
-        set: (key: string, value: any) => Promise<void>
-      }
-      window: {
-        minimize: () => Promise<void>
-        maximize: () => Promise<void>
-        close: () => Promise<void>
-        isMaximized: () => Promise<boolean>
-        onMaximize: (callback: () => void) => () => void
-        onUnmaximize: (callback: () => void) => () => void
-      }
-      fs: {
-        readDir: (dirPath: string) => Promise<{ name: string; type: 'file' | 'directory' }[]>
-        readFile: (filePath: string) => Promise<string>
-        writeFile: (filePath: string, content: string) => Promise<void>
-        stat: (filePath: string) => Promise<{ size: number; isDirectory: boolean; modified: number }>
-      }
-      opencode: {
-        startServer: (cwd: string, port: number) => Promise<{ success: boolean; error?: string }>
-        stopServer: () => Promise<void>
-        isInstalled: () => Promise<boolean>
-      }
-    }
-  }
-}
-
-export {}
