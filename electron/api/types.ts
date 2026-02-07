@@ -173,6 +173,8 @@ export interface AgentRequest {
   systemPrompt?: string
   /** Which tools to make available */
   toolNames?: string[]
+  /** Agent mode: determines which tool set is available */
+  agentMode?: 'builder' | 'planner' | 'chat'
   /** Max agent loop iterations (default 50) */
   maxIterations?: number
   /** Project root path for tool execution */

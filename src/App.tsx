@@ -440,8 +440,8 @@ export default function App() {
     opencode.createSession()
   }, [opencode])
 
-  const handleSendMessage = useCallback(async (text: string, fileContext?: string) => {
-    await opencode.sendMessage(text, fileContext)
+  const handleSendMessage = useCallback(async (text: string, fileContext?: string, modeOverride?: import('./types').AgentMode) => {
+    await opencode.sendMessage(text, fileContext, modeOverride)
   }, [opencode])
 
   // ─── Reset Setup (show intro again) ───────────────────────────────────────
@@ -458,6 +458,7 @@ export default function App() {
       search: 'Ctrl+Shift+F',
       quickSearch: 'Ctrl+T',
       toggleSidebar: 'Ctrl+B',
+      toggleChat: 'Ctrl+J',
       newTerminal: 'Ctrl+`',
       saveFile: 'Ctrl+S',
       closeTab: 'Ctrl+W',
@@ -533,6 +534,12 @@ export default function App() {
       if (matchesBinding(e, getBinding('toggleSidebar'))) {
         e.preventDefault()
         setSidebarVisible(prev => !prev)
+        return
+      }
+
+      if (matchesBinding(e, getBinding('toggleChat'))) {
+        e.preventDefault()
+        setChatVisible(prev => !prev)
         return
       }
 

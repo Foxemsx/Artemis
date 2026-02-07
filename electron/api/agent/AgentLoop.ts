@@ -98,10 +98,10 @@ export class AgentLoop {
     // Get the correct provider adapter (completely transparent)
     const adapter = ProviderFactory.getAdapter(request.model, request.provider)
 
-    // Resolve tools
+    // Resolve tools based on agent mode
     const tools = request.toolNames
       ? toolRegistry.getByNames(request.toolNames)
-      : toolRegistry.getBuilderTools()
+      : toolRegistry.getToolsForMode(request.agentMode || 'builder')
 
     // Initialize conversation
     const conversation = new ConversationManager(request.conversationHistory)

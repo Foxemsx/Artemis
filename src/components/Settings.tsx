@@ -17,6 +17,7 @@ const DEFAULT_KEYBINDS: KeyBind[] = [
   { id: 'search', label: 'Search Files', description: 'Open file search', defaultKey: 'Ctrl+Shift+F', currentKey: 'Ctrl+Shift+F' },
   { id: 'quickSearch', label: 'Quick Search', description: 'Quick file search', defaultKey: 'Ctrl+T', currentKey: 'Ctrl+T' },
   { id: 'toggleSidebar', label: 'Toggle Sidebar', description: 'Show/hide the sidebar', defaultKey: 'Ctrl+B', currentKey: 'Ctrl+B' },
+  { id: 'toggleChat', label: 'Toggle Chat', description: 'Show/hide the chat panel', defaultKey: 'Ctrl+J', currentKey: 'Ctrl+J' },
   { id: 'newTerminal', label: 'New Terminal', description: 'Open a new terminal', defaultKey: 'Ctrl+`', currentKey: 'Ctrl+`' },
   { id: 'saveFile', label: 'Save File', description: 'Save the current file', defaultKey: 'Ctrl+S', currentKey: 'Ctrl+S' },
   { id: 'closeTab', label: 'Close Tab', description: 'Close the active tab', defaultKey: 'Ctrl+W', currentKey: 'Ctrl+W' },

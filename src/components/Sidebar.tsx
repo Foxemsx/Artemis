@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import {
   Plus, X, Copy, FolderOpen, MessageSquare, ChevronDown, ChevronRight,
-  Circle, Info, Cpu, DollarSign, Zap, Pencil, Trash2
+  Circle, Info, Cpu, DollarSign, Zap, Pencil, Trash2, Sparkles, Server
 } from 'lucide-react'
 import type { ChatSession, Model, Project, SessionTokenUsage } from '../types'
 import ContextMenu, { type MenuItem } from './ContextMenu'
@@ -381,81 +381,137 @@ export default function Sidebar({
         </div>
       </div>
 
-      {/* Bottom: Token Usage Panel */}
+      {/* Bottom: Model & Token Usage Panel */}
       <div
-        className="shrink-0 px-4 py-3"
+        className="shrink-0"
         style={{
           borderTop: '1px solid var(--border-subtle)',
           backgroundColor: 'var(--bg-secondary)',
         }}
       >
-        {/* Tokens (last call) */}
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-1.5">
+        {/* Active Model Card */}
+        {activeModel && (
+          <div
+            className="mx-3 mt-3 mb-2 rounded-lg p-2.5 relative overflow-hidden"
+            style={{
+              backgroundColor: 'var(--accent-glow)',
+              border: '1px solid rgba(var(--accent-rgb), 0.15)',
+            }}
+          >
+            <div
+              className="absolute inset-0 opacity-[0.03]"
+              style={{
+                background: 'linear-gradient(135deg, var(--accent) 0%, transparent 60%)',
+              }}
+            />
+            <div className="relative">
+              <div className="flex items-center gap-2 mb-1.5">
+                <div
+                  className="w-5 h-5 rounded-md flex items-center justify-center shrink-0"
+                  style={{
+                    backgroundColor: 'rgba(var(--accent-rgb), 0.15)',
+                  }}
+                >
+                  <Sparkles size={10} style={{ color: 'var(--accent)' }} />
+                </div>
+                <span
+                  className="text-[12px] font-bold truncate"
+                  style={{ color: 'var(--accent)' }}
+                >
+                  {activeModel.name}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 ml-7">
+                <div className="flex items-center gap-1">
+                  <Server size={8} style={{ color: 'var(--text-muted)' }} />
+                  <span className="text-[9px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                    {activeModel.providerName || (activeModel.aiProvider === 'zai' ? 'Z.AI' : 'OpenCode Zen')}
+                  </span>
+                </div>
+                {activeModel.free && (
+                  <span
+                    className="text-[8px] font-bold uppercase px-1.5 py-0.5 rounded-full tracking-wide"
+                    style={{
+                      backgroundColor: 'rgba(74, 222, 128, 0.1)',
+                      color: 'var(--success)',
+                      border: '1px solid rgba(74, 222, 128, 0.15)',
+                    }}
+                  >
+                    Free
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!activeModel && (
+          <div className="mx-3 mt-3 mb-2 rounded-lg p-2.5" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
+            <div className="flex items-center gap-2">
+              <Circle size={8} fill="var(--text-muted)" stroke="none" style={{ opacity: 0.4 }} />
+              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>No model selected</span>
+            </div>
+          </div>
+        )}
+
+        {/* Token Stats */}
+        <div className="px-3 pb-4 pt-1">
+          {/* Label */}
+          <div className="flex items-center gap-1.5 mb-2">
             <Cpu size={10} style={{ color: 'var(--text-muted)' }} />
             <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
               Tokens (session)
             </span>
           </div>
-          {activeModel?.pricing && (
-            <div className="flex flex-col gap-0.5">
-              <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
-                In: ${activeModel.pricing.input.toFixed(2)}/1M
-              </span>
-              <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
-                Out: ${activeModel.pricing.output.toFixed(2)}/1M
-              </span>
-            </div>
-          )}
-        </div>
 
-        <div className="text-[18px] font-bold mb-2.5" style={{ color: 'var(--text-primary)' }}>
-          {formatTokenCount(sessionTokenUsage.totalTokens)}
-        </div>
+          {/* Big token count */}
+          <div className="text-[20px] font-bold mb-1" style={{ color: 'var(--text-primary)' }}>
+            {formatTokenCount(sessionTokenUsage.totalTokens)}
+          </div>
 
-        {/* Cost (if applicable) */}
-        {activeModel?.pricing && sessionTokenUsage.estimatedCost > 0 && (
-          <div className="flex items-center gap-1.5 mb-2.5">
-            <DollarSign size={10} style={{ color: 'var(--accent)' }} />
-            <span className="text-[11px] font-semibold" style={{ color: 'var(--accent)' }}>
-              {formatCost(sessionTokenUsage.estimatedCost)}
+          {/* Cost + pricing row */}
+          <div className="flex items-center gap-3 mb-3">
+            {activeModel?.pricing && sessionTokenUsage.estimatedCost > 0 && (
+              <div className="flex items-center gap-1">
+                <DollarSign size={9} style={{ color: 'var(--accent)' }} />
+                <span className="text-[11px] font-semibold" style={{ color: 'var(--accent)' }}>
+                  {formatCost(sessionTokenUsage.estimatedCost)}
+                </span>
+              </div>
+            )}
+            {activeModel?.pricing && (
+              <>
+                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                  In: ${activeModel.pricing.input.toFixed(2)}/1M
+                </span>
+                <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+                  Out: ${activeModel.pricing.output.toFixed(2)}/1M
+                </span>
+              </>
+            )}
+          </div>
+
+          {/* Context Window Bar */}
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[9px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+              Context Window
             </span>
-            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>estimated</span>
+            <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
+              {formatTokenCount(sessionTokenUsage.totalTokens)} / {formatTokenCount(contextWindow)} · {contextPercent.toFixed(0)}%
+            </span>
           </div>
-        )}
-
-        {activeModel?.free && (
-          <div className="flex items-center gap-1.5 mb-2.5">
-            <Zap size={10} style={{ color: 'var(--success)' }} />
-            <span className="text-[10px] font-semibold" style={{ color: 'var(--success)' }}>Free model</span>
-          </div>
-        )}
-
-        {/* Context Window Usage */}
-        <div className="flex items-center justify-between mb-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-            Context Window Usage
-          </span>
-          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
-            {contextPercent.toFixed(0)}%
-          </span>
-        </div>
-        <div
-          className="h-1.5 rounded-full overflow-hidden mb-1"
-          style={{ backgroundColor: 'var(--bg-elevated)' }}
-        >
           <div
-            className="h-full rounded-full transition-all duration-300"
-            style={{
-              width: `${contextPercent}%`,
-              backgroundColor: contextPercent > 80 ? 'var(--error)' : contextPercent > 50 ? 'var(--warning)' : 'var(--accent)',
-            }}
-          />
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>
-            {formatTokenCount(sessionTokenUsage.totalTokens)} of {formatTokenCount(contextWindow)}
-          </span>
+            className="h-1.5 rounded-full overflow-hidden"
+            style={{ backgroundColor: 'var(--bg-elevated)' }}
+          >
+            <div
+              className="h-full rounded-full transition-all duration-300"
+              style={{
+                width: `${contextPercent}%`,
+                backgroundColor: contextPercent > 80 ? 'var(--error)' : contextPercent > 50 ? 'var(--warning)' : 'var(--accent)',
+              }}
+            />
+          </div>
         </div>
       </div>
 

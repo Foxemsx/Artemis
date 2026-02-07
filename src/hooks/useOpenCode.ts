@@ -26,7 +26,7 @@ interface UseOpenCodeReturn {
   messages: ChatMessage[]
   isStreaming: boolean
   streamingSessionIds: Set<string>  // Which sessions have running agents (for UI badges)
-  sendMessage: (text: string, fileContext?: string) => Promise<void>
+  sendMessage: (text: string, fileContext?: string, modeOverride?: AgentMode) => Promise<void>
   abortMessage: () => void
   clearMessages: () => void
 
@@ -675,7 +675,8 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
   }, [])
 
   // Send message — uses the new provider-agnostic agent system
-  const sendMessage = useCallback(async (text: string, fileContext?: string) => {
+  // modeOverride: force a specific agent mode for this request (e.g. when switching from planner to builder)
+  const sendMessage = useCallback(async (text: string, fileContext?: string, modeOverride?: AgentMode) => {
     if (!activeModel || !text.trim()) {
       if (!activeModel) setError('Please select a model first')
       return
@@ -756,13 +757,21 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     }
 
     // ─── Build System Prompt ───────────────────────────────────
-    const modeConfig = AGENT_MODES[agentMode]
+    const effectiveMode = modeOverride || agentMode
+    const modeConfig = AGENT_MODES[effectiveMode]
     const projectPath = projectPathRef.current
     let systemPrompt = modeConfig?.systemPromptAddition || ''
 
     if (projectPath) {
       systemPrompt += `\nThe user has the following project open: ${projectPath}`
-      systemPrompt += `\nYou are an AI coding assistant working inside an IDE. You have access to the user's codebase. When the user asks you to create files, edit code, or do anything with their project, use your tools (write_file, str_replace, read_file, list_directory, execute_command, etc.) to actually do it — do NOT just output code in chat.`
+      if (effectiveMode === 'planner') {
+        systemPrompt += `\nYou are in PLANNER mode (read-only). You can read files, list directories, and search code to help the user plan and review. You CANNOT create, edit, or delete files, and you CANNOT run commands. If the user asks you to create or modify files, tell them to switch to Builder mode. Do NOT attempt to use write_file, str_replace, execute_command, or any write tools — they are not available to you.`
+      } else {
+        systemPrompt += `\nYou are an AI coding assistant working inside an IDE. You have access to the user's codebase. When the user asks you to create files, edit code, or do anything with their project, use your tools (write_file, str_replace, read_file, list_directory, execute_command, etc.) to actually do it — do NOT just output code in chat.`
+        if (modeOverride && modeOverride !== agentMode) {
+          systemPrompt += `\n\nIMPORTANT: The user has just switched from ${agentMode.toUpperCase()} mode to ${effectiveMode.toUpperCase()} mode. You now have full write access. IGNORE any previous assistant messages that say you are in read-only or planner mode — those are outdated. Proceed with implementing the requested changes using your tools.`
+        }
+      }
 
       // Auto-inject a compact directory listing so the model has context
       try {
@@ -836,6 +845,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
       model: modelConfig,
       provider: providerConfig,
       systemPrompt,
+      agentMode: effectiveMode,
       maxIterations: 50,
       projectPath: projectPath || undefined,
       conversationHistory,

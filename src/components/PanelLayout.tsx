@@ -45,7 +45,7 @@ interface Props {
   onCreateSession: () => void
   onSelectSession: (id: string) => void
   onDeleteSession: (id: string) => void
-  onSendMessage: (text: string, fileContext?: string) => void
+  onSendMessage: (text: string, fileContext?: string, modeOverride?: AgentMode) => void
   onAbortMessage: () => void
   onSelectModel: (model: Model) => void
   onAgentModeChange: (mode: AgentMode) => void

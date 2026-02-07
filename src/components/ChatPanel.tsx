@@ -26,7 +26,7 @@ interface Props {
   onCreateSession: () => void
   onSelectSession: (id: string) => void
   onDeleteSession: (id: string) => void
-  onSendMessage: (text: string, fileContext?: string) => void
+  onSendMessage: (text: string, fileContext?: string, modeOverride?: AgentMode) => void
   onAbortMessage: () => void
   onSelectModel: (model: Model) => void
   onAgentModeChange: (mode: AgentMode) => void
@@ -295,13 +295,13 @@ export default function ChatPanel({
         agentMode={agentMode}
         isStreaming={isStreaming}
         onImplementPlan={(planText) => {
-          // Switch to builder mode and send the plan as instructions
+          // Switch to builder mode and send the plan with explicit mode override
           onAgentModeChange('builder')
-          setTimeout(() => {
-            onSendMessage(
-              `Implement the following plan step by step:\n\n${planText}\n\nExecute each step using your tools. Mark progress as you go.`
-            )
-          }, 100)
+          onSendMessage(
+            `Implement the following plan step by step:\n\n${planText}\n\nExecute each step using your tools. Mark progress as you go.`,
+            undefined,
+            'builder'
+          )
         }}
       />
 
