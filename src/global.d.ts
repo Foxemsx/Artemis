@@ -18,10 +18,6 @@ interface ZenRequestOptions {
   body?: string
 }
 
-interface ZenStreamOptions extends ZenRequestOptions {
-  requestId: string
-}
-
 interface ZenRequestResult {
   ok: boolean
   status: number
@@ -92,6 +88,7 @@ interface AgentRunResponse {
 interface AgentEvent {
   type: 'thinking' | 'text_delta' | 'reasoning_delta' | 'tool_call_start'
     | 'tool_call_delta' | 'tool_call_complete' | 'tool_result'
+    | 'tool_approval_required' | 'path_approval_required'
     | 'iteration_start' | 'iteration_complete' | 'agent_complete'
     | 'agent_error' | 'agent_aborted'
   seq: number
@@ -99,20 +96,10 @@ interface AgentEvent {
   data: Record<string, any>
 }
 
-interface AgentToolResult {
-  toolCallId: string
-  toolName: string
-  success: boolean
-  output: string
-  durationMs?: number
-}
-
 interface ArtemisAPI {
   // Zen API Proxy (CORS bypass)
   zen: {
     request: (options: ZenRequestOptions) => Promise<ZenRequestResult>
-    streamRequest: (options: ZenStreamOptions) => Promise<{ ok: boolean; status: number; error?: string }>
-    onStreamChunk: (requestId: string, callback: (data: any) => void) => () => void
   }
 
   // Session (PTY) Management
@@ -123,7 +110,6 @@ interface ArtemisAPI {
     kill: (id: string) => Promise<void>
     onData: (id: string, callback: (data: string) => void) => () => void
     onExit: (id: string, callback: (code: number) => void) => () => void
-    checkOpenCode: () => Promise<boolean>
   }
 
   // System Dialogs
@@ -135,6 +121,8 @@ interface ArtemisAPI {
   store: {
     get: <T = any>(key: string) => Promise<T | undefined>
     set: (key: string, value: any) => Promise<void>
+    getDir: () => Promise<string>
+    isEncrypted: () => Promise<boolean>
   }
 
   // Window Controls
@@ -155,6 +143,12 @@ interface ArtemisAPI {
     stat: (filePath: string) => Promise<FileStat>
     createDir: (dirPath: string) => Promise<void>
     delete: (targetPath: string) => Promise<void>
+    rename: (oldPath: string, newPath: string) => Promise<void>
+  }
+
+  // Shell Operations
+  shell: {
+    openPath: (path: string) => Promise<string>
   }
 
   // Tool Execution
@@ -163,11 +157,31 @@ interface ArtemisAPI {
     searchFiles: (pattern: string, dirPath: string) => Promise<{ file: string; line: number; text: string }[]>
   }
 
-  // OpenCode Server Management
-  opencode: {
-    startServer: (cwd: string, port: number) => Promise<{ success?: boolean; error?: string }>
-    stopServer: () => Promise<void>
-    isInstalled: () => Promise<boolean>
+  // MCP Marketplace
+  mcp: {
+    getServers: () => Promise<any[]>
+    installServer: (serverId: string, config?: Record<string, any>) => Promise<{ success: boolean; serverId: string; error?: string }>
+    uninstallServer: (serverId: string) => Promise<{ success: boolean; serverId: string; error?: string }>
+    searchServers: (query: string) => Promise<any[]>
+  }
+
+  // Web Search (DuckDuckGo, no API key)
+  webSearch: {
+    search: (query: string) => Promise<{ query: string; results: { title: string; url: string; snippet: string }[]; error?: string }>
+  }
+
+  // Linter Auto-Fix
+  linter: {
+    lint: (filePath: string, projectPath: string) => Promise<{ file: string; diagnostics: { file: string; line: number; column: number; severity: string; message: string; ruleId: string; source: string }[]; error?: string }>
+  }
+
+  // Discord RPC
+  discord: {
+    toggle: (enable: boolean) => Promise<{ connected: boolean; enabled: boolean; error?: string }>
+    getState: () => Promise<{ connected: boolean; enabled: boolean; error?: string; lastFile?: string }>
+    updatePresence: (fileName?: string, language?: string, projectName?: string) => Promise<void>
+    detectDiscord: () => Promise<boolean>
+    setDebug: (enabled: boolean) => Promise<void>
   }
 
   // Agent API (New Provider-Agnostic System)
@@ -178,22 +192,10 @@ interface ArtemisAPI {
     abort: (requestId: string) => Promise<{ success: boolean; error?: string }>
     /** Respond to a tool approval request */
     respondToolApproval: (approvalId: string, approved: boolean) => Promise<{ success: boolean; error?: string }>
-    /** Get tool definitions for a mode or all tools */
-    getTools: (mode?: string) => Promise<Array<{ name: string; description: string; parameters: any }>>
-    /** Execute a single tool manually */
-    executeTool: (name: string, args: Record<string, any>, projectPath?: string) => Promise<AgentToolResult>
-    /** Get IDs of active agent runs */
-    activeRuns: () => Promise<string[]>
+    /** Respond to a path approval request */
+    respondPathApproval: (approvalId: string, approved: boolean) => Promise<{ success: boolean; error?: string }>
     /** Listen for agent events during a run */
     onEvent: (requestId: string, callback: (event: AgentEvent) => void) => () => void
-    /** Listen for agent run completion */
-    onComplete: (requestId: string, callback: (response: AgentRunResponse) => void) => () => void
-    /** HTTP proxy request (CORS bypass) */
-    httpRequest: (options: ZenRequestOptions) => Promise<ZenRequestResult>
-    /** Streaming HTTP proxy request */
-    httpStream: (options: ZenStreamOptions) => Promise<{ ok: boolean; status: number; error?: string }>
-    /** Listen for streaming HTTP chunks */
-    onStreamChunk: (requestId: string, callback: (data: any) => void) => () => void
   }
 }
 

@@ -25,6 +25,7 @@ const activeRuns = new Map<string, AgentLoop>()
 // ─── Tool Approval System ─────────────────────────────────────────────────
 
 const pendingApprovals = new Map<string, { resolve: (approved: boolean) => void }>()
+const pendingPathApprovals = new Map<string, { resolve: (approved: boolean) => void }>()
 
 function createApprovalCallback(
   requestId: string,
@@ -48,7 +49,10 @@ function createApprovalCallback(
           toolCallId: toolCall.id,
         },
       })
-    } catch { return true }
+    } catch {
+      // Window may have been closed - reject to be safe
+      return false
+    }
 
     // Wait for renderer to respond
     return new Promise<boolean>((resolve) => {
@@ -57,6 +61,42 @@ function createApprovalCallback(
       setTimeout(() => {
         if (pendingApprovals.has(approvalId)) {
           pendingApprovals.delete(approvalId)
+          resolve(true)
+        }
+      }, 60_000)
+    })
+  }
+}
+
+function createPathApprovalCallback(
+  requestId: string,
+  mainWindow: BrowserWindow,
+  onEvent: (event: AgentEvent) => void,
+  seqRef: { seq: number }
+) {
+  return async (filePath: string, reason: string): Promise<boolean> => {
+    const approvalId = `path-${requestId}-${filePath}`
+
+    try {
+      mainWindow.webContents.send(`agent:event:${requestId}`, {
+        type: 'path_approval_required',
+        seq: seqRef.seq++,
+        timestamp: Date.now(),
+        data: {
+          approvalId,
+          filePath,
+          reason,
+        },
+      })
+    } catch {
+      return false
+    }
+
+    return new Promise<boolean>((resolve) => {
+      pendingPathApprovals.set(approvalId, { resolve })
+      setTimeout(() => {
+        if (pendingPathApprovals.has(approvalId)) {
+          pendingPathApprovals.delete(approvalId)
           resolve(true)
         }
       }, 60_000)
@@ -203,6 +243,10 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
         approvalCallback = createApprovalCallback(requestId, mainWindow, onEvent, seqRef)
       }
 
+      // Build path approval callback - always available for paths outside project
+      const pathApprovalCallback = createPathApprovalCallback(requestId, mainWindow, onEvent, seqRef)
+      toolExecutor.setPathApprovalCallback(pathApprovalCallback)
+
       const response = await agentLoop.run(request, onEvent, approvalCallback)
 
       // Send completion
@@ -222,6 +266,8 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
       } catch {}
       return errorResponse
     } finally {
+      // Wait a tick to allow any pending events to be sent before cleaning up
+      await new Promise(resolve => setTimeout(resolve, 100))
       activeRuns.delete(requestId)
     }
   })
@@ -235,6 +281,17 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
       return { success: true }
     }
     return { success: false, error: 'No pending approval found' }
+  })
+
+  // ─── Respond to Path Approval ──────────────────────────────────
+  ipcMain.handle('agent:respondPathApproval', (_event, approvalId: string, approved: boolean) => {
+    const pending = pendingPathApprovals.get(approvalId)
+    if (pending) {
+      pending.resolve(approved)
+      pendingPathApprovals.delete(approvalId)
+      return { success: true }
+    }
+    return { success: false, error: 'No pending path approval found' }
   })
 
   // ─── Abort Agent Run ─────────────────────────────────────────────────

@@ -2,15 +2,20 @@ import React, { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { motion } from 'framer-motion'
-import { 
-  User, 
-  Bot, 
-  ChevronDown, 
+import {
+  User,
+  Bot,
+  ChevronDown,
   ChevronRight,
   AlertTriangle,
   Check,
   X,
   Terminal as TerminalIcon,
+  ListTodo,
+  Copy,
+  CheckCheck,
+  Image as ImageIcon,
+  Download,
 } from 'lucide-react'
 import type { ChatMessage as ChatMessageType, MessagePart } from '../types'
 import { 
@@ -134,7 +139,11 @@ function ToolCallCard({ toolCall }: { toolCall: NonNullable<MessagePart['toolCal
     if (!approvalId) return
     setApprovalState(approved ? 'approved' : 'rejected')
     try {
-      await window.artemis.agent.respondToolApproval(approvalId, approved)
+      if (toolCall.name === 'path_approval') {
+        await window.artemis.agent.respondPathApproval(approvalId, approved)
+      } else {
+        await window.artemis.agent.respondToolApproval(approvalId, approved)
+      }
     } catch (err) {
       console.error('[ToolCallCard] Failed to respond to approval:', err)
     }
@@ -395,8 +404,141 @@ function ErrorDisplay({ text }: { text: string }) {
   )
 }
 
+/** Collapsible plan block — shown on "Implementing plan..." messages */
+function PlanBlock({ planText }: { planText: string }) {
+  const [isExpanded, setIsExpanded] = useState(false)
+  const steps = planText.split('\n').filter(l => l.trim())
+
+  return (
+    <div
+      className="mt-2 rounded-lg overflow-hidden"
+      style={{ border: '1px solid var(--border-subtle)' }}
+    >
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left transition-colors"
+        style={{ backgroundColor: 'var(--bg-elevated)' }}
+        onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)' }}
+        onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'var(--bg-elevated)' }}
+      >
+        <ListTodo size={12} style={{ color: '#a78bfa', flexShrink: 0 }} />
+        <span className="text-[11px] font-semibold flex-1" style={{ color: 'var(--text-primary)' }}>
+          Plan ({steps.length} steps)
+        </span>
+        <span
+          className="text-[10px] font-medium px-1.5 py-0.5 rounded"
+          style={{
+            backgroundColor: 'rgba(167, 139, 250, 0.12)',
+            color: '#a78bfa',
+            border: '1px solid rgba(167, 139, 250, 0.2)',
+          }}
+        >
+          {isExpanded ? 'Hide' : 'View'}
+        </span>
+        {isExpanded
+          ? <ChevronDown size={11} style={{ color: 'var(--text-muted)' }} />
+          : <ChevronRight size={11} style={{ color: 'var(--text-muted)' }} />
+        }
+      </button>
+      {isExpanded && (
+        <div
+          className="px-3 py-2 space-y-1 max-h-[300px] overflow-y-auto"
+          style={{ backgroundColor: 'var(--bg-primary)', borderTop: '1px solid var(--border-subtle)' }}
+        >
+          {steps.map((step, i) => (
+            <div key={i} className="flex items-start gap-2 py-0.5">
+              <span className="text-[11px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>
+                {step.match(/^\d+[.)]/)?.[0] || `${i + 1}.`}
+              </span>
+              <span className="text-[11px] leading-snug" style={{ color: 'var(--text-secondary)' }}>
+                {step.replace(/^\d+[.)]\s*/, '').trim()}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Image Part — displays attached images in messages */
+function ImagePart({ image }: { image: NonNullable<MessagePart['image']> }) {
+  const [isExpanded, setIsExpanded] = useState(true)
+
+  const handleDownload = () => {
+    const link = document.createElement('a')
+    link.href = image.url
+    link.download = `image-${Date.now()}.${image.mimeType?.split('/')[1] || 'png'}`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }
+
+  return (
+    <div className="my-2">
+      <div
+        className="rounded-lg overflow-hidden"
+        style={{
+          border: '1px solid var(--border-subtle)',
+          maxWidth: '100%',
+          backgroundColor: 'var(--bg-elevated)',
+        }}
+      >
+        {/* Image header bar */}
+        <div
+          className="flex items-center justify-between px-3 py-2 cursor-pointer"
+          style={{ backgroundColor: 'rgba(0,0,0,0.15)' }}
+          onClick={() => setIsExpanded(!isExpanded)}
+        >
+          <div className="flex items-center gap-2">
+            <ImageIcon size={12} style={{ color: '#a78bfa' }} />
+            <span className="text-[10px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+              Image
+            </span>
+            {image.mimeType && (
+              <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ backgroundColor: 'rgba(167, 139, 250, 0.12)', color: '#a78bfa' }}>
+                {image.mimeType}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                handleDownload()
+              }}
+              className="p-1 rounded hover:bg-[var(--bg-hover)] transition-colors"
+              style={{ color: 'var(--text-muted)' }}
+              title="Download image"
+            >
+              <Download size={10} />
+            </button>
+            <span style={{ color: 'var(--text-muted)' }}>
+              {isExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+            </span>
+          </div>
+        </div>
+
+        {/* Image preview */}
+        {isExpanded && (
+          <div className="p-2">
+            <img
+              src={image.url}
+              alt="Attached image"
+              className="max-w-full rounded-md cursor-pointer"
+              style={{ maxHeight: '400px', objectFit: 'contain' }}
+              onClick={() => window.open(image.url, '_blank')}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function ChatMessage({ message }: Props) {
   const isUser = message.role === 'user'
+  const [copied, setCopied] = useState(false)
 
   // Detect error messages
   const hasError = !isUser && message.parts.some(p =>
@@ -408,17 +550,46 @@ export default function ChatMessage({ message }: Props) {
     )
   )
 
+  const handleCopy = () => {
+    const text = message.parts
+      .filter(p => p.type === 'text' && p.text)
+      .map(p => p.text)
+      .join('\n')
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, ease: [0.25, 0.46, 0.45, 0.94] }}
-      className="flex gap-3 px-5 py-4"
+      className="group/msg relative flex gap-3 px-5 py-4"
       style={{
         backgroundColor: isUser ? 'transparent' : 'rgba(var(--accent-rgb), 0.02)',
         borderBottom: '1px solid var(--border-subtle)',
       }}
     >
+      {/* Copy button — top-right on hover (user messages only) */}
+      {isUser && (
+        <button
+          onClick={handleCopy}
+          className="absolute top-2 right-3 p-1 rounded-md opacity-0 group-hover/msg:opacity-100 transition-opacity duration-150"
+          style={{
+            color: copied ? 'var(--success)' : 'var(--text-muted)',
+            backgroundColor: 'var(--bg-elevated)',
+            border: '1px solid var(--border-subtle)',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)' }}
+          onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'var(--bg-elevated)' }}
+          title={copied ? 'Copied!' : 'Copy message'}
+        >
+          {copied ? <CheckCheck size={12} /> : <Copy size={12} />}
+        </button>
+      )}
+
       {/* Avatar */}
       <div
         className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
@@ -474,16 +645,16 @@ export default function ChatMessage({ message }: Props) {
             // Handle empty responses
             if (!part.text || part.text.trim() === '') {
               return (
-                <div 
-                  key={i} 
-                  className="text-[13px] italic" 
+                <div
+                  key={i}
+                  className="text-[13px] italic"
                   style={{ color: 'var(--text-muted)' }}
                 >
                   No response content received from the model.
                 </div>
               )
             }
-            
+
             // Detect raw JSON error responses
             const isRawError = part.text.includes('"error"') && part.text.includes('"message"')
 
@@ -492,14 +663,18 @@ export default function ChatMessage({ message }: Props) {
             }
 
             return (
-              <div 
-                key={i} 
-                className="markdown-content text-[13px] leading-relaxed" 
+              <div
+                key={i}
+                className="markdown-content text-[13px] leading-relaxed"
                 style={{ color: 'var(--text-primary)' }}
               >
                 <HighlightedMarkdown text={part.text} />
               </div>
             )
+          }
+
+          if (part.type === 'image' && part.image) {
+            return <ImagePart key={i} image={part.image} />
           }
 
           if (part.type === 'tool-call' && part.toolCall) {
@@ -535,6 +710,9 @@ export default function ChatMessage({ message }: Props) {
 
           return null
         })}
+
+        {/* Collapsible plan block for "Implementing plan..." messages */}
+        {message.planText && <PlanBlock planText={message.planText} />}
       </div>
     </motion.div>
   )

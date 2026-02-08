@@ -1,6 +1,14 @@
 import { useState, useCallback } from 'react'
-import MonacoEditor from '@monaco-editor/react'
+import MonacoEditor, { loader } from '@monaco-editor/react'
 import { X, Clipboard } from 'lucide-react'
+
+// Configure Monaco loader to use CDN for language workers (must run at module level)
+loader.config({
+  paths: {
+    vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.55.1/min/vs'
+  }
+})
+
 import type { EditorTab, Theme } from '../types'
 import ContextMenu, { type MenuItem } from './ContextMenu'
 import ConfirmDialog from './ConfirmDialog'
@@ -229,6 +237,23 @@ export default function Editor({
             language={activeTab.language}
             theme={theme === 'light' ? 'vs' : 'vs-dark'}
             onChange={handleEditorChange}
+            onMount={(editor, monaco) => {
+              // Configure TypeScript compiler options for TS/TSX files
+              if (activeTab.language === 'typescript' || activeTab.language === 'typescriptreact') {
+                monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
+                  target: monaco.languages.typescript.ScriptTarget.Latest,
+                  allowNonTsExtensions: true,
+                  moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
+                  module: monaco.languages.typescript.ModuleKind.CommonJS,
+                  noEmit: true,
+                  esModuleInterop: true,
+                  jsx: monaco.languages.typescript.JsxEmit.React,
+                  reactNamespace: 'React',
+                  allowJs: true,
+                  typeRoots: ['node_modules/@types']
+                })
+              }
+            }}
             options={{
               fontSize: 13,
               fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace",

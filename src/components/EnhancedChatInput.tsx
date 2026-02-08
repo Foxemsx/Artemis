@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Command, FileText, Folder, Trash2, HelpCircle, Sparkles, AtSign, X, Terminal, Search, Globe, BookOpen } from 'lucide-react'
+import { Command, FileText, Folder, Trash2, HelpCircle, Sparkles, AtSign, X, Terminal, Search, Globe, BookOpen, Image as ImageIcon, Plus } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 interface FileNode {
@@ -174,6 +174,12 @@ async function findFileByName(rootPath: string, fileName: string, maxDepth = 4):
   return null
 }
 
+interface AttachedImage {
+  id: string
+  url: string
+  name: string
+}
+
 interface Props {
   value: string
   onChange: (value: string) => void
@@ -184,6 +190,10 @@ interface Props {
   projectPath: string | null
   /** Ref to expose mention resolution function */
   mentionResolverRef?: React.MutableRefObject<(() => Promise<{ text: string; mentions: { name: string; path: string; content: string }[] }>) | null>
+  /** Callback when attached images change */
+  onImagesChange?: (images: AttachedImage[]) => void
+  /** Ref to expose attach image trigger to parent */
+  attachImageRef?: React.MutableRefObject<(() => void) | null>
 }
 
 const SLASH_COMMANDS: SlashCommand[] = [
@@ -230,10 +240,13 @@ export default function EnhancedChatInput({
   disabled = false,
   projectPath,
   mentionResolverRef,
+  onImagesChange,
+  attachImageRef,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const mentionPathMapRef = useRef<Map<string, string>>(new Map())
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [showSlashMenu, setShowSlashMenu] = useState(false)
   const [showMentionMenu, setShowMentionMenu] = useState(false)
   const [slashFilter, setSlashFilter] = useState('')
@@ -241,6 +254,7 @@ export default function EnhancedChatInput({
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([])
   const [cursorPosition, setCursorPosition] = useState(0)
+  const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([])
 
   // Filter slash commands
   const filteredSlashCommands = useMemo(() => {
@@ -543,8 +557,214 @@ export default function EnhancedChatInput({
     }
   }, [value])
 
+  // Handle image file selection
+  const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files) return
+
+    Array.from(files).forEach(file => {
+      if (!file.type.startsWith('image/')) return
+
+      const reader = new FileReader()
+      reader.onload = () => {
+        const imageDataUrl = reader.result as string
+        const newImage: AttachedImage = {
+          id: `${Date.now()}-${Math.random()}`,
+          url: imageDataUrl,
+          name: file.name
+        }
+        setAttachedImages(prev => {
+          const updated = [...prev, newImage]
+          onImagesChange?.(updated)
+          return updated
+        })
+      }
+      reader.readAsDataURL(file)
+    })
+
+    // Reset input so same file can be selected again
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }, [onImagesChange])
+
+  // Handle image removal
+  const handleImageRemove = useCallback((imageId: string) => {
+    setAttachedImages(prev => {
+      const updated = prev.filter(img => img.id !== imageId)
+      onImagesChange?.(updated)
+      return updated
+    })
+  }, [onImagesChange])
+
+  // Trigger file input
+  const handleAttachImage = useCallback(() => {
+    fileInputRef.current?.click()
+  }, [])
+
+  // Expose attach image trigger to parent
+  useEffect(() => {
+    if (attachImageRef) {
+      attachImageRef.current = handleAttachImage
+    }
+    return () => {
+      if (attachImageRef) {
+        attachImageRef.current = null
+      }
+    }
+  }, [attachImageRef, handleAttachImage])
+
+  // Handle paste event (Ctrl+V)
+  const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.type.indexOf('image') !== -1) {
+        e.preventDefault()
+        const file = item.getAsFile()
+        if (file) {
+          const reader = new FileReader()
+          reader.onload = () => {
+            const imageDataUrl = reader.result as string
+            const newImage: AttachedImage = {
+              id: `${Date.now()}-${Math.random()}`,
+              url: imageDataUrl,
+              name: file.name || 'pasted-image.png'
+            }
+            setAttachedImages(prev => {
+              const updated = [...prev, newImage]
+              onImagesChange?.(updated)
+              return updated
+            })
+          }
+          reader.readAsDataURL(file)
+        }
+        break
+      }
+    }
+  }, [onImagesChange])
+
+  // Handle drag events
+  const [isDragging, setIsDragging] = useState(false)
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(true)
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+
+    const files = e.dataTransfer?.files
+    if (!files || files.length === 0) return
+
+    Array.from(files).forEach(file => {
+      if (!file.type.startsWith('image/')) return
+
+      const reader = new FileReader()
+      reader.onload = () => {
+        const imageDataUrl = reader.result as string
+        const newImage: AttachedImage = {
+          id: `${Date.now()}-${Math.random()}`,
+          url: imageDataUrl,
+          name: file.name
+        }
+        setAttachedImages(prev => {
+          const updated = [...prev, newImage]
+          onImagesChange?.(updated)
+          return updated
+        })
+      }
+      reader.readAsDataURL(file)
+    })
+  }, [onImagesChange])
+
   return (
-    <div ref={containerRef} className="relative">
+    <div
+      ref={containerRef}
+      className="relative"
+      onPaste={handlePaste}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Hidden file input for images */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        onChange={handleImageSelect}
+        className="hidden"
+      />
+
+      {/* Drag overlay */}
+      {isDragging && (
+        <div
+          className="absolute inset-0 rounded-xl z-10 flex items-center justify-center"
+          style={{
+            backgroundColor: 'rgba(var(--accent-rgb), 0.1)',
+            border: '2px dashed var(--accent)',
+            backdropFilter: 'blur(4px)',
+          }}
+        >
+          <div
+            className="flex flex-col items-center gap-2"
+            style={{ color: 'var(--accent)' }}
+          >
+            <ImageIcon size={32} />
+            <span className="text-[12px] font-medium">Drop images here</span>
+          </div>
+        </div>
+      )}
+
+      {/* Image thumbnails */}
+      {attachedImages.length > 0 && (
+        <div className="flex flex-wrap gap-2 px-4 pt-3 pb-2">
+          {attachedImages.map(img => (
+            <div
+              key={img.id}
+              className="relative group inline-flex items-center gap-2 px-2 py-1.5 rounded-lg"
+              style={{
+                backgroundColor: 'var(--bg-elevated)',
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              <img
+                src={img.url}
+                alt={img.name}
+                className="w-12 h-12 object-cover rounded-md"
+              />
+              <button
+                onClick={() => handleImageRemove(img.id)}
+                className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full flex items-center justify-center transition-all duration-150 opacity-0 group-hover:opacity-100"
+                style={{
+                  backgroundColor: 'var(--error)',
+                  color: '#fff',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+                }}
+                title="Remove image"
+              >
+                <X size={10} strokeWidth={2.5} />
+              </button>
+              <span className="text-[10px] max-w-[100px] truncate" style={{ color: 'var(--text-muted)' }}>
+                {img.name}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       <textarea
         ref={textareaRef}
         value={value}
@@ -733,9 +953,11 @@ export default function EnhancedChatInput({
             <AtSign size={9} style={{ color: 'var(--accent)' }} /> files &amp; @codebase
           </span>
         </div>
-        <span className="text-[10px]" style={{ color: 'var(--text-muted)', opacity: 0.4 }}>
-          Shift+Enter for new line
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-[10px]" style={{ color: 'var(--text-muted)', opacity: 0.4 }}>
+            Shift+Enter for new line
+          </span>
+        </div>
       </div>
     </div>
   )

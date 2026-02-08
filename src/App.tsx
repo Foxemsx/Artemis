@@ -130,6 +130,18 @@ export default function App() {
     prevStreamingRef.current = opencode.isStreaming
   }, [opencode.isStreaming])
 
+  // ─── Discord RPC: Update presence when active file changes ────────────
+  useEffect(() => {
+    if (activeTabPath) {
+      const fileName = activeTabPath.split(/[\\/]/).pop() || activeTabPath
+      const tab = editorTabs.find(t => t.path === activeTabPath)
+      const language = tab?.language
+      window.artemis.discord.updatePresence(fileName, language, project?.name).catch(() => {})
+    } else {
+      window.artemis.discord.updatePresence(undefined, undefined, project?.name).catch(() => {})
+    }
+  }, [activeTabPath, project?.name]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ─── Load Persisted State on Mount ───────────────────────────────────────
   useEffect(() => {
     Promise.all([
@@ -153,12 +165,15 @@ export default function App() {
       })
   }, [])
 
+  // Destructure opencode values for proper dependency tracking
+  const { hasApiKey, projectSessions, createSession } = opencode
+
   // Auto-create a chat session when ready and no sessions exist for active project
   useEffect(() => {
-    if (opencode.hasApiKey && opencode.projectSessions.length === 0) {
-      opencode.createSession()
+    if (hasApiKey && projectSessions.length === 0) {
+      createSession()
     }
-  }, [opencode.hasApiKey, opencode.projectSessions.length, project?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hasApiKey, projectSessions.length, project?.id, createSession])
 
   // Auto-create a terminal on startup (once app is loaded and setup is complete)
   useEffect(() => {
@@ -261,6 +276,24 @@ export default function App() {
     })
   }, [project, ptyTerminals])
 
+  // ─── Remove Project from Recent ───────────────────────────────────────────
+  const removeProject = useCallback((projectId: string) => {
+    setRecentProjects((prev) => {
+      const filtered = prev.filter((p) => p.id !== projectId)
+      window.artemis.store.set('recentProjects', filtered)
+      return filtered
+    })
+  }, [])
+
+  // ─── Open Project Directory in File Explorer ──────────────────────────────
+  const handleOpenProjectDirectory = useCallback(async (projectPath: string) => {
+    try {
+      await window.artemis.shell.openPath(projectPath)
+    } catch (err) {
+      console.error('Failed to open directory:', err)
+    }
+  }, [])
+
   // ─── File Operations ──────────────────────────────────────────────────────
   const openFile = useCallback(async (filePath: string) => {
     // Check if tab already open
@@ -357,7 +390,7 @@ export default function App() {
     try {
       const dir = oldPath.replace(/[\\/][^\\/]+$/, '')
       const newPath = `${dir}/${newName}`.replace(/\\/g, '/')
-      await window.artemis.tools.runCommand(`move "${oldPath}" "${newPath}"`, project?.path || '.')
+      await window.artemis.fs.rename(oldPath.replace(/\\/g, '/'), newPath)
       // Update any open tab with the old path
       setEditorTabs(prev => prev.map(t =>
         t.path === oldPath.replace(/\\/g, '/') ? { ...t, path: newPath, name: newName } : t
@@ -440,8 +473,8 @@ export default function App() {
     opencode.createSession()
   }, [opencode])
 
-  const handleSendMessage = useCallback(async (text: string, fileContext?: string, modeOverride?: import('./types').AgentMode) => {
-    await opencode.sendMessage(text, fileContext, modeOverride)
+  const handleSendMessage = useCallback(async (text: string, fileContext?: string, modeOverride?: import('./types').AgentMode, planText?: string, images?: Array<{ id: string; url: string; name: string }>) => {
+    await opencode.sendMessage(text, fileContext, modeOverride, planText, images)
   }, [opencode])
 
   // ─── Reset Setup (show intro again) ───────────────────────────────────────
@@ -637,6 +670,8 @@ export default function App() {
               recentProjects={recentProjects}
               onAddProject={addProject}
               onSelectProject={selectProject}
+              onRemoveProject={removeProject}
+              onOpenProjectDirectory={handleOpenProjectDirectory}
               activeModel={opencode.activeModel}
               isReady={opencode.isReady}
               hasApiKey={opencode.hasApiKey}

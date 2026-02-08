@@ -142,6 +142,8 @@ export type AgentEventType =
   | 'tool_result'
   | 'tool_approval_required'
   | 'tool_approval_response'
+  | 'path_approval_required'
+  | 'path_approval_response'
   | 'iteration_start'
   | 'iteration_complete'
   | 'agent_complete'

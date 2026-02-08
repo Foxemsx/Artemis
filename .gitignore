@@ -56,6 +56,9 @@ coverage/
 *.seed
 *.pid.lock
 
+# TypeScript build info
+*.tsbuildinfo
+
 # Electron
 *.tgz
 *.zip

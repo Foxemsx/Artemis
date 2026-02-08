@@ -7,6 +7,7 @@ import TerminalPanel from './TerminalPanel'
 import Settings from './Settings'
 import ProblemsPanel from './ProblemsPanel'
 import SearchPanel from './SearchPanel'
+import MCPMarketplace from './MCPMarketplace'
 
 interface Props {
   activeView: ActivityView
@@ -45,7 +46,7 @@ interface Props {
   onCreateSession: () => void
   onSelectSession: (id: string) => void
   onDeleteSession: (id: string) => void
-  onSendMessage: (text: string, fileContext?: string, modeOverride?: AgentMode) => void
+  onSendMessage: (text: string, fileContext?: string, modeOverride?: AgentMode, planText?: string, images?: Array<{ id: string; url: string; name: string }>) => void
   onAbortMessage: () => void
   onSelectModel: (model: Model) => void
   onAgentModeChange: (mode: AgentMode) => void
@@ -122,7 +123,7 @@ export default function PanelLayout({
     )
   }
 
-  // Search view — full panel
+  // Search view — full panel (in-project search only)
   if (activeView === 'search') {
     return (
       <div className="flex-1 overflow-hidden">
@@ -154,6 +155,15 @@ export default function PanelLayout({
             <TerminalPanel terminals={ptyTerminals} onNewTerminal={onNewTerminal} onCloseTerminal={onCloseTerminal} theme={theme} projectPath={projectPath} />
           </Panel>
         </PanelGroup>
+      </div>
+    )
+  }
+
+  // MCP Marketplace view — full-screen, no explorer/terminal clutter
+  if (activeView === 'mcp') {
+    return (
+      <div className="flex-1 overflow-hidden">
+        <MCPMarketplace />
       </div>
     )
   }

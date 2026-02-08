@@ -1,9 +1,11 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import type { ChatSession, ChatMessage, MessagePart, Provider, Model, AgentMode, EditApprovalMode, SessionTokenUsage, AgentStep, AIProvider } from '../types'
 import { AGENT_MODES } from '../components/AgentModeSelector'
 import { zenClient, type ZenModel, MODEL_METADATA } from '../lib/zenClient'
 import { type SoundSettings, DEFAULT_SOUND_SETTINGS, playSound, showNotification } from '../lib/sounds'
 import { createCheckpoint, getCheckpoints, restoreCheckpoint, extractModifiedFiles, type Checkpoint } from '../lib/checkpoints'
+import { useSessionManager } from './useSessionManager'
+import { useTokenTracker } from './useTokenTracker'
 
 interface UseOpenCodeReturn {
   // Connection
@@ -26,7 +28,7 @@ interface UseOpenCodeReturn {
   messages: ChatMessage[]
   isStreaming: boolean
   streamingSessionIds: Set<string>  // Which sessions have running agents (for UI badges)
-  sendMessage: (text: string, fileContext?: string, modeOverride?: AgentMode) => Promise<void>
+  sendMessage: (text: string, fileContext?: string, modeOverride?: AgentMode, planText?: string, images?: Array<{ id: string; url: string; name: string }>) => Promise<void>
   abortMessage: () => void
   clearMessages: () => void
 
@@ -83,23 +85,18 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     zen: { key: '', isConfigured: false },
     zai: { key: '', isConfigured: false },
   })
-  
-  const [sessions, setSessions] = useState<ChatSession[]>([])
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
-  
-  // Per-session message storage
-  const [allSessionMessages, setAllSessionMessages] = useState<Map<string, ChatMessage[]>>(new Map())
-  
-  // Computed: messages for active session
-  const messages = useMemo(() => {
-    return activeSessionId ? (allSessionMessages.get(activeSessionId) || []) : []
-  }, [activeSessionId, allSessionMessages])
 
-  // Computed: sessions for the active project
-  const projectSessions = useMemo(() => {
-    if (!activeProjectId) return sessions
-    return sessions.filter(s => s.projectId === activeProjectId)
-  }, [sessions, activeProjectId])
+  // ─── Delegated Sub-Hooks ──────────────────────────────────────────────────
+  const {
+    sessions, setSessions, projectSessions, activeSessionId, setActiveSessionId,
+    allSessionMessages, setAllSessionMessages, messages,
+    createSession, selectSession, deleteSession, renameSession, clearMessages,
+    saveSessions, saveMessages,
+  } = useSessionManager(activeProjectId)
+
+  const {
+    sessionTokenUsage, totalTokenUsage, trackUsage, restoreSessionUsage,
+  } = useTokenTracker(activeSessionId)
   
   const [streamingSessionIds, setStreamingSessionIds] = useState<Set<string>>(new Set())
   
@@ -138,27 +135,36 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
   useEffect(() => {
     if (!projectPath) return
 
-    let cancelled = false
+    const abortController = new AbortController()
+    const signal = abortController.signal
+
     const timeoutId = setTimeout(async () => {
       try {
-        const entries = await window.artemis.fs.readDir(projectPath)
         const ignore = new Set(['node_modules', '.git', 'dist', 'dist-electron', '.next', '__pycache__', '.venv', 'venv', 'build', '.cache'])
         let totalChars = 0
         const MAX_FILE_SIZE = 500_000
+        const MAX_TOTAL_CHARS = 10_000_000
+        const MAX_DEPTH = 6
 
         async function countInDir(dirPath: string, depth: number): Promise<void> {
-          if (cancelled || depth > 6 || totalChars > 10_000_000) return
+          // Check for abort before each async operation
+          if (signal.aborted || depth > MAX_DEPTH || totalChars > MAX_TOTAL_CHARS) return
+          
           try {
             const dirEntries = await window.artemis.fs.readDir(dirPath)
+            if (signal.aborted) return
+            
             for (const entry of dirEntries) {
-              if (cancelled) return
+              if (signal.aborted) return
               if (ignore.has(entry.name)) continue
               const fullPath = `${dirPath}/${entry.name}`.replace(/\\/g, '/')
               if (entry.type === 'directory') {
                 await countInDir(fullPath, depth + 1)
+                if (signal.aborted) return
               } else {
                 try {
                   const stat = await window.artemis.fs.stat(fullPath)
+                  if (signal.aborted) return
                   if (stat.size < MAX_FILE_SIZE) {
                     totalChars += stat.size
                   }
@@ -169,23 +175,17 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
         }
 
         await countInDir(projectPath, 0)
-        if (!cancelled) {
+        if (!signal.aborted) {
           setProjectTokenCount(Math.ceil(totalChars / 4))
         }
       } catch {}
     }, 1000)
 
     return () => {
-      cancelled = true
+      abortController.abort()
       clearTimeout(timeoutId)
     }
   }, [projectPath])
-
-  // Token usage tracking — per-session map so switching sessions preserves stats
-  const emptyUsage: SessionTokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, estimatedCost: 0 }
-  const [allSessionTokenUsage, setAllSessionTokenUsage] = useState<Map<string, SessionTokenUsage>>(new Map())
-  const [totalTokenUsage, setTotalTokenUsage] = useState<SessionTokenUsage>({ promptTokens: 0, completionTokens: 0, totalTokens: 0, estimatedCost: 0 })
-  const sessionTokenUsage = (activeSessionId ? allSessionTokenUsage.get(activeSessionId) : null) || emptyUsage
 
   // Derive providers from models - group by aiProvider (OpenCode Zen vs Z.AI)
   const providers: Provider[] = models.reduce((acc, model) => {
@@ -348,6 +348,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     if (projectSess.length > 0) {
       // Select the most recent session for this project
       setActiveSessionId(projectSess[0].id)
+      restoreSessionUsage(projectSess[0].id)
     }
     // Don't auto-create — App.tsx handles that
   }, [activeProjectId]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -467,136 +468,6 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     })
   }, [])
 
-  // Save sessions to storage
-  const saveSessions = useCallback(async (newSessions: ChatSession[]) => {
-    try {
-      await window.artemis.store.set('chatSessions', newSessions)
-    } catch (err) {
-      console.error('[useOpenCode] Error saving sessions:', err)
-    }
-  }, [])
-
-  // Save messages to storage
-  const saveMessages = useCallback(async (sessionId: string, msgs: ChatMessage[]) => {
-    try {
-      await window.artemis.store.set(`messages-${sessionId}`, msgs)
-    } catch (err) {
-      console.error('[useOpenCode] Error saving messages:', err)
-    }
-  }, [])
-
-  // Create session — associates with the active project
-  const createSession = useCallback((title?: string): string => {
-    const id = generateId('session-')
-    const now = new Date().toISOString()
-    
-    const newSession: ChatSession = {
-      id,
-      title: title || 'New Chat',
-      projectId: activeProjectId || undefined,
-      createdAt: now,
-      updatedAt: now,
-    }
-    
-    setSessions(prev => {
-      const updated = [newSession, ...prev]
-      saveSessions(updated)
-      return updated
-    })
-    setActiveSessionId(id)
-    setAllSessionMessages(prev => new Map(prev).set(id, []))
-    
-    return id
-  }, [saveSessions, activeProjectId])
-
-  // Select session
-  const selectSession = useCallback(async (id: string) => {
-    setActiveSessionId(id)
-    
-    // Restore token usage for this session from store
-    try {
-      const savedUsage = await window.artemis.store.get(`tokenUsage-${id}`)
-      if (savedUsage) {
-        setAllSessionTokenUsage(prev => new Map(prev).set(id, savedUsage as SessionTokenUsage))
-      }
-    } catch {}
-    
-    // Load messages for this session — but ONLY if we don't already have them in memory.
-    // During active streaming, messages exist in state but may not be persisted yet.
-    try {
-      const savedMessages = await window.artemis.store.get(`messages-${id}`)
-      setAllSessionMessages(prev => {
-        const existing = prev.get(id)
-        // If messages already exist in memory (e.g. from active streaming), keep them
-        if (existing && existing.length > 0) {
-          return prev
-        }
-        // Otherwise load from storage
-        const next = new Map(prev)
-        if (Array.isArray(savedMessages) && savedMessages.length > 0) {
-          next.set(id, savedMessages)
-        } else {
-          next.set(id, [])
-        }
-        return next
-      })
-    } catch {
-      setAllSessionMessages(prev => {
-        const existing = prev.get(id)
-        if (existing && existing.length > 0) return prev
-        return new Map(prev).set(id, [])
-      })
-    }
-  }, [])
-
-  // Delete session
-  const deleteSession = useCallback((id: string) => {
-    setSessions(prev => {
-      const updated = prev.filter(s => s.id !== id)
-      saveSessions(updated)
-      
-      // If deleting active session, switch to first remaining
-      if (activeSessionId === id) {
-        if (updated.length > 0) {
-          setActiveSessionId(updated[0].id)
-          selectSession(updated[0].id)
-        } else {
-          setActiveSessionId(null)
-          setAllSessionMessages(new Map())
-        }
-      }
-      
-      return updated
-    })
-    
-    // Clean up messages from both state and storage
-    setAllSessionMessages(prev => {
-      const next = new Map(prev)
-      next.delete(id)
-      return next
-    })
-    window.artemis.store.set(`messages-${id}`, null).catch(() => {})
-  }, [activeSessionId, saveSessions, selectSession])
-
-  // Rename session
-  const renameSession = useCallback((id: string, title: string) => {
-    setSessions(prev => {
-      const updated = prev.map(s =>
-        s.id === id ? { ...s, title, updatedAt: new Date().toISOString() } : s
-      )
-      saveSessions(updated)
-      return updated
-    })
-  }, [saveSessions])
-
-  // Clear messages for current session
-  const clearMessages = useCallback(() => {
-    if (!activeSessionId) return
-    
-    setAllSessionMessages(prev => new Map(prev).set(activeSessionId, []))
-    window.artemis.store.set(`messages-${activeSessionId}`, []).catch(() => {})
-  }, [activeSessionId])
-
   // Set project path for tool execution
   const setProjectPath = useCallback((path: string | null) => {
     projectPathRef.current = path
@@ -676,8 +547,8 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
 
   // Send message — uses the new provider-agnostic agent system
   // modeOverride: force a specific agent mode for this request (e.g. when switching from planner to builder)
-  const sendMessage = useCallback(async (text: string, fileContext?: string, modeOverride?: AgentMode) => {
-    if (!activeModel || !text.trim()) {
+  const sendMessage = useCallback(async (text: string, fileContext?: string, modeOverride?: AgentMode, planText?: string, images?: Array<{ id: string; url: string; name: string }>) => {
+    if (!activeModel || (!text.trim() && !images)) {
       if (!activeModel) setError('Please select a model first')
       return
     }
@@ -693,13 +564,31 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
       sessionId = createSession()
     }
 
+    // Build user message parts - text + images
+    const userParts: MessagePart[] = []
+    if (text.trim()) {
+      userParts.push({ type: 'text', text })
+    }
+    if (images && images.length > 0) {
+      for (const img of images) {
+        userParts.push({
+          type: 'image',
+          image: {
+            url: img.url,
+            mimeType: `image/${img.name.split('.').pop() || 'png'}`,
+          },
+        })
+      }
+    }
+
     // Create user message
     const userMsg: ChatMessage = {
       id: generateId('msg-'),
       sessionId,
       role: 'user',
-      parts: [{ type: 'text', text }],
+      parts: userParts,
       createdAt: new Date().toISOString(),
+      ...(planText ? { planText } : {}),
     }
 
     // Create placeholder assistant message
@@ -741,7 +630,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     // Z.AI GLM models use the Anthropic-compatible endpoint with mapped names
     const ZAI_GLM_NAME_MAP: Record<string, string> = {
       'glm-4.7': 'GLM-4.7', 'glm-4.7-free': 'GLM-4.7',
-      'glm-4.6': 'GLM-4.6', 'glm-4.5-air': 'GLM-4.5-Air',
+      'glm-4.6': 'GLM-4.6',
     }
 
     const modelConfig = {
@@ -796,6 +685,19 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
       } catch {
         // AGENTS.md doesn't exist yet — that's fine
       }
+    }
+
+    // ─── Agent Tool Hints ─────────────────────────────────────────
+    if (effectiveMode !== 'planner') {
+      systemPrompt += `\nYou have access to web_search (DuckDuckGo, no API key) and fetch_url (fetch any web page) tools. Use web_search when the user asks you to look something up. Use fetch_url when the user shares a URL or you need to read a web page, docs, or article.`
+    }
+
+    // ─── URL Auto-Detection ───────────────────────────────────────
+    const urlRegex = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi
+    const detectedUrls = text.match(urlRegex)
+    if (detectedUrls && detectedUrls.length > 0) {
+      const uniqueUrls = [...new Set(detectedUrls)]
+      systemPrompt += `\n\nThe user's message contains ${uniqueUrls.length === 1 ? 'a URL' : 'URLs'}. You SHOULD use the fetch_url tool to read ${uniqueUrls.length === 1 ? 'it' : 'them'} and incorporate the content into your response. URLs detected: ${uniqueUrls.join(', ')}`
     }
 
     // ─── Build Conversation History ────────────────────────────
@@ -862,8 +764,6 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     let stepStartTime = thinkingStartTime
     let lastUpdateTime = 0
     const UPDATE_INTERVAL = 50
-    let streamedChars = 0
-    const streamStartTime = Date.now()
     // Track when text streaming actually starts (for accurate speed calculation)
     let textStreamStartTime: number | null = null
     // Sliding window for more accurate speed measurement (last 2 seconds)
@@ -928,7 +828,6 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
           const textPart = getTextPart()
           const content = event.data.content || ''
           textPart.text = (textPart.text || '') + content
-          streamedChars += content.length
 
           // Start tracking time when first text delta arrives
           if (!textStreamStartTime) {
@@ -1012,7 +911,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
           break
 
         case 'tool_approval_required': {
-          // Show approval prompt in the chat as a special tool-call part
+          // Show approval prompt in chat as a special tool-call part
           playSound('action-required', soundSettings)
           showNotification('Artemis — Approval Required', `${event.data.toolName} needs your approval`, soundSettings)
           // Add an approval-pending part to the message
@@ -1022,6 +921,26 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
               id: event.data.toolCallId || generateId('tc-'),
               name: event.data.toolName,
               args: { ...event.data.toolArgs, __approvalId: event.data.approvalId, __pendingApproval: true },
+            },
+          })
+          updateAssistantParts(sessionId!, parts)
+          break
+        }
+
+        case 'path_approval_required': {
+          playSound('action-required', soundSettings)
+          showNotification('Artemis — Path Access', 'Access to file outside project requested', soundSettings)
+          parts.push({
+            type: 'tool-call' as const,
+            toolCall: {
+              id: generateId('tc-'),
+              name: 'path_approval',
+              args: {
+                __approvalId: event.data.approvalId,
+                __pendingApproval: true,
+                filePath: event.data.filePath,
+                reason: event.data.reason,
+              },
             },
           })
           updateAssistantParts(sessionId!, parts)
@@ -1082,14 +1001,11 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
         return updated
       })
 
-      // ─── Token Usage ───────────────────────────────────────────
-      // Count ALL content sent/received, including system prompt, history, tools
+      // ─── Token Usage (delegated to useTokenTracker) ──────────────
       let totalInputChars = (systemPrompt || '').length + text.length + (fileContext || '').length
-      // Add conversation history
       for (const msg of conversationHistory) {
         totalInputChars += msg.content.length
       }
-      // Add tool call arguments and tool result outputs (these are tokens used)
       for (const p of parts) {
         if (p.type === 'tool-call' && p.toolCall?.args) {
           totalInputChars += JSON.stringify(p.toolCall.args).length
@@ -1098,33 +1014,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
           totalInputChars += p.toolResult.output.length
         }
       }
-      const estPromptTokens = Math.ceil(totalInputChars / 4)
-      const estCompletionTokens = Math.ceil(totalText.length / 4)
-      const estTotalTokens = estPromptTokens + estCompletionTokens
-      const meta = MODEL_METADATA[activeModel.id]
-      let estCost = 0
-      if (meta?.pricing) {
-        estCost = (estPromptTokens / 1_000_000) * meta.pricing.input
-                + (estCompletionTokens / 1_000_000) * meta.pricing.output
-      }
-
-      setAllSessionTokenUsage(prev => {
-        const current = prev.get(sessionId!) || { promptTokens: 0, completionTokens: 0, totalTokens: 0, estimatedCost: 0 }
-        const updated = {
-          promptTokens: current.promptTokens + estPromptTokens,
-          completionTokens: current.completionTokens + estCompletionTokens,
-          totalTokens: current.totalTokens + estTotalTokens,
-          estimatedCost: current.estimatedCost + estCost,
-        }
-        window.artemis.store.set(`tokenUsage-${sessionId}`, updated).catch(() => {})
-        return new Map(prev).set(sessionId!, updated)
-      })
-      setTotalTokenUsage(prev => ({
-        promptTokens: prev.promptTokens + estPromptTokens,
-        completionTokens: prev.completionTokens + estCompletionTokens,
-        totalTokens: prev.totalTokens + estTotalTokens,
-        estimatedCost: prev.estimatedCost + estCost,
-      }))
+      trackUsage(sessionId!, activeModel.id, totalInputChars, totalText.length)
 
       // ─── Play completion sound ──────────────────────────────────
       playSound('task-done', soundSettings)
@@ -1176,7 +1066,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
       setStreamingSpeed(0)
       abortControllerRef.current = null
     }
-  }, [activeSessionId, activeModel, allSessionMessages, agentMode, soundSettings, createSession, saveMessages, saveSessions, updateAssistantParts, updateThinkingBlock])
+  }, [activeSessionId, activeModel, allSessionMessages, agentMode, soundSettings, createSession, saveMessages, saveSessions, updateAssistantParts, updateThinkingBlock, trackUsage])
 
   // Abort message — stops the active session's agent run
   const abortMessage = useCallback(() => {

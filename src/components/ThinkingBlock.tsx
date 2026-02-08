@@ -41,7 +41,7 @@ function getToolDisplay(name: string) {
   const map: Record<string, { icon: typeof FileText; label: string; color: string }> = {
     read_file: { icon: Eye, label: 'Read', color: '#60a5fa' },
     write_file: { icon: PenLine, label: 'Write', color: '#34d399' },
-    edit_file: { icon: PenLine, label: 'Edit', color: '#fbbf24' },
+    str_replace: { icon: PenLine, label: 'Edit', color: '#fbbf24' },
     list_directory: { icon: FolderOpen, label: 'List', color: '#a78bfa' },
     create_directory: { icon: FolderOpen, label: 'Create Dir', color: '#a78bfa' },
     search_files: { icon: Search, label: 'Search', color: '#f472b6' },

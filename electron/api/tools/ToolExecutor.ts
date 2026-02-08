@@ -10,6 +10,9 @@ import fs from 'fs'
 import path from 'path'
 import { spawn } from 'child_process'
 import type { ToolCall, ToolResult } from '../types'
+import { webSearch, formatSearchForAgent } from '../../services/webSearchService'
+import { lintFile, formatLintForAgent } from '../../services/linterService'
+import { fetchUrl, formatFetchForAgent } from '../../services/urlFetchService'
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -27,31 +30,60 @@ const IGNORE_DIRS = new Set([
 
 // ─── Path Safety ─────────────────────────────────────────────────────────────
 
-function validatePath(filePath: string, projectPath?: string): string {
-  const resolved = path.resolve(filePath)
+type PathApprovalCallback = (filePath: string, reason: string) => Promise<boolean>
 
-  // If project path is set, enforce containment
-  if (projectPath) {
-    const resolvedProject = path.resolve(projectPath)
-    if (!resolved.startsWith(resolvedProject + path.sep) && resolved !== resolvedProject) {
-      throw new Error(`Access denied: path ${resolved} is outside the project directory ${resolvedProject}`)
-    }
+function validatePath(filePath: string, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
+  // Security: Block UNC paths and Windows extended paths that could bypass checks
+  if (filePath.startsWith('\\\\') || filePath.startsWith('//') || filePath.startsWith('\\?\\')) {
+    throw new Error(`Access denied: UNC or extended paths are not allowed`)
   }
 
-  // Always block obvious dangerous system paths
-  const dangerous = ['C:\\Windows', 'C:\\Program Files', '/usr', '/etc', '/bin', '/sbin']
+  const resolved = path.resolve(filePath)
+
+  // Security: Block resolved UNC paths
+  if (resolved.startsWith('\\\\') || resolved.startsWith('//')) {
+    throw new Error(`Access denied: UNC paths are not allowed`)
+  }
+
+  // Always block obvious dangerous system paths (case-insensitive)
+  const dangerous = ['C:\\Windows', 'C:\\Program Files', '/usr', '/etc', '/bin', '/sbin', '/lib', '/lib64', '/sys', '/proc', '/dev']
   for (const d of dangerous) {
     if (resolved.toLowerCase().startsWith(d.toLowerCase())) {
       throw new Error(`Access denied: cannot operate on system path ${resolved}`)
     }
   }
-  return resolved
+
+  // If project path is set, enforce containment with case-insensitive comparison
+  if (projectPath) {
+    const resolvedProject = path.resolve(projectPath)
+    const normalizedResolved = resolved.toLowerCase()
+    const normalizedProject = resolvedProject.toLowerCase()
+    const projectPrefix = normalizedProject + path.sep.toLowerCase()
+    
+    // Check if path is within project directory (case-insensitive)
+    if (!normalizedResolved.startsWith(projectPrefix) && normalizedResolved !== normalizedProject) {
+      // Path is outside project - ask for approval if callback provided
+      if (onPathApproval) {
+        return onPathApproval(resolved, `Path is outside the project directory (${resolvedProject})`)
+          .then(approved => {
+            if (!approved) {
+              throw new Error(`Access denied: user declined access to ${resolved} (outside project)`)
+            }
+            return resolved
+          })
+      } else {
+        throw new Error(`Access denied: path ${resolved} is outside the project directory ${resolvedProject}`)
+      }
+    }
+  }
+
+  return Promise.resolve(resolved)
 }
 
 // ─── Tool Implementations ────────────────────────────────────────────────────
 
-async function toolReadFile(args: Record<string, any>, projectPath?: string): Promise<string> {
-  const filePath = validatePath(args.path, projectPath)
+async function toolReadFile(args: Record<string, any>, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
+  const filePath = await validatePath(args.path, projectPath, onPathApproval)
   const stat = await fs.promises.stat(filePath)
   if (stat.isDirectory()) {
     throw new Error(`Path is a directory, not a file: ${filePath}`)
@@ -63,8 +95,8 @@ async function toolReadFile(args: Record<string, any>, projectPath?: string): Pr
   return content || '(empty file)'
 }
 
-async function toolWriteFile(args: Record<string, any>, projectPath?: string): Promise<string> {
-  const filePath = validatePath(args.path, projectPath)
+async function toolWriteFile(args: Record<string, any>, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
+  const filePath = await validatePath(args.path, projectPath, onPathApproval)
   // Ensure parent directory exists
   const dir = path.dirname(filePath)
   await fs.promises.mkdir(dir, { recursive: true })
@@ -81,8 +113,8 @@ async function toolWriteFile(args: Record<string, any>, projectPath?: string): P
   return `File written successfully: ${filePath} (${Buffer.byteLength(args.content, 'utf-8')} bytes)`
 }
 
-async function toolStrReplace(args: Record<string, any>, projectPath?: string): Promise<string> {
-  const filePath = validatePath(args.path, projectPath)
+async function toolStrReplace(args: Record<string, any>, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
+  const filePath = await validatePath(args.path, projectPath, onPathApproval)
   const content = await fs.promises.readFile(filePath, 'utf-8')
 
   if (!content.includes(args.old_str)) {
@@ -108,8 +140,8 @@ async function toolStrReplace(args: Record<string, any>, projectPath?: string): 
   return `File edited successfully: ${filePath}`
 }
 
-async function toolListDirectory(args: Record<string, any>, projectPath?: string): Promise<string> {
-  const dirPath = validatePath(args.path, projectPath)
+async function toolListDirectory(args: Record<string, any>, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
+  const dirPath = await validatePath(args.path, projectPath, onPathApproval)
   const entries = await fs.promises.readdir(dirPath, { withFileTypes: true })
   const filtered = entries
     .filter(e => !e.name.startsWith('.') && e.name !== 'node_modules')
@@ -122,8 +154,8 @@ async function toolListDirectory(args: Record<string, any>, projectPath?: string
   return filtered.length > 0 ? filtered.join('\n') : '(empty directory)'
 }
 
-async function toolSearchFiles(args: Record<string, any>, projectPath?: string): Promise<string> {
-  const searchPath = validatePath(args.path, projectPath)
+async function toolSearchFiles(args: Record<string, any>, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
+  const searchPath = await validatePath(args.path, projectPath, onPathApproval)
   const results: string[] = []
 
   async function search(dir: string, depth: number): Promise<void> {
@@ -181,17 +213,62 @@ async function toolSearchFiles(args: Record<string, any>, projectPath?: string):
   return output
 }
 
+// Dangerous shell metacharacters that could enable command injection
+const DANGEROUS_SHELL_CHARS = /[;&|`$(){}[\]\<>\n\r]/
+
+// Parse a command string into [executable, ...args] without using a shell
+function parseCommandTokens(command: string): { exe: string; args: string[] } {
+  const tokens: string[] = []
+  let current = ''
+  let inSingle = false
+  let inDouble = false
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]
+    if (ch === "'" && !inDouble) { inSingle = !inSingle; continue }
+    if (ch === '"' && !inSingle) { inDouble = !inDouble; continue }
+    if (ch === ' ' && !inSingle && !inDouble) {
+      if (current) { tokens.push(current); current = '' }
+      continue
+    }
+    current += ch
+  }
+  if (current) tokens.push(current)
+
+  if (tokens.length === 0) return { exe: '', args: [] }
+  return { exe: tokens[0], args: tokens.slice(1) }
+}
+
 async function toolExecuteCommand(args: Record<string, any>, projectPath: string): Promise<string> {
   const cwd = args.cwd || projectPath || '.'
+  
+  // Security: Validate command to prevent injection
+  if (!args.command || typeof args.command !== 'string') {
+    return 'Error: No command provided'
+  }
+  
+  // Block dangerous characters that could enable command injection
+  if (DANGEROUS_SHELL_CHARS.test(args.command)) {
+    return `Error: Command contains potentially dangerous characters. Commands should be simple and not include shell metacharacters like ; & | \` $ ( ) etc.`
+  }
+
+  // Block Windows environment variable expansion (%VAR%) and caret escapes (^)
+  if (process.platform === 'win32' && (/%[^%]+%/.test(args.command) || args.command.includes('^'))) {
+    return 'Error: Command contains shell expansion characters that are not allowed.'
+  }
+
+  const { exe, args: cmdArgs } = parseCommandTokens(args.command)
+  if (!exe) {
+    return 'Error: Empty command'
+  }
 
   return new Promise<string>((resolve) => {
-    const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh'
-    const shellArgs = process.platform === 'win32' ? ['/c', args.command] : ['-c', args.command]
-
-    const child = spawn(shell, shellArgs, {
+    // Spawn directly without a shell — prevents shell injection vectors
+    const child = spawn(exe, cmdArgs, {
       cwd,
       env: { ...process.env },
       stdio: ['ignore', 'pipe', 'pipe'],
+      shell: false,
     })
 
     let stdout = ''
@@ -228,8 +305,8 @@ async function toolGetGitDiff(args: Record<string, any>, projectPath: string): P
   return toolExecuteCommand({ command: 'git diff', cwd: projectPath }, projectPath)
 }
 
-async function toolListCodeDefinitions(args: Record<string, any>, projectPath?: string): Promise<string> {
-  const filePath = validatePath(args.path, projectPath)
+async function toolListCodeDefinitions(args: Record<string, any>, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
+  const filePath = await validatePath(args.path, projectPath, onPathApproval)
   const content = await fs.promises.readFile(filePath, 'utf-8')
   const lines = content.split('\n')
   const definitions: string[] = []
@@ -280,14 +357,14 @@ async function toolListCodeDefinitions(args: Record<string, any>, projectPath?: 
   return definitions.join('\n')
 }
 
-async function toolCreateDirectory(args: Record<string, any>, projectPath?: string): Promise<string> {
-  const dirPath = validatePath(args.path, projectPath)
+async function toolCreateDirectory(args: Record<string, any>, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
+  const dirPath = await validatePath(args.path, projectPath, onPathApproval)
   await fs.promises.mkdir(dirPath, { recursive: true })
   return `Directory created: ${dirPath}`
 }
 
-async function toolDeleteFile(args: Record<string, any>, projectPath?: string): Promise<string> {
-  const filePath = validatePath(args.path, projectPath)
+async function toolDeleteFile(args: Record<string, any>, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
+  const filePath = await validatePath(args.path, projectPath, onPathApproval)
   const stat = await fs.promises.stat(filePath)
   if (stat.isDirectory()) {
     throw new Error(`Path is a directory. Use execute_command with rmdir for directories.`)
@@ -296,9 +373,9 @@ async function toolDeleteFile(args: Record<string, any>, projectPath?: string): 
   return `Deleted: ${filePath}`
 }
 
-async function toolMoveFile(args: Record<string, any>, projectPath?: string): Promise<string> {
-  const oldPath = validatePath(args.old_path, projectPath)
-  const newPath = validatePath(args.new_path, projectPath)
+async function toolMoveFile(args: Record<string, any>, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
+  const oldPath = await validatePath(args.old_path, projectPath, onPathApproval)
+  const newPath = await validatePath(args.new_path, projectPath, onPathApproval)
 
   // Ensure target directory exists
   const newDir = path.dirname(newPath)
@@ -308,9 +385,42 @@ async function toolMoveFile(args: Record<string, any>, projectPath?: string): Pr
   return `Moved: ${oldPath} → ${newPath}`
 }
 
+async function toolWebSearch(args: Record<string, any>): Promise<string> {
+  if (!args.query || typeof args.query !== 'string') {
+    throw new Error('web_search requires a "query" parameter')
+  }
+  const response = await webSearch(args.query)
+  return formatSearchForAgent(response)
+}
+
+async function toolLintFile(args: Record<string, any>, projectPath: string): Promise<string> {
+  if (!args.path || typeof args.path !== 'string') {
+    throw new Error('lint_file requires a "path" parameter')
+  }
+  const result = await lintFile(args.path, projectPath)
+  return formatLintForAgent(result)
+}
+
+async function toolFetchUrl(args: Record<string, any>): Promise<string> {
+  if (!args.url || typeof args.url !== 'string') {
+    throw new Error('fetch_url requires a "url" parameter')
+  }
+  const result = await fetchUrl(args.url)
+  return formatFetchForAgent(result)
+}
+
 // ─── Tool Executor Class ─────────────────────────────────────────────────────
 
 export class ToolExecutor {
+  private onPathApproval?: PathApprovalCallback
+
+  /**
+   * Set the path approval callback
+   */
+  setPathApprovalCallback(callback: PathApprovalCallback): void {
+    this.onPathApproval = callback
+  }
+
   /**
    * Execute a tool call safely. Always returns a ToolResult, never throws.
    */
@@ -352,18 +462,27 @@ export class ToolExecutor {
    * Dispatch to the correct tool implementation.
    */
   private async dispatch(name: string, args: Record<string, any>, projectPath?: string): Promise<string> {
+    // Route MCP tools to the MCP client manager
+    if (name.startsWith('mcp_')) {
+      const { mcpClientManager } = require('../../services/mcpClient')
+      return mcpClientManager.callTool(name, args)
+    }
+
     switch (name) {
-      case 'read_file':             return toolReadFile(args, projectPath)
-      case 'write_file':            return toolWriteFile(args, projectPath)
-      case 'str_replace':           return toolStrReplace(args, projectPath)
-      case 'list_directory':        return toolListDirectory(args, projectPath)
-      case 'search_files':          return toolSearchFiles(args, projectPath)
+      case 'read_file':             return toolReadFile(args, projectPath, this.onPathApproval)
+      case 'write_file':            return toolWriteFile(args, projectPath, this.onPathApproval)
+      case 'str_replace':           return toolStrReplace(args, projectPath, this.onPathApproval)
+      case 'list_directory':        return toolListDirectory(args, projectPath, this.onPathApproval)
+      case 'search_files':          return toolSearchFiles(args, projectPath, this.onPathApproval)
       case 'execute_command':       return toolExecuteCommand(args, projectPath || '.')
       case 'get_git_diff':          return toolGetGitDiff(args, projectPath || '.')
-      case 'list_code_definitions': return toolListCodeDefinitions(args, projectPath)
-      case 'create_directory':      return toolCreateDirectory(args, projectPath)
-      case 'delete_file':           return toolDeleteFile(args, projectPath)
-      case 'move_file':             return toolMoveFile(args, projectPath)
+      case 'list_code_definitions': return toolListCodeDefinitions(args, projectPath, this.onPathApproval)
+      case 'create_directory':      return toolCreateDirectory(args, projectPath, this.onPathApproval)
+      case 'delete_file':           return toolDeleteFile(args, projectPath, this.onPathApproval)
+      case 'move_file':             return toolMoveFile(args, projectPath, this.onPathApproval)
+      case 'web_search':            return toolWebSearch(args)
+      case 'lint_file':             return toolLintFile(args, projectPath || '.')
+      case 'fetch_url':             return toolFetchUrl(args)
       default:
         throw new Error(`Unknown tool: ${name}`)
     }

@@ -6,24 +6,23 @@ import {
   Search,
   Terminal,
   Wrench,
-  CheckCircle2,
-  XCircle,
-  AlertCircle,
-  Loader2,
   Code,
   FileCode,
   FolderTree,
-  Command,
   FileSearch,
   Info,
   Trash2,
   ArrowRightLeft,
   ListTodo,
+  Globe,
+  Eye,
+  Link,
+  Plug,
   type LucideIcon,
 } from 'lucide-react'
 
 // Tool categories for grouping and color coding
-export type ToolCategory = 'read' | 'write' | 'edit' | 'directory' | 'search' | 'execute' | 'other'
+export type ToolCategory = 'read' | 'write' | 'edit' | 'directory' | 'search' | 'execute' | 'mcp' | 'other'
 
 export interface ToolConfig {
   icon: LucideIcon
@@ -60,15 +59,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   },
 
   // Edit operations
-  edit_file: {
-    icon: FileCode,
-    category: 'edit',
-    label: 'Edit File',
-    description: 'Modifying file contents',
-    color: '#fbbf24', // amber-400
-    bgColor: 'rgba(251, 191, 36, 0.1)',
-    borderColor: 'rgba(251, 191, 36, 0.2)',
-  },
   str_replace: {
     icon: FileCode,
     category: 'edit',
@@ -223,6 +213,39 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     borderColor: 'rgba(52, 211, 153, 0.2)',
   },
 
+  // Web search
+  web_search: {
+    icon: Globe,
+    category: 'search',
+    label: 'Web Search',
+    description: 'Searching the web',
+    color: '#22d3ee', // cyan-400
+    bgColor: 'rgba(34, 211, 238, 0.1)',
+    borderColor: 'rgba(34, 211, 238, 0.2)',
+  },
+
+  // Lint file
+  lint_file: {
+    icon: Eye,
+    category: 'read',
+    label: 'Lint File',
+    description: 'Running linter on file',
+    color: '#fbbf24', // amber-400
+    bgColor: 'rgba(251, 191, 36, 0.1)',
+    borderColor: 'rgba(251, 191, 36, 0.2)',
+  },
+
+  // Fetch URL
+  fetch_url: {
+    icon: Link,
+    category: 'read',
+    label: 'Fetch URL',
+    description: 'Fetching web page content',
+    color: '#818cf8', // indigo-400
+    bgColor: 'rgba(129, 140, 248, 0.1)',
+    borderColor: 'rgba(129, 140, 248, 0.2)',
+  },
+
   // Fallback
   default: {
     icon: Wrench,
@@ -237,52 +260,28 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
 
 // Get tool configuration by name
 export function getToolConfig(toolName: string): ToolConfig {
-  return TOOL_CONFIGS[toolName] || TOOL_CONFIGS.default
-}
+  if (TOOL_CONFIGS[toolName]) return TOOL_CONFIGS[toolName]
 
-// Status configurations for tool results
-export interface StatusConfig {
-  icon: LucideIcon
-  label: string
-  color: string
-  bgColor: string
-  borderColor: string
-}
+  // Dynamic MCP tool detection — tools prefixed with mcp_ get a distinct visual
+  if (toolName.startsWith('mcp_')) {
+    // Extract readable name: mcp_mcp_git_git_status -> Git Status
+    const parts = toolName.replace(/^mcp_/, '').split('_')
+    // Remove server ID prefix (e.g., "mcp_git" -> skip first two parts)
+    const toolParts = parts.length > 2 ? parts.slice(2) : parts
+    const label = toolParts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ')
 
-export const STATUS_CONFIGS: Record<string, StatusConfig> = {
-  success: {
-    icon: CheckCircle2,
-    label: 'Success',
-    color: '#4ade80', // green-400
-    bgColor: 'rgba(74, 222, 128, 0.1)',
-    borderColor: 'rgba(74, 222, 128, 0.2)',
-  },
-  failed: {
-    icon: XCircle,
-    label: 'Failed',
-    color: '#f87171', // red-400
-    bgColor: 'rgba(248, 113, 113, 0.1)',
-    borderColor: 'rgba(248, 113, 113, 0.2)',
-  },
-  pending: {
-    icon: Loader2,
-    label: 'Running',
-    color: '#60a5fa', // blue-400
-    bgColor: 'rgba(96, 165, 250, 0.1)',
-    borderColor: 'rgba(96, 165, 250, 0.2)',
-  },
-  warning: {
-    icon: AlertCircle,
-    label: 'Warning',
-    color: '#fbbf24', // amber-400
-    bgColor: 'rgba(251, 191, 36, 0.1)',
-    borderColor: 'rgba(251, 191, 36, 0.2)',
-  },
-}
+    return {
+      icon: Plug,
+      category: 'mcp',
+      label: `MCP: ${label}`,
+      description: `MCP tool: ${label}`,
+      color: '#2dd4bf', // teal-400
+      bgColor: 'rgba(45, 212, 191, 0.1)',
+      borderColor: 'rgba(45, 212, 191, 0.2)',
+    }
+  }
 
-// Get status configuration by status type
-export function getStatusConfig(status: string): StatusConfig {
-  return STATUS_CONFIGS[status] || STATUS_CONFIGS.pending
+  return TOOL_CONFIGS.default
 }
 
 // Format tool arguments for display

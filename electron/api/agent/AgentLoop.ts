@@ -23,6 +23,7 @@ import type {
   AgentResponse,
   AgentEvent,
   UniversalMessage,
+  UniversalToolDefinition,
   ToolCall,
   ToolResult,
   CompletionRequest,
@@ -35,6 +36,7 @@ import { ConversationManager } from '../conversation/ConversationManager'
 import { toolRegistry } from '../tools/ToolRegistry'
 import { toolExecutor } from '../tools/ToolExecutor'
 import { StreamProcessor } from './StreamParser'
+import { mcpClientManager } from '../../services/mcpClient'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -99,9 +101,17 @@ export class AgentLoop {
     const adapter = ProviderFactory.getAdapter(request.model, request.provider)
 
     // Resolve tools based on agent mode
-    const tools = request.toolNames
+    const builtinTools = request.toolNames
       ? toolRegistry.getByNames(request.toolNames)
       : toolRegistry.getToolsForMode(request.agentMode || 'builder')
+
+    // Merge MCP tools from connected servers
+    const mcpTools: UniversalToolDefinition[] = mcpClientManager.getAllTools().map(t => ({
+      name: t.name,
+      description: `[MCP] ${t.description}`,
+      parameters: t.inputSchema as any,
+    }))
+    const tools = [...builtinTools, ...mcpTools]
 
     // Initialize conversation
     const conversation = new ConversationManager(request.conversationHistory)

@@ -63,11 +63,28 @@ export class AnthropicAdapter extends BaseProvider {
       'x-api-key': request.provider.apiKey,
       'anthropic-version': '2023-06-01',
     }
+    // Security: Safely merge extra headers to prevent prototype pollution
     if (request.provider.extraHeaders) {
-      Object.assign(headers, request.provider.extraHeaders)
+      for (const [key, value] of Object.entries(request.provider.extraHeaders)) {
+        // Block prototype pollution keys
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+          continue
+        }
+        if (typeof value === 'string') {
+          headers[key] = value
+        }
+      }
     }
     if (request.model.extraHeaders) {
-      Object.assign(headers, request.model.extraHeaders)
+      for (const [key, value] of Object.entries(request.model.extraHeaders)) {
+        // Block prototype pollution keys
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+          continue
+        }
+        if (typeof value === 'string') {
+          headers[key] = value
+        }
+      }
     }
     return headers
   }

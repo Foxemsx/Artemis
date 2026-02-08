@@ -1,8 +1,12 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, safeStorage } from 'electron'
 import path from 'path'
 import fs from 'fs'
-import { spawn, exec, type ChildProcess } from 'child_process'
+import { spawn } from 'child_process'
 import { registerAgentIPC } from './api'
+import { webSearch } from './services/webSearchService'
+import { lintFile } from './services/linterService'
+import * as mcpService from './services/mcpService'
+import * as discordRPC from './services/discordRPCService'
 
 // node-pty is a native module - import with fallback
 let ptyModule: typeof import('node-pty') | null = null
@@ -13,7 +17,37 @@ try {
 }
 
 // ─── Persistent Store ──────────────────────────────────────────────────────
-const STORE_PATH = path.join(app.getPath('userData'), 'artemis-settings.json')
+const STORE_DIR = path.join(app.getPath('userData'))
+const STORE_PATH = path.join(STORE_DIR, 'artemis-settings.json')
+
+// Keys that contain sensitive data and must be encrypted
+const SENSITIVE_KEY_PREFIXES = ['apiKey:']
+
+function isSensitiveKey(key: string): boolean {
+  return SENSITIVE_KEY_PREFIXES.some(prefix => key.startsWith(prefix))
+}
+
+function encryptValue(value: string): string {
+  if (!safeStorage.isEncryptionAvailable()) {
+    console.warn('[Artemis] safeStorage encryption not available — falling back to plaintext')
+    return value
+  }
+  const encrypted = safeStorage.encryptString(value)
+  return 'enc:' + encrypted.toString('base64')
+}
+
+function decryptValue(stored: string): string {
+  if (!stored.startsWith('enc:')) {
+    // Legacy plaintext value — return as-is (will be re-encrypted on next save)
+    return stored
+  }
+  if (!safeStorage.isEncryptionAvailable()) {
+    console.warn('[Artemis] safeStorage decryption not available')
+    return ''
+  }
+  const buffer = Buffer.from(stored.slice(4), 'base64')
+  return safeStorage.decryptString(buffer)
+}
 
 function loadStore(): Record<string, any> {
   try {
@@ -36,9 +70,6 @@ let store = loadStore()
 
 // ─── PTY Session Management ────────────────────────────────────────────────
 const sessions = new Map<string, import('node-pty').IPty>()
-
-// ─── OpenCode Server Management ────────────────────────────────────────────
-let opencodeServer: ChildProcess | null = null
 
 // ─── Main Window ───────────────────────────────────────────────────────────
 let mainWindow: BrowserWindow | null = null
@@ -83,6 +114,28 @@ function createWindow() {
   mainWindow.on('unmaximize', () => {
     mainWindow?.webContents.send('window:unmaximized')
   })
+
+  // Security: Set Content Security Policy headers
+  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net blob: data:; " +
+          "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net blob:; " +
+          "worker-src 'self' blob:; " +
+          "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; " +
+          "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; " +
+          "font-src 'self' https://fonts.gstatic.com data:; " +
+          "img-src 'self' data: https: blob:; " +
+          "connect-src 'self' https://opencode.ai https://api.z.ai https://*.opencode.ai https://*.z.ai https://html.duckduckgo.com; " +
+          "object-src 'none'; " +
+          "frame-ancestors 'none'; " +
+          "base-uri 'self';"
+        ]
+      }
+    })
+  })
 }
 
 // ─── IPC: Window Controls ──────────────────────────────────────────────────
@@ -99,12 +152,31 @@ ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false)
 
 // ─── IPC: Store ────────────────────────────────────────────────────────────
 ipcMain.handle('store:get', (_e, key: string) => {
-  return store[key]
+  const raw = store[key]
+  // Decrypt sensitive keys on read
+  if (isSensitiveKey(key) && typeof raw === 'string' && raw) {
+    return decryptValue(raw)
+  }
+  return raw
 })
 
 ipcMain.handle('store:set', (_e, key: string, value: any) => {
-  store[key] = value
+  // Encrypt sensitive keys on write
+  if (isSensitiveKey(key) && typeof value === 'string' && value) {
+    store[key] = encryptValue(value)
+  } else {
+    store[key] = value
+  }
   saveStore(store)
+})
+
+// ─── IPC: Store Directory (for UI display) ─────────────────────────────────
+ipcMain.handle('store:getDir', () => {
+  return STORE_DIR
+})
+
+ipcMain.handle('store:isEncrypted', () => {
+  return safeStorage.isEncryptionAvailable()
 })
 
 // ─── IPC: Folder Dialog ────────────────────────────────────────────────────
@@ -120,12 +192,60 @@ ipcMain.handle('dialog:openFolder', async () => {
   return { path: folderPath, name: path.basename(folderPath) }
 })
 
+// ─── Input Validation Helper ───────────────────────────────────────────────
+const DANGEROUS_SHELL_CHARS = /[;&|`$(){}[\]\<>\n\r]/
+
+function validateFsPath(filePath: string, operation: string): string {
+  // Validate input type
+  if (typeof filePath !== 'string') {
+    throw new Error(`Invalid path: expected string, got ${typeof filePath}`)
+  }
+  
+  // Block empty paths
+  if (!filePath || filePath.trim().length === 0) {
+    throw new Error('Invalid path: empty path')
+  }
+  
+  // Block UNC paths
+  if (filePath.startsWith('\\\\') || filePath.startsWith('//')) {
+    throw new Error('Access denied: UNC paths are not allowed')
+  }
+  
+  // Block Windows extended paths
+  if (filePath.startsWith('\\?\\')) {
+    throw new Error('Access denied: Extended paths are not allowed')
+  }
+  
+  // Block null bytes
+  if (filePath.includes('\0')) {
+    throw new Error('Access denied: null bytes in path')
+  }
+  
+  const resolved = path.resolve(filePath)
+  
+  // Block resolved UNC paths
+  if (resolved.startsWith('\\\\') || resolved.startsWith('//')) {
+    throw new Error('Access denied: UNC paths are not allowed')
+  }
+  
+  // Block dangerous system paths (case-insensitive)
+  const dangerous = ['C:\\Windows', 'C:\\Program Files', '/usr', '/etc', '/bin', '/sbin', '/lib', '/lib64', '/sys', '/proc', '/dev']
+  for (const d of dangerous) {
+    if (resolved.toLowerCase().startsWith(d.toLowerCase())) {
+      throw new Error(`Access denied: cannot ${operation} on system path`)
+    }
+  }
+  
+  return resolved
+}
+
 // ─── IPC: File System Operations ───────────────────────────────────────────
 ipcMain.handle('fs:readDir', async (_e, dirPath: string) => {
   try {
-    const entries = await fs.promises.readdir(dirPath, { withFileTypes: true })
+    const validatedPath = validateFsPath(dirPath, 'read directory')
+    const entries = await fs.promises.readdir(validatedPath, { withFileTypes: true })
     return entries
-      .filter((e) => !e.name.startsWith('.') && e.name !== 'node_modules')
+      .filter((e) => e.name !== '.git' && e.name !== 'node_modules')
       .map((e) => ({
         name: e.name,
         type: e.isDirectory() ? 'directory' as const : 'file' as const,
@@ -143,7 +263,8 @@ ipcMain.handle('fs:readDir', async (_e, dirPath: string) => {
 
 ipcMain.handle('fs:readFile', async (_e, filePath: string) => {
   try {
-    return await fs.promises.readFile(filePath, 'utf-8')
+    const validatedPath = validateFsPath(filePath, 'read file')
+    return await fs.promises.readFile(validatedPath, 'utf-8')
   } catch (err: any) {
     console.error('fs:readFile error:', err.message)
     return ''
@@ -152,7 +273,8 @@ ipcMain.handle('fs:readFile', async (_e, filePath: string) => {
 
 ipcMain.handle('fs:writeFile', async (_e, filePath: string, content: string) => {
   try {
-    await fs.promises.writeFile(filePath, content, 'utf-8')
+    const validatedPath = validateFsPath(filePath, 'write file')
+    await fs.promises.writeFile(validatedPath, content, 'utf-8')
   } catch (err: any) {
     console.error('fs:writeFile error:', err.message)
     throw err
@@ -161,7 +283,8 @@ ipcMain.handle('fs:writeFile', async (_e, filePath: string, content: string) => 
 
 ipcMain.handle('fs:stat', async (_e, filePath: string) => {
   try {
-    const stat = await fs.promises.stat(filePath)
+    const validatedPath = validateFsPath(filePath, 'stat')
+    const stat = await fs.promises.stat(validatedPath)
     return {
       size: stat.size,
       isDirectory: stat.isDirectory(),
@@ -176,7 +299,8 @@ ipcMain.handle('fs:stat', async (_e, filePath: string) => {
 // ─── IPC: Create Directory ─────────────────────────────────────────────────
 ipcMain.handle('fs:createDir', async (_e, dirPath: string) => {
   try {
-    await fs.promises.mkdir(dirPath, { recursive: true })
+    const validatedPath = validateFsPath(dirPath, 'create directory')
+    await fs.promises.mkdir(validatedPath, { recursive: true })
   } catch (err: any) {
     console.error('fs:createDir error:', err.message)
     throw err
@@ -186,11 +310,12 @@ ipcMain.handle('fs:createDir', async (_e, dirPath: string) => {
 // ─── IPC: Delete File/Directory ──────────────────────────────────────────
 ipcMain.handle('fs:delete', async (_e, targetPath: string) => {
   try {
-    const stat = await fs.promises.stat(targetPath)
+    const validatedPath = validateFsPath(targetPath, 'delete')
+    const stat = await fs.promises.stat(validatedPath)
     if (stat.isDirectory()) {
-      await fs.promises.rm(targetPath, { recursive: true, force: true })
+      await fs.promises.rm(validatedPath, { recursive: true, force: true })
     } else {
-      await fs.promises.unlink(targetPath)
+      await fs.promises.unlink(validatedPath)
     }
   } catch (err: any) {
     console.error('fs:delete error:', err.message)
@@ -198,16 +323,91 @@ ipcMain.handle('fs:delete', async (_e, targetPath: string) => {
   }
 })
 
+// ─── IPC: Rename/Move File ─────────────────────────────────────────────────
+ipcMain.handle('fs:rename', async (_e, oldPath: string, newPath: string) => {
+  try {
+    const validatedOld = validateFsPath(oldPath, 'rename (source)')
+    const validatedNew = validateFsPath(newPath, 'rename (destination)')
+    await fs.promises.rename(validatedOld, validatedNew)
+  } catch (err: any) {
+    console.error('fs:rename error:', err.message)
+    throw err
+  }
+})
+
+// ─── IPC: Shell Operations ───────────────────────────────────────────────
+ipcMain.handle('shell:openPath', async (_e, targetPath: string) => {
+  try {
+    const { shell } = require('electron')
+    await shell.openPath(targetPath)
+  } catch (err: any) {
+    console.error('shell:openPath error:', err.message)
+    throw err
+  }
+})
+
 // ─── IPC: Tool Execution ──────────────────────────────────────────────────
+
+// Security: Parse a command string into [executable, ...args] without using a shell.
+// This avoids shell injection by never passing user input through cmd.exe/sh -c.
+function parseCommand(command: string): { exe: string; args: string[] } {
+  const tokens: string[] = []
+  let current = ''
+  let inSingle = false
+  let inDouble = false
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i]
+    if (ch === "'" && !inDouble) { inSingle = !inSingle; continue }
+    if (ch === '"' && !inSingle) { inDouble = !inDouble; continue }
+    if (ch === ' ' && !inSingle && !inDouble) {
+      if (current) { tokens.push(current); current = '' }
+      continue
+    }
+    current += ch
+  }
+  if (current) tokens.push(current)
+
+  if (tokens.length === 0) return { exe: '', args: [] }
+  return { exe: tokens[0], args: tokens.slice(1) }
+}
+
 ipcMain.handle('tools:runCommand', async (_e, command: string, cwd: string) => {
+  // Security: Validate command to prevent injection
+  if (!command || typeof command !== 'string') {
+    return { stdout: '', stderr: 'Invalid command: expected string', exitCode: -1 }
+  }
+  
+  // Security: Block dangerous shell metacharacters
+  if (DANGEROUS_SHELL_CHARS.test(command)) {
+    return { stdout: '', stderr: 'Access denied: command contains dangerous characters', exitCode: -1 }
+  }
+
+  // Security: Block Windows environment variable expansion (%VAR%) and caret escapes (^)
+  if (process.platform === 'win32' && (/%[^%]+%/.test(command) || command.includes('^'))) {
+    return { stdout: '', stderr: 'Access denied: command contains shell expansion characters', exitCode: -1 }
+  }
+  
+  // Security: Block commands that try to access system directories
+  const systemPaths = ['C:\\Windows', '/usr', '/etc', '/bin', '/sbin', '/sys', '/proc']
+  for (const sysPath of systemPaths) {
+    if (command.toLowerCase().includes(sysPath.toLowerCase())) {
+      return { stdout: '', stderr: 'Access denied: command references system paths', exitCode: -1 }
+    }
+  }
+
+  const { exe, args } = parseCommand(command)
+  if (!exe) {
+    return { stdout: '', stderr: 'Invalid command: empty executable', exitCode: -1 }
+  }
+  
   return new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
-    const shell = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh'
-    const shellArgs = process.platform === 'win32' ? ['/c', command] : ['-c', command]
-    
-    const child = spawn(shell, shellArgs, {
+    // Spawn directly without a shell — prevents all shell injection vectors
+    const child = spawn(exe, args, {
       cwd,
       env: { ...process.env },
       stdio: ['ignore', 'pipe', 'pipe'],
+      shell: false,
     })
     
     let stdout = ''
@@ -239,6 +439,25 @@ ipcMain.handle('tools:runCommand', async (_e, command: string, cwd: string) => {
 })
 
 ipcMain.handle('tools:searchFiles', async (_e, pattern: string, dirPath: string) => {
+  // Security: Validate pattern to prevent ReDoS attacks
+  const MAX_PATTERN_LENGTH = 500
+  if (!pattern || pattern.length > MAX_PATTERN_LENGTH) {
+    return { error: `Invalid search pattern. Must be between 1 and ${MAX_PATTERN_LENGTH} characters.` }
+  }
+  
+  // Reject patterns that could cause catastrophic backtracking
+  const dangerousPatterns = [
+    /\([^)]*\+\+?[^{}]*\)\??[+*]/,  // (a+)+, (a*)+, etc.
+    /\([^)]*\*\+?[^{}]*\)\??[+*]/,  // (a*)*, etc.
+    /\([^)]*\+\+?[^{}]*\)\??\{/,    // Quantified groups with repetition
+  ]
+  
+  for (const dangerous of dangerousPatterns) {
+    if (dangerous.test(pattern)) {
+      return { error: 'Invalid search pattern: pattern contains potentially dangerous repetition that could cause performance issues.' }
+    }
+  }
+  
   const results: { file: string; line: number; text: string }[] = []
   const maxResults = 50
   const maxDepth = 8
@@ -272,10 +491,19 @@ ipcMain.handle('tools:searchFiles', async (_e, pattern: string, dirPath: string)
           try {
             const content = await fs.promises.readFile(fullPath, 'utf-8')
             const lines = content.split('\n')
-            const regex = new RegExp(pattern, 'gi')
+            
+            // Create regex with timeout protection using try-catch
+            let regex: RegExp
+            try {
+              regex = new RegExp(pattern, 'gi')
+            } catch (e) {
+              return { error: 'Invalid regex pattern: ' + (e as Error).message }
+            }
             
             for (let i = 0; i < lines.length && results.length < maxResults; i++) {
-              if (regex.test(lines[i])) {
+              // Limit line length to prevent regex performance issues
+              const line = lines[i].slice(0, 1000)
+              if (regex.test(line)) {
                 results.push({
                   file: fullPath,
                   line: i + 1,
@@ -294,70 +522,6 @@ ipcMain.handle('tools:searchFiles', async (_e, pattern: string, dirPath: string)
   
   await searchDir(dirPath, 0)
   return results
-})
-
-// ─── IPC: OpenCode Server Management ───────────────────────────────────────
-ipcMain.handle('opencode:startServer', async (_e, cwd: string, port: number) => {
-  // Kill existing server if running
-  if (opencodeServer) {
-    try {
-      opencodeServer.kill()
-    } catch {}
-    opencodeServer = null
-  }
-
-  try {
-    const cmd = process.platform === 'win32' ? 'opencode.cmd' : 'opencode'
-    const child = spawn(cmd, ['serve', '--port', String(port)], {
-      cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: process.platform === 'win32',
-      env: { ...process.env },
-    })
-
-    opencodeServer = child
-
-    // Wait for the server to be ready (health check)
-    const maxAttempts = 30
-    for (let i = 0; i < maxAttempts; i++) {
-      await new Promise((r) => setTimeout(r, 500))
-      try {
-        const response = await fetch(`http://127.0.0.1:${port}/global/health`)
-        if (response.ok) {
-          console.log(`[Artemis] OpenCode server ready on port ${port}`)
-          return { success: true }
-        }
-      } catch {
-        // Server not ready yet
-      }
-      // Check if process already died
-      if (child.exitCode !== null) {
-        return { success: false, error: `OpenCode server exited with code ${child.exitCode}` }
-      }
-    }
-
-    return { success: false, error: 'OpenCode server did not become ready in time' }
-  } catch (err: any) {
-    return { success: false, error: err.message || 'Failed to start OpenCode server' }
-  }
-})
-
-ipcMain.handle('opencode:stopServer', async () => {
-  if (opencodeServer) {
-    try {
-      opencodeServer.kill()
-    } catch {}
-    opencodeServer = null
-  }
-})
-
-ipcMain.handle('opencode:isInstalled', async () => {
-  return new Promise<boolean>((resolve) => {
-    const cmd = process.platform === 'win32' ? 'where opencode' : 'which opencode'
-    exec(cmd, (error) => {
-      resolve(!error)
-    })
-  })
 })
 
 // ─── IPC: Session Management (PTY for regular terminal) ────────────────────
@@ -428,13 +592,15 @@ ipcMain.handle('zen:request', async (_e, options: {
     })
 
     const text = await response.text()
+    const resHeaders: Record<string, string> = {}
+    response.headers.forEach((value, key) => { resHeaders[key] = value })
     
     return {
       ok: response.ok,
       status: response.status,
       statusText: response.statusText,
       data: text,
-      headers: Object.fromEntries(response.headers.entries()),
+      headers: resHeaders,
     }
   } catch (err: any) {
     return {
@@ -448,86 +614,42 @@ ipcMain.handle('zen:request', async (_e, options: {
   }
 })
 
-// Streaming request handler - sends chunks via IPC events
-ipcMain.handle('zen:streamRequest', async (event, options: {
-  requestId: string
-  url: string
-  method: string
-  headers?: Record<string, string>
-  body?: string
-}) => {
-  try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 60000) // 60 second timeout
-    
-    const response = await fetch(options.url, {
-      method: options.method,
-      headers: options.headers,
-      body: options.body,
-      signal: controller.signal,
-    })
-    
-    clearTimeout(timeoutId)
+// ─── IPC: MCP Marketplace ───────────────────────────────────────────────────
+mcpService.initMCPService(STORE_DIR)
 
-    if (!response.ok) {
-      const errorText = await response.text()
-      mainWindow?.webContents.send(`zen:stream:${options.requestId}`, {
-        type: 'error',
-        status: response.status,
-        data: errorText,
-      })
-      return { ok: false, status: response.status }
-    }
-
-    if (!response.body) {
-      mainWindow?.webContents.send(`zen:stream:${options.requestId}`, {
-        type: 'error',
-        data: 'Response body is null',
-      })
-      return { ok: false, status: 500 }
-    }
-
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read()
-        
-        if (done) {
-          mainWindow?.webContents.send(`zen:stream:${options.requestId}`, {
-            type: 'done',
-          })
-          break
-        }
-
-        const text = decoder.decode(value, { stream: true })
-        mainWindow?.webContents.send(`zen:stream:${options.requestId}`, {
-          type: 'chunk',
-          data: text,
-        })
-      }
-    } finally {
-      reader.releaseLock()
-    }
-
-    return { ok: true, status: response.status }
-  } catch (err: any) {
-    if (err.name === 'AbortError') {
-      mainWindow?.webContents.send(`zen:stream:${options.requestId}`, {
-        type: 'error',
-        data: 'Request timed out. The model may be overloaded or unavailable — try again or switch to a different model.',
-      })
-      return { ok: false, status: 0, error: 'Request timeout' }
-    }
-    
-    mainWindow?.webContents.send(`zen:stream:${options.requestId}`, {
-      type: 'error',
-      data: err.message || 'Network error',
-    })
-    return { ok: false, status: 0, error: err.message }
-  }
+// Reconnect previously installed MCP servers in the background
+mcpService.reconnectInstalledServers().catch(err => {
+  console.warn('[Artemis MCP] Background reconnect failed:', err)
 })
+
+ipcMain.handle('mcp:getServers', () => mcpService.getServers())
+ipcMain.handle('mcp:installServer', (_e, serverId: string, config?: Record<string, any>) =>
+  mcpService.installServer(serverId, config))
+ipcMain.handle('mcp:uninstallServer', (_e, serverId: string) =>
+  mcpService.uninstallServer(serverId))
+ipcMain.handle('mcp:searchServers', (_e, query: string) =>
+  mcpService.searchServers(query))
+
+// ─── IPC: Web Search (DuckDuckGo) ──────────────────────────────────────────
+ipcMain.handle('webSearch:search', async (_e, query: string) => {
+  return webSearch(query)
+})
+
+// ─── IPC: Linter Auto-Fix ──────────────────────────────────────────────────
+ipcMain.handle('linter:lint', async (_e, filePath: string, projectPath: string) => {
+  return lintFile(filePath, projectPath)
+})
+
+// ─── IPC: Discord RPC ──────────────────────────────────────────────────────
+ipcMain.handle('discord:toggle', async (_e, enable: boolean) => {
+  return discordRPC.toggle(enable)
+})
+ipcMain.handle('discord:getState', () => discordRPC.getState())
+ipcMain.handle('discord:updatePresence', async (_e, fileName?: string, language?: string, projectName?: string) => {
+  discordRPC.updatePresence(fileName, language, projectName)
+})
+ipcMain.handle('discord:detectDiscord', () => discordRPC.detectDiscord())
+ipcMain.handle('discord:setDebug', (_e, enabled: boolean) => discordRPC.setDebugMode(enabled))
 
 // ─── Agent API System ─────────────────────────────────────────────────────
 // Register the new provider-agnostic agent IPC handlers.
@@ -540,16 +662,13 @@ app.whenReady().then(createWindow)
 
 app.on('window-all-closed', () => {
   // Kill all PTY sessions
-  for (const [_id, session] of sessions) {
+  for (const [_id, session] of Array.from(sessions)) {
     try { session.kill() } catch {}
   }
   sessions.clear()
 
-  // Kill OpenCode server
-  if (opencodeServer) {
-    try { opencodeServer.kill() } catch {}
-    opencodeServer = null
-  }
+  // Disconnect Discord RPC
+  discordRPC.disconnect()
 
   if (process.platform !== 'darwin') app.quit()
 })

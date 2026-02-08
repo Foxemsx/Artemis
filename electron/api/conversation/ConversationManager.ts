@@ -109,17 +109,28 @@ export class ConversationManager {
     const minKeep = 4
     if (this.messages.length <= minKeep) return
 
+    // Safety limit to prevent infinite loops
+    const maxIterations = this.messages.length - minKeep
+    let iterations = 0
+
     // Remove from the front (oldest), but never remove system messages
-    while (this.estimatedTokens > this.maxContextTokens && this.messages.length > minKeep) {
+    while (this.estimatedTokens > this.maxContextTokens && this.messages.length > minKeep && iterations < maxIterations) {
+      iterations++
       const removed = this.messages[0]
       if (removed.role === 'system') {
-        // Don't remove system messages — move past them
-        if (this.messages.length > minKeep + 1) {
-          const msg = this.messages.splice(1, 1)[0]
-          this.estimatedTokens -= this.estimateMessageTokens(msg.content)
-        } else {
-          break
+        // Don't remove system messages — try to remove the next non-system message
+        // Find the next non-system message
+        let foundNonSystem = false
+        for (let i = 1; i < this.messages.length - minKeep + 1; i++) {
+          if (this.messages[i].role !== 'system') {
+            const msg = this.messages.splice(i, 1)[0]
+            this.estimatedTokens -= this.estimateMessageTokens(msg.content)
+            foundNonSystem = true
+            break
+          }
         }
+        // If no non-system message found, we can't trim further
+        if (!foundNonSystem) break
       } else {
         this.messages.shift()
         this.estimatedTokens -= this.estimateMessageTokens(removed.content)

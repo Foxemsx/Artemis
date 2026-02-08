@@ -35,11 +35,6 @@ export function addCheckpoint(checkpoint: Checkpoint): void {
   checkpoints.set(checkpoint.sessionId, existing)
 }
 
-/** Clear checkpoints for a session */
-export function clearCheckpoints(sessionId: string): void {
-  checkpoints.delete(sessionId)
-}
-
 /**
  * Create a checkpoint by reading all files the agent might modify.
  * We snapshot tracked files: any files mentioned in the conversation or

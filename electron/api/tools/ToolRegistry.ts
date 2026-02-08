@@ -133,6 +133,42 @@ const TOOL_DELETE_FILE: UniversalToolDefinition = {
   },
 }
 
+const TOOL_WEB_SEARCH: UniversalToolDefinition = {
+  name: 'web_search',
+  description: 'Search the web using DuckDuckGo (no API key required). Returns top results with titles, URLs, and snippets. Use for looking up documentation, best practices, or current information.',
+  parameters: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'The search query to look up on the web' },
+    },
+    required: ['query'],
+  },
+}
+
+const TOOL_LINT_FILE: UniversalToolDefinition = {
+  name: 'lint_file',
+  description: 'Run a linter on a file (ESLint for JS/TS, Pylint for Python) and return any diagnostics. Use to check code quality before or after edits.',
+  parameters: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'The absolute path to the file to lint' },
+    },
+    required: ['path'],
+  },
+}
+
+const TOOL_FETCH_URL: UniversalToolDefinition = {
+  name: 'fetch_url',
+  description: 'Fetch the content of a web page URL and return readable text. Use when a user shares a link or you need to read documentation, articles, or any web content. Returns the page title and extracted text content.',
+  parameters: {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: 'The HTTP/HTTPS URL to fetch and read' },
+    },
+    required: ['url'],
+  },
+}
+
 const TOOL_MOVE_FILE: UniversalToolDefinition = {
   name: 'move_file',
   description: 'Rename or move a file from one path to another.',
@@ -154,6 +190,7 @@ const ALL_TOOLS: UniversalToolDefinition[] = [
   TOOL_LIST_DIRECTORY, TOOL_SEARCH_FILES, TOOL_EXECUTE_COMMAND,
   TOOL_GET_GIT_DIFF, TOOL_LIST_CODE_DEFINITIONS,
   TOOL_CREATE_DIRECTORY, TOOL_DELETE_FILE, TOOL_MOVE_FILE,
+  TOOL_WEB_SEARCH, TOOL_LINT_FILE, TOOL_FETCH_URL,
 ]
 
 /** Builder mode — full read/write access */
@@ -162,6 +199,7 @@ const BUILDER_TOOLS: UniversalToolDefinition[] = [
   TOOL_LIST_DIRECTORY, TOOL_SEARCH_FILES, TOOL_EXECUTE_COMMAND,
   TOOL_GET_GIT_DIFF, TOOL_LIST_CODE_DEFINITIONS,
   TOOL_CREATE_DIRECTORY, TOOL_DELETE_FILE, TOOL_MOVE_FILE,
+  TOOL_WEB_SEARCH, TOOL_LINT_FILE, TOOL_FETCH_URL,
 ]
 
 /** Planner mode — read-only access */
@@ -174,6 +212,7 @@ const PLANNER_TOOLS: UniversalToolDefinition[] = [
 const CHAT_TOOLS: UniversalToolDefinition[] = [
   TOOL_READ_FILE, TOOL_WRITE_FILE, TOOL_STR_REPLACE,
   TOOL_LIST_DIRECTORY, TOOL_SEARCH_FILES, TOOL_EXECUTE_COMMAND,
+  TOOL_WEB_SEARCH, TOOL_LINT_FILE, TOOL_FETCH_URL,
 ]
 
 // ─── Registry ────────────────────────────────────────────────────────────────

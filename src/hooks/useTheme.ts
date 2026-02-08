@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { Theme } from '../types'
 
-const ALL_THEMES: Theme[] = ['dark', 'light', 'cyberpunk', 'nord', 'monokai', 'solarized', 'dracula', 'rosepine']
+const ALL_THEMES: Theme[] = [
+  'dark', 'light', 'cyberpunk', 'nord', 'monokai', 'solarized', 'dracula', 'rosepine',
+  'pine', 'catppuccin', 'gruvbox', 'materialocean', 'everforest', 'sakura', 'beach', 'space'
+]
 
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>('dark')

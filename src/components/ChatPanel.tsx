@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Square, Plus, MessageSquare, Trash2, ArrowUp, X, Shield, ShieldCheck, ShieldAlert, RotateCcw, History } from 'lucide-react'
+import { Square, Plus, MessageSquare, Trash2, ArrowUp, X, Shield, ShieldCheck, ShieldAlert, RotateCcw, History, Image as ImageIcon } from 'lucide-react'
 import type { ChatSession, ChatMessage as ChatMessageType, Provider, Model, AgentMode, EditApprovalMode } from '../types'
 import type { Checkpoint } from '../lib/checkpoints'
 import { getLatestPlan } from '../lib/todoParser'
@@ -26,7 +26,7 @@ interface Props {
   onCreateSession: () => void
   onSelectSession: (id: string) => void
   onDeleteSession: (id: string) => void
-  onSendMessage: (text: string, fileContext?: string, modeOverride?: AgentMode) => void
+  onSendMessage: (text: string, fileContext?: string, modeOverride?: AgentMode, planText?: string, images?: Array<{ id: string; url: string; name: string }>) => void
   onAbortMessage: () => void
   onSelectModel: (model: Model) => void
   onAgentModeChange: (mode: AgentMode) => void
@@ -52,6 +52,8 @@ export default function ChatPanel({
   const mentionResolverRef = useRef<(() => Promise<{ text: string; mentions: { name: string; path: string; content: string }[] }>) | null>(null)
   const [showHelp, setShowHelp] = useState(false)
   const [showApprovalMenu, setShowApprovalMenu] = useState(false)
+  const [attachedImages, setAttachedImages] = useState<Array<{ id: string; url: string; name: string }>>([])
+  const attachImageRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -78,18 +80,22 @@ export default function ChatPanel({
         case '/new':
           onCreateSession()
           setInput('')
+          setAttachedImages([])
           return
         case '/clear':
           onClearMessages?.()
           setInput('')
+          setAttachedImages([])
           return
         case '/terminal':
           onOpenTerminal?.()
           setInput('')
+          setAttachedImages([])
           return
         case '/help':
           setShowHelp(true)
           setInput('')
+          setAttachedImages([])
           return
         case '/init':
           onSendMessage(
@@ -97,6 +103,7 @@ export default function ChatPanel({
             `[System instruction]\nAnalyze the entire project structure, tech stack, entry points, key files, and architecture. Then create an AGENTS.md file in the project root directory with:\n\n1. **Project Overview** — What this project is, its purpose\n2. **Tech Stack** — Languages, frameworks, libraries, tools\n3. **Project Structure** — Directory layout with descriptions\n4. **Entry Points** — Main files that start the app\n5. **Key Components/Modules** — Important files and what they do\n6. **Development Setup** — How to install, run, build, test\n7. **Conventions** — Code style, naming, patterns used\n8. **AI Instructions** — Rules the AI should follow when editing this project (e.g., preserve comments, follow existing patterns, don't break imports)\n\nWrite the file using window.artemis tools (write_file). Make it comprehensive but concise. This file will be automatically read by the AI on every future message to maintain project context.`
           )
           setInput('')
+          setAttachedImages([])
           return
         default:
           // Unknown command, send as regular message
@@ -124,9 +131,10 @@ export default function ChatPanel({
       }
     }
     
-    onSendMessage(messageToSend, fileContext || undefined)
+    onSendMessage(messageToSend, fileContext || undefined, undefined, undefined, attachedImages.length > 0 ? attachedImages : undefined)
     setInput('')
-  }, [input, hasApiKey, onSendMessage, onCreateSession, onClearMessages, onOpenTerminal])
+    setAttachedImages([])
+  }, [input, hasApiKey, onSendMessage, onCreateSession, onClearMessages, onOpenTerminal, attachedImages])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -203,7 +211,11 @@ export default function ChatPanel({
             <MessageSquare size={14} />
           </button>
           <button
-            onClick={onCreateSession}
+            onClick={() => {
+              onCreateSession()
+              setInput('')
+              setAttachedImages([])
+            }}
             className="p-1.5 rounded-md transition-all duration-150"
             style={{ color: 'var(--text-muted)' }}
             onMouseEnter={(e) => {
@@ -250,6 +262,8 @@ export default function ChatPanel({
                   onClick={() => {
                     onSelectSession(session.id)
                     setShowSessions(false)
+                    setInput('')
+                    setAttachedImages([])
                   }}
                   onMouseEnter={(e) => {
                     if (!isActive) e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
@@ -298,10 +312,13 @@ export default function ChatPanel({
           // Switch to builder mode and send the plan with explicit mode override
           onAgentModeChange('builder')
           onSendMessage(
-            `Implement the following plan step by step:\n\n${planText}\n\nExecute each step using your tools. Mark progress as you go.`,
+            `Implementing following plan step by step:\n\n${planText}\n\nExecute each step using your tools. Mark progress as you go.`,
             undefined,
-            'builder'
+            'builder',
+            planText
           )
+          setInput('')
+          setAttachedImages([])
         }}
       />
 
@@ -460,9 +477,12 @@ export default function ChatPanel({
             disabled={!hasApiKey}
             projectPath={projectPath}
             mentionResolverRef={mentionResolverRef}
+            onImagesChange={setAttachedImages}
+            attachImageRef={attachImageRef}
           />
           <div className="flex items-center justify-between px-3 pb-2.5">
-            {/* Edit Approval Mode - bottom left */}
+            {/* Edit Approval Mode + Image Attach - bottom left */}
+            <div className="flex items-center gap-1.5">
             <div className="relative">
               <button
                 onClick={() => setShowApprovalMenu(!showApprovalMenu)}
@@ -516,6 +536,24 @@ export default function ChatPanel({
                   </div>
                 </>
               )}
+            </div>
+            {/* Image attach + paste hint */}
+            <div className="h-3.5 w-px shrink-0" style={{ backgroundColor: 'var(--border-subtle)' }} />
+            <button
+              onClick={() => attachImageRef.current?.()}
+              disabled={!hasApiKey}
+              className="flex items-center gap-1 px-1.5 py-1 rounded-md text-[10px] font-medium transition-all duration-150 disabled:opacity-30 disabled:cursor-not-allowed"
+              style={{ color: 'var(--text-muted)' }}
+              onMouseEnter={e => { if (hasApiKey) { e.currentTarget.style.color = 'var(--accent)'; e.currentTarget.style.backgroundColor = 'var(--bg-hover)' } }}
+              onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.backgroundColor = 'transparent' }}
+              title="Attach images (Ctrl+V to paste)"
+            >
+              <ImageIcon size={11} />
+              <span>Image</span>
+            </button>
+            <span className="text-[9px] shrink-0" style={{ color: 'var(--text-muted)', opacity: 0.4 }}>
+              Ctrl+V
+            </span>
             </div>
             {isStreaming ? (
               <button

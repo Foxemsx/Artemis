@@ -9,15 +9,6 @@ const PROVIDER_BASE_URLS = {
   zai: 'https://api.z.ai/api/paas/v4',
 } as const
 
-const ZAI_ANTHROPIC_BASE_URL = 'https://api.z.ai/api/anthropic/v1'
-
-const ZAI_MODEL_NAME_MAP: Record<string, string> = {
-  'glm-4.7': 'GLM-4.7',
-  'glm-4.7-free': 'GLM-4.7',
-  'glm-4.6': 'GLM-4.6',
-  'glm-4.5-air': 'GLM-4.5-Air',
-}
-
 type AIProvider = 'zen' | 'zai'
 
 export interface ZenModel {
@@ -190,14 +181,14 @@ function parseApiError(status: number, data: string, provider?: AIProvider): Zen
 
 export class ZenClient {
   private apiKeys: Map<AIProvider, string> = new Map()
-  private activeProvider: AIProvider = 'zen'
+
+  private getDefaultProvider(): AIProvider {
+    const configured = this.getConfiguredProviders()
+    return configured.length > 0 ? configured[0] : 'zen'
+  }
 
   setApiKey(provider: AIProvider, key: string) {
     this.apiKeys.set(provider, key)
-  }
-
-  getApiKey(provider?: AIProvider): string | null {
-    return this.apiKeys.get(provider || this.activeProvider) || null
   }
 
   hasApiKey(provider?: AIProvider): boolean {
@@ -207,46 +198,29 @@ export class ZenClient {
     return Array.from(this.apiKeys.values()).some(key => !!key)
   }
 
-  getActiveProvider(): AIProvider {
-    return this.activeProvider
-  }
-
-  setActiveProvider(provider: AIProvider) {
-    this.activeProvider = provider
-  }
-
   getConfiguredProviders(): AIProvider[] {
     return Array.from(this.apiKeys.entries())
       .filter(([_, key]) => !!key)
       .map(([provider, _]) => provider)
   }
 
-  private getHeaders(provider?: AIProvider, useAnthropicFormat?: boolean): Record<string, string> {
+  private getHeaders(provider?: AIProvider): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     }
-    const apiKey = this.getApiKey(provider)
+    const apiKey = this.apiKeys.get(provider || this.getDefaultProvider()) || null
     if (apiKey) {
-      if (useAnthropicFormat && provider === 'zai') {
-        headers['x-api-key'] = apiKey
-        headers['anthropic-version'] = '2023-06-01'
-      } else {
-        headers['Authorization'] = `Bearer ${apiKey}`
-      }
+      headers['Authorization'] = `Bearer ${apiKey}`
     }
     return headers
   }
 
   private async proxyRequest(url: string, method: string, body?: any, provider?: AIProvider): Promise<{ ok: boolean; status: number; data: any; error?: ZenError }> {
-    return this.proxyRequestWithHeaders(url, method, this.getHeaders(provider), body, provider)
-  }
-
-  private async proxyRequestWithHeaders(url: string, method: string, headers: Record<string, string>, body?: any, provider?: AIProvider): Promise<{ ok: boolean; status: number; data: any; error?: ZenError }> {
     try {
       const response = await window.artemis.zen.request({
         url,
         method,
-        headers,
+        headers: this.getHeaders(provider),
         body: body ? JSON.stringify(body) : undefined,
       })
 
@@ -429,7 +403,7 @@ export class ZenClient {
   }
 
   async validateApiKey(provider?: AIProvider): Promise<boolean> {
-    const aiProvider = provider || this.activeProvider
+    const aiProvider = provider || this.getDefaultProvider()
     if (!this.hasApiKey(aiProvider)) return false
     const baseUrl = PROVIDER_BASE_URLS[aiProvider]
     const result = await this.proxyRequest(`${baseUrl}/models`, 'GET', undefined, aiProvider)

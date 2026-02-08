@@ -1,6 +1,6 @@
 // ─── Theme & Navigation ──────────────────────────────────────────────────────
-export type Theme = 'dark' | 'light' | 'cyberpunk' | 'nord' | 'monokai' | 'solarized' | 'dracula' | 'rosepine'
-export type ActivityView = 'files' | 'chat' | 'terminal' | 'settings' | 'problems' | 'search'
+export type Theme = 'dark' | 'light' | 'cyberpunk' | 'nord' | 'monokai' | 'solarized' | 'dracula' | 'rosepine' | 'pine' | 'catppuccin' | 'gruvbox' | 'materialocean' | 'everforest' | 'sakura' | 'beach' | 'space'
+export type ActivityView = 'files' | 'chat' | 'terminal' | 'settings' | 'problems' | 'search' | 'mcp'
 export type AgentMode = 'builder' | 'planner' | 'chat'
 export type EditApprovalMode = 'allow-all' | 'session-only' | 'ask'
 export type AIProvider = 'zen' | 'zai'
@@ -40,8 +40,12 @@ export interface ChatSession {
 }
 
 export interface MessagePart {
-  type: 'text' | 'tool-call' | 'tool-result' | 'thinking' | 'reasoning'
+  type: 'text' | 'tool-call' | 'tool-result' | 'thinking' | 'reasoning' | 'image'
   text?: string
+  image?: {
+    url: string
+    mimeType?: string
+  }
   toolCall?: {
     id: string
     name: string
@@ -88,6 +92,7 @@ export interface ChatMessage {
   parts: MessagePart[]
   model?: string
   createdAt: string
+  planText?: string
   // Agent thinking metadata
   agentMeta?: {
     startTime: number
@@ -126,13 +131,6 @@ export interface SessionTokenUsage {
   completionTokens: number
   totalTokens: number
   estimatedCost: number   // in USD
-}
-
-// ─── Workspace / Multi-Project ───────────────────────────────────────────────
-export interface Workspace {
-  id: string
-  projects: Project[]
-  activeProjectId: string | null
 }
 
 // ─── PTY Session (for regular terminal, not chat) ────────────────────────────

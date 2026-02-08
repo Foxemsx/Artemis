@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import {
   Plus, X, Copy, FolderOpen, MessageSquare, ChevronDown, ChevronRight,
-  Circle, Info, Cpu, DollarSign, Zap, Pencil, Trash2, Sparkles, Server
+  Circle, Info, Cpu, DollarSign, Zap, Pencil, Trash2, Sparkles, Server,
+  Folder, Minus
 } from 'lucide-react'
 import type { ChatSession, Model, Project, SessionTokenUsage } from '../types'
 import ContextMenu, { type MenuItem } from './ContextMenu'
@@ -22,6 +23,8 @@ interface Props {
   recentProjects: Project[]
   onAddProject: () => void
   onSelectProject: (project: Project) => void
+  onRemoveProject: (projectId: string) => void
+  onOpenProjectDirectory: (projectPath: string) => void
 
   // Model / Status
   activeModel: Model | null
@@ -52,15 +55,22 @@ function getContextPercentage(usage: SessionTokenUsage, model: Model | null): nu
 export default function Sidebar({
   sessions, allSessions, activeSessionId, streamingSessionIds,
   onCreateSession, onSelectSession, onDeleteSession, onRenameSession,
-  project, recentProjects, onAddProject, onSelectProject,
+  project, recentProjects, onAddProject, onSelectProject, onRemoveProject, onOpenProjectDirectory,
   activeModel, isReady, hasApiKey,
   sessionTokenUsage, totalTokenUsage,
 }: Props) {
   const [sessionsExpanded, setSessionsExpanded] = useState(true)
   const [projectsExpanded, setProjectsExpanded] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null)
+  const [projectContextMenu, setProjectContextMenu] = useState<{ x: number; y: number; projectId: string; projectPath: string } | null>(null)
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
+
+  const handleProjectContextMenu = (e: React.MouseEvent, projectId: string, projectPath: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setProjectContextMenu({ x: e.clientX, y: e.clientY, projectId, projectPath })
+  }
 
   const contextPercent = getContextPercentage(sessionTokenUsage, activeModel)
   const contextWindow = activeModel?.contextWindow || 128000
@@ -290,11 +300,12 @@ export default function Sidebar({
                 const sessionCount = allSessions.filter(s => s.projectId === project.id).length
                 return (
                   <div
-                    className="flex items-center gap-2 px-3 py-2 rounded-lg mb-1"
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg mb-1 cursor-pointer"
                     style={{
                       backgroundColor: 'var(--accent-glow)',
                       border: '1px solid rgba(var(--accent-rgb), 0.12)',
                     }}
+                    onContextMenu={(e) => handleProjectContextMenu(e, project.id, project.path)}
                   >
                     <FolderOpen size={12} style={{ color: 'var(--accent)' }} />
                     <span className="text-[11px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
@@ -331,6 +342,7 @@ export default function Sidebar({
                       className="flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-all"
                       style={{ color: 'var(--text-secondary)' }}
                       onClick={() => onSelectProject(p)}
+                      onContextMenu={(e) => handleProjectContextMenu(e, p.id, p.path)}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
                       }}
@@ -542,6 +554,31 @@ export default function Sidebar({
             },
           ]}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {projectContextMenu && (
+        <ContextMenu
+          x={projectContextMenu.x}
+          y={projectContextMenu.y}
+          items={[
+            {
+              label: 'Open Directory',
+              icon: Folder,
+              onClick: () => {
+                onOpenProjectDirectory(projectContextMenu.projectPath)
+              },
+            },
+            { separator: true } as MenuItem,
+            {
+              label: 'Remove Project',
+              icon: Minus,
+              onClick: () => {
+                onRemoveProject(projectContextMenu.projectId)
+              },
+            },
+          ]}
+          onClose={() => setProjectContextMenu(null)}
         />
       )}
     </div>

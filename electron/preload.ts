@@ -10,19 +10,6 @@ contextBridge.exposeInMainWorld('artemis', {
       body?: string
     }) => ipcRenderer.invoke('zen:request', options),
 
-    streamRequest: (options: {
-      requestId: string
-      url: string
-      method: string
-      headers?: Record<string, string>
-      body?: string
-    }) => ipcRenderer.invoke('zen:streamRequest', options),
-
-    onStreamChunk: (requestId: string, callback: (data: any) => void) => {
-      const handler = (_event: any, data: any) => callback(data)
-      ipcRenderer.on(`zen:stream:${requestId}`, handler)
-      return () => { ipcRenderer.removeListener(`zen:stream:${requestId}`, handler) }
-    },
   },
 
   // ─── Session (PTY) Management ──────────────────────────────────────────
@@ -51,7 +38,6 @@ contextBridge.exposeInMainWorld('artemis', {
       return () => { ipcRenderer.removeListener(`session:exit:${id}`, handler) }
     },
 
-    checkOpenCode: () => ipcRenderer.invoke('opencode:isInstalled'),
   },
 
   // ─── System Dialogs ───────────────────────────────────────────────────
@@ -63,6 +49,8 @@ contextBridge.exposeInMainWorld('artemis', {
   store: {
     get: (key: string) => ipcRenderer.invoke('store:get', key),
     set: (key: string, value: any) => ipcRenderer.invoke('store:set', key, value),
+    getDir: () => ipcRenderer.invoke('store:getDir'),
+    isEncrypted: () => ipcRenderer.invoke('store:isEncrypted'),
   },
 
   // ─── Window Controls ─────────────────────────────────────────────────
@@ -102,6 +90,15 @@ contextBridge.exposeInMainWorld('artemis', {
 
     delete: (targetPath: string) =>
       ipcRenderer.invoke('fs:delete', targetPath),
+
+    rename: (oldPath: string, newPath: string) =>
+      ipcRenderer.invoke('fs:rename', oldPath, newPath),
+  },
+
+  // ─── Shell Operations ──────────────────────────────────────────────────
+  shell: {
+    openPath: (path: string) =>
+      ipcRenderer.invoke('shell:openPath', path),
   },
 
   // ─── Tool Execution ──────────────────────────────────────────────────
@@ -113,16 +110,41 @@ contextBridge.exposeInMainWorld('artemis', {
       ipcRenderer.invoke('tools:searchFiles', pattern, dirPath),
   },
 
-  // ─── OpenCode Server Management ──────────────────────────────────────
-  opencode: {
-    startServer: (cwd: string, port: number) =>
-      ipcRenderer.invoke('opencode:startServer', cwd, port),
+  // ─── MCP Marketplace ──────────────────────────────────────────────────
+  mcp: {
+    getServers: () => ipcRenderer.invoke('mcp:getServers'),
+    installServer: (serverId: string, config?: Record<string, any>) =>
+      ipcRenderer.invoke('mcp:installServer', serverId, config),
+    uninstallServer: (serverId: string) =>
+      ipcRenderer.invoke('mcp:uninstallServer', serverId),
+    searchServers: (query: string) =>
+      ipcRenderer.invoke('mcp:searchServers', query),
+  },
 
-    stopServer: () =>
-      ipcRenderer.invoke('opencode:stopServer'),
+  // ─── Web Search (DuckDuckGo) ────────────────────────────────────────
+  webSearch: {
+    search: (query: string) =>
+      ipcRenderer.invoke('webSearch:search', query),
+  },
 
-    isInstalled: () =>
-      ipcRenderer.invoke('opencode:isInstalled'),
+  // ─── Linter Auto-Fix ────────────────────────────────────────────────
+  linter: {
+    lint: (filePath: string, projectPath: string) =>
+      ipcRenderer.invoke('linter:lint', filePath, projectPath),
+  },
+
+  // ─── Discord RPC ────────────────────────────────────────────────────
+  discord: {
+    toggle: (enable: boolean) =>
+      ipcRenderer.invoke('discord:toggle', enable),
+    getState: () =>
+      ipcRenderer.invoke('discord:getState'),
+    updatePresence: (fileName?: string, language?: string, projectName?: string) =>
+      ipcRenderer.invoke('discord:updatePresence', fileName, language, projectName),
+    detectDiscord: () =>
+      ipcRenderer.invoke('discord:detectDiscord'),
+    setDebug: (enabled: boolean) =>
+      ipcRenderer.invoke('discord:setDebug', enabled),
   },
 
   // ─── Agent API (New Provider-Agnostic System) ─────────────────────────
@@ -139,17 +161,9 @@ contextBridge.exposeInMainWorld('artemis', {
     respondToolApproval: (approvalId: string, approved: boolean) =>
       ipcRenderer.invoke('agent:respondToolApproval', approvalId, approved),
 
-    /** Get tool definitions for a mode (builder/planner/chat) or all */
-    getTools: (mode?: string) =>
-      ipcRenderer.invoke('agent:getTools', mode),
-
-    /** Execute a single tool (for testing/manual use) */
-    executeTool: (name: string, args: Record<string, any>, projectPath?: string) =>
-      ipcRenderer.invoke('agent:executeTool', name, args, projectPath),
-
-    /** Get list of active agent run IDs */
-    activeRuns: () =>
-      ipcRenderer.invoke('agent:activeRuns'),
+    /** Respond to a path approval request */
+    respondPathApproval: (approvalId: string, approved: boolean) =>
+      ipcRenderer.invoke('agent:respondPathApproval', approvalId, approved),
 
     /** Listen for agent events during a run */
     onEvent: (requestId: string, callback: (event: any) => void) => {
@@ -158,35 +172,5 @@ contextBridge.exposeInMainWorld('artemis', {
       return () => { ipcRenderer.removeListener(`agent:event:${requestId}`, handler) }
     },
 
-    /** Listen for agent run completion */
-    onComplete: (requestId: string, callback: (response: any) => void) => {
-      const handler = (_event: any, data: any) => callback(data)
-      ipcRenderer.on(`agent:complete:${requestId}`, handler)
-      return () => { ipcRenderer.removeListener(`agent:complete:${requestId}`, handler) }
-    },
-
-    /** HTTP proxy request (CORS bypass) */
-    httpRequest: (options: {
-      url: string
-      method: string
-      headers?: Record<string, string>
-      body?: string
-    }) => ipcRenderer.invoke('agent:httpRequest', options),
-
-    /** Streaming HTTP proxy request */
-    httpStream: (options: {
-      requestId: string
-      url: string
-      method: string
-      headers?: Record<string, string>
-      body?: string
-    }) => ipcRenderer.invoke('agent:httpStream', options),
-
-    /** Listen for streaming HTTP chunks */
-    onStreamChunk: (requestId: string, callback: (data: any) => void) => {
-      const handler = (_event: any, data: any) => callback(data)
-      ipcRenderer.on(`agent:stream:${requestId}`, handler)
-      return () => { ipcRenderer.removeListener(`agent:stream:${requestId}`, handler) }
-    },
   },
 })

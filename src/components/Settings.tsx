@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Key, Shield, ExternalLink, Check, X, Loader2, Zap, Server, Sparkles, Palette, Settings2, Info, Volume2, Bell, Play, RotateCcw, Keyboard } from 'lucide-react'
+import { Key, Shield, ExternalLink, Check, X, Loader2, Zap, Server, Sparkles, Palette, Settings2, Info, Volume2, Bell, Play, RotateCcw, Keyboard, ChevronDown, FileText, FolderOpen, Search, Terminal, GitBranch, Code, FolderPlus, Trash2, Move, Edit3, MessageSquare, Layout, Eye, Gamepad2, Circle } from 'lucide-react'
 import type { Theme, AIProvider } from '../types'
 import { type SoundSettings, DEFAULT_SOUND_SETTINGS, previewSound, type SoundType } from '../lib/sounds'
 
@@ -24,7 +24,7 @@ const DEFAULT_KEYBINDS: KeyBind[] = [
   { id: 'settings', label: 'Settings', description: 'Open settings', defaultKey: 'Ctrl+,', currentKey: 'Ctrl+,' },
 ]
 
-type SettingsCategory = 'providers' | 'appearance' | 'sounds' | 'general' | 'about'
+type SettingsCategory = 'providers' | 'appearance' | 'sounds' | 'discord' | 'general' | 'about'
 
 interface ProviderConfig {
   key: string
@@ -53,12 +53,21 @@ const THEME_OPTIONS: { id: Theme; name: string; description: string; colors: { b
   { id: 'solarized', name: 'Solarized', description: 'Precision-crafted dark scheme', colors: { bg: '#002b36', accent: '#b58900', text: '#fdf6e3', card: '#0a3d49' } },
   { id: 'dracula', name: 'Dracula', description: 'Purple-tinted dark theme', colors: { bg: '#282a36', accent: '#bd93f9', text: '#f8f8f2', card: '#343746' } },
   { id: 'rosepine', name: 'Rose Pine', description: 'Muted rose and soft gold', colors: { bg: '#191724', accent: '#ebbcba', text: '#e0def4', card: '#26233a' } },
+  { id: 'pine', name: 'Pine', description: 'Forest browns with green accents', colors: { bg: '#1c1917', accent: '#65a30d', text: '#fafaf9', card: '#44403c' } },
+  { id: 'catppuccin', name: 'Catppuccin', description: 'Soft pastel creamy palette', colors: { bg: '#1e1e2e', accent: '#f5c2e7', text: '#cdd6f4', card: '#45475a' } },
+  { id: 'gruvbox', name: 'Gruvbox', description: 'Warm retro brown and olive', colors: { bg: '#282828', accent: '#fabd2f', text: '#ebdbb2', card: '#3c3836' } },
+  { id: 'materialocean', name: 'Material Ocean', description: 'Deep blue-teal oceanic', colors: { bg: '#0f1419', accent: '#22d3ee', text: '#e2e8f0', card: '#1e293b' } },
+  { id: 'everforest', name: 'Everforest', description: 'Sage green nature palette', colors: { bg: '#2b3339', accent: '#a7c080', text: '#d3c6aa', card: '#3a454a' } },
+  { id: 'sakura', name: 'Sakura', description: 'Cherry blossom pink and gold', colors: { bg: '#2a2527', accent: '#ffb7c5', text: '#f5e6d3', card: '#453a3d' } },
+  { id: 'beach', name: 'Beach', description: 'Sandy shores and ocean breeze', colors: { bg: '#fef3e2', accent: '#0ea5e9', text: '#5d4e37', card: '#fffbf0' } },
+  { id: 'space', name: 'Space', description: 'Deep cosmic purple and stars', colors: { bg: '#0a0a12', accent: '#a855f7', text: '#e8e8ff', card: '#1e1e33' } },
 ]
 
 const SIDEBAR_ITEMS: { id: SettingsCategory; label: string; icon: typeof Palette }[] = [
   { id: 'providers', label: 'Providers', icon: Server },
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'sounds', label: 'Sounds & Alerts', icon: Volume2 },
+  { id: 'discord', label: 'Discord RPC', icon: Gamepad2 },
   { id: 'general', label: 'General', icon: Settings2 },
   { id: 'about', label: 'About', icon: Info },
 ]
@@ -128,7 +137,7 @@ export default function Settings({ theme, onSetTheme, apiKeys, onSetApiKey, soun
 
       {/* ─── Content ─────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl py-8 px-10">
+        <div className="max-w-6xl py-8 px-10">
           {activeCategory === 'providers' && (
             <ProvidersSection
               providers={providers}
@@ -142,8 +151,46 @@ export default function Settings({ theme, onSetTheme, apiKeys, onSetApiKey, soun
           {activeCategory === 'sounds' && (
             <SoundsSection settings={soundSettings} onChange={onSetSoundSettings} />
           )}
+          {activeCategory === 'discord' && <DiscordRPCSection />}
           {activeCategory === 'general' && <GeneralSection />}
           {activeCategory === 'about' && <AboutSection />}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Key Security Info ──────────────────────────────────────────────────────
+
+function KeySecurityInfo() {
+  const [storeDir, setStoreDir] = useState<string>('')
+  const [isEncrypted, setIsEncrypted] = useState<boolean>(false)
+
+  useEffect(() => {
+    window.artemis.store.getDir().then(setStoreDir).catch(() => {})
+    window.artemis.store.isEncrypted().then(setIsEncrypted).catch(() => {})
+  }, [])
+
+  return (
+    <div className="mt-6 rounded-xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+      <div className="flex items-start gap-4">
+        <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: 'rgba(74, 222, 128, 0.06)', border: '1px solid rgba(74, 222, 128, 0.1)' }}>
+          <Shield size={18} style={{ color: 'var(--success)' }} />
+        </div>
+        <div>
+          <p className="text-[13px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+            Your keys stay local {isEncrypted ? '& encrypted' : ''}
+          </p>
+          <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+            {isEncrypted
+              ? 'API keys are encrypted at rest using your OS keychain (Windows DPAPI / macOS Keychain / Linux Secret Service). All API calls go directly from your computer through Electron\u2019s main process \u2014 we never see or transmit your keys.'
+              : 'API keys are stored on your machine. Encryption is unavailable in this environment. All API calls go directly from your computer \u2014 we never see or transmit your keys.'}
+          </p>
+          {storeDir && (
+            <p className="text-[10px] mt-2 font-mono" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
+              Storage: {storeDir}
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -195,19 +242,7 @@ function ProvidersSection({ providers, onKeyChange, onSave }: {
         </div>
       )}
 
-      <div className="mt-6 rounded-xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <div className="flex items-start gap-4">
-          <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: 'rgba(74, 222, 128, 0.06)', border: '1px solid rgba(74, 222, 128, 0.1)' }}>
-            <Shield size={18} style={{ color: 'var(--success)' }} />
-          </div>
-          <div>
-            <p className="text-[13px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Your keys stay local</p>
-            <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-              API keys are stored securely on your machine. All API calls go directly from your computer through Electron's main process &mdash; we never see or transmit your keys.
-            </p>
-          </div>
-        </div>
-      </div>
+      <KeySecurityInfo />
     </>
   )
 }
@@ -219,7 +254,7 @@ function AppearanceSection({ theme, onSetTheme }: { theme: Theme; onSetTheme: (t
     <>
       <SectionHeader title="Appearance" subtitle="Choose a theme for your workspace. All themes are designed for extended coding sessions." />
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {THEME_OPTIONS.map(t => {
           const isActive = theme === t.id
           return (
@@ -570,25 +605,357 @@ function GeneralSection() {
 
       {/* Agent Mode Default */}
       <div className="rounded-xl p-5 mt-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <div className="space-y-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>Agent Mode Default</p>
-              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Default agent mode for new sessions</p>
-            </div>
-            <span className="px-3 py-1 rounded-md text-[11px] font-semibold" style={{ backgroundColor: 'var(--accent-glow)', color: 'var(--accent)', border: '1px solid rgba(var(--accent-rgb), 0.12)' }}>
-              Builder
-            </span>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <p className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>Agent Mode Default</p>
+            <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Default agent mode for new sessions</p>
           </div>
-          <div style={{ borderTop: '1px solid var(--border-subtle)' }} />
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>Available Tools</p>
-              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Builder mode has 12 tools; Planner mode has 6 read-only tools</p>
+          <span className="px-3 py-1 rounded-md text-[11px] font-semibold" style={{ backgroundColor: 'var(--accent-glow)', color: 'var(--accent)', border: '1px solid rgba(var(--accent-rgb), 0.12)' }}>
+            Builder
+          </span>
+        </div>
+      </div>
+
+      {/* Available Tools */}
+      <AgentToolsSection />
+    </>
+  )
+}
+
+// ─── Agent Tools Section ────────────────────────────────────────────────────
+
+interface ToolInfo {
+  id: string
+  name: string
+  description: string
+  icon: typeof FileText
+}
+
+const TOOLS_DATA: ToolInfo[] = [
+  { id: 'read_file', name: 'Read File', description: 'View file contents', icon: FileText },
+  { id: 'write_file', name: 'Write File', description: 'Create or overwrite files', icon: Edit3 },
+  { id: 'str_replace', name: 'String Replace', description: 'Edit files precisely', icon: Edit3 },
+  { id: 'list_directory', name: 'List Directory', description: 'Browse folders', icon: FolderOpen },
+  { id: 'search_files', name: 'Search Files', description: 'Find across files', icon: Search },
+  { id: 'execute_command', name: 'Execute Command', description: 'Run shell commands', icon: Terminal },
+  { id: 'get_git_diff', name: 'Git Diff', description: 'View code changes', icon: GitBranch },
+  { id: 'list_code_definitions', name: 'Code Definitions', description: 'Analyze structure', icon: Code },
+  { id: 'create_directory', name: 'Create Directory', description: 'Make new folders', icon: FolderPlus },
+  { id: 'delete_file', name: 'Delete File', description: 'Remove files', icon: Trash2 },
+  { id: 'move_file', name: 'Move File', description: 'Rename or move', icon: Move },
+  { id: 'web_search', name: 'Web Search', description: 'Search the web (DDG)', icon: Search },
+  { id: 'lint_file', name: 'Lint File', description: 'Run linter on files', icon: Eye },
+  { id: 'fetch_url', name: 'Fetch URL', description: 'Fetch web page content', icon: ExternalLink },
+]
+
+const AGENT_MODES = [
+  {
+    id: 'builder' as const,
+    name: 'Builder',
+    description: 'Full read & write access',
+    color: '#4ade80',
+    icon: Zap,
+    tools: ['read_file', 'write_file', 'str_replace', 'list_directory', 'search_files', 'execute_command', 'get_git_diff', 'list_code_definitions', 'create_directory', 'delete_file', 'move_file', 'web_search', 'lint_file', 'fetch_url'],
+  },
+  {
+    id: 'planner' as const,
+    name: 'Planner',
+    description: 'Read-only analysis mode',
+    color: '#fbbf24',
+    icon: Layout,
+    tools: ['read_file', 'list_directory', 'search_files', 'get_git_diff', 'list_code_definitions'],
+  },
+  {
+    id: 'chat' as const,
+    name: 'Chat',
+    description: 'Common coding tasks',
+    color: '#22d3ee',
+    icon: MessageSquare,
+    tools: ['read_file', 'write_file', 'str_replace', 'list_directory', 'search_files', 'execute_command', 'web_search', 'lint_file', 'fetch_url'],
+  },
+]
+
+function AgentToolsSection() {
+  const [expandedMode, setExpandedMode] = useState<string | null>('builder')
+
+  return (
+    <div className="mt-4">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <p className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>Available Tools by Agent</p>
+          <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Each agent mode has different capabilities</p>
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {AGENT_MODES.map((mode) => {
+          const isExpanded = expandedMode === mode.id
+          const Icon = mode.icon
+
+          return (
+            <div
+              key={mode.id}
+              className="rounded-xl overflow-hidden transition-all duration-200"
+              style={{
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              {/* Header */}
+              <button
+                onClick={() => setExpandedMode(isExpanded ? null : mode.id)}
+                className="w-full flex items-center justify-between p-4 text-left transition-colors duration-150 hover:bg-opacity-50"
+                style={{ backgroundColor: isExpanded ? `${mode.color}08` : 'transparent' }}
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className="w-9 h-9 rounded-lg flex items-center justify-center"
+                    style={{ backgroundColor: `${mode.color}15` }}
+                  >
+                    <Icon size={18} style={{ color: mode.color }} />
+                  </div>
+                  <div>
+                    <p className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{mode.name}</p>
+                    <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{mode.description}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span
+                    className="px-2.5 py-1 rounded-md text-[10px] font-semibold"
+                    style={{ backgroundColor: `${mode.color}12`, color: mode.color }}
+                  >
+                    {mode.tools.length} tools
+                  </span>
+                  <ChevronDown
+                    size={16}
+                    style={{
+                      color: 'var(--text-muted)',
+                      transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                      transition: 'transform 0.2s ease',
+                    }}
+                  />
+                </div>
+              </button>
+
+              {/* Tools Grid */}
+              {isExpanded && (
+                <div className="px-4 pb-4">
+                  <div style={{ borderTop: '1px solid var(--border-subtle)' }} className="mb-3" />
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                    {mode.tools.map((toolId) => {
+                      const tool = TOOLS_DATA.find((t) => t.id === toolId)
+                      if (!tool) return null
+                      const ToolIcon = tool.icon
+
+                      return (
+                        <div
+                          key={toolId}
+                          className="flex items-center gap-2 p-2.5 rounded-lg transition-all duration-150"
+                          style={{
+                            backgroundColor: 'var(--bg-secondary)',
+                            border: '1px solid var(--border-subtle)',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
+                            e.currentTarget.style.borderColor = `${mode.color}30`
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'
+                            e.currentTarget.style.borderColor = 'var(--border-subtle)'
+                          }}
+                        >
+                          <ToolIcon size={14} style={{ color: mode.color, flexShrink: 0 }} />
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                              {tool.name}
+                            </p>
+                            <p className="text-[9px] truncate" style={{ color: 'var(--text-muted)' }}>
+                              {tool.description}
+                            </p>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
-            <span className="px-3 py-1 rounded-md text-[10px] font-semibold" style={{ backgroundColor: 'rgba(74, 222, 128, 0.08)', color: 'var(--success)' }}>
-              12 tools
-            </span>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+// ─── Discord RPC Section ────────────────────────────────────────────────────
+
+function DiscordRPCSection() {
+  const [enabled, setEnabled] = useState(false)
+  const [connected, setConnected] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [discordDetected, setDiscordDetected] = useState<boolean | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [debugLog, setDebugLog] = useState(false)
+
+  useEffect(() => {
+    // Load initial state
+    window.artemis.discord.getState().then((state) => {
+      setEnabled(state.enabled)
+      setConnected(state.connected)
+      if (state.error) setError(state.error)
+    }).catch(() => {})
+
+    window.artemis.discord.detectDiscord().then(setDiscordDetected).catch(() => {})
+  }, [])
+
+  const handleToggle = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const newState = await window.artemis.discord.toggle(!enabled)
+      setEnabled(newState.enabled)
+      setConnected(newState.connected)
+      if (newState.error) setError(newState.error)
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <>
+      <SectionHeader title="Discord RPC" subtitle="Show your Artemis IDE activity as Discord Rich Presence." />
+
+      {/* Detection Status */}
+      <div className="rounded-xl p-5 mb-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'rgba(88, 101, 242, 0.1)', border: '1px solid rgba(88, 101, 242, 0.15)' }}>
+              <Gamepad2 size={18} style={{ color: '#5865F2' }} />
+            </div>
+            <div>
+              <p className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>Enable Discord RPC</p>
+              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                {discordDetected === null ? 'Checking Discord...' :
+                 discordDetected ? 'Discord detected on this system' :
+                 'Discord not detected — install Discord first'}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleToggle}
+            disabled={loading}
+            className="w-10 rounded-full relative transition-all duration-200 shrink-0"
+            style={{
+              backgroundColor: enabled ? '#5865F2' : 'var(--bg-elevated)',
+              border: `1px solid ${enabled ? '#5865F2' : 'var(--border-default)'}`,
+              width: 40, height: 22,
+              opacity: loading ? 0.6 : 1,
+            }}
+          >
+            <div
+              className="absolute top-0.5 w-4 h-4 rounded-full transition-all duration-200"
+              style={{
+                backgroundColor: enabled ? '#fff' : 'var(--text-muted)',
+                left: enabled ? 20 : 2,
+              }}
+            />
+          </button>
+        </div>
+
+        {/* Status */}
+        {enabled && (
+          <div className="mt-4 pt-4" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+            <div className="flex items-center gap-2">
+              <Circle
+                size={8}
+                fill={connected ? '#4ade80' : '#fbbf24'}
+                stroke="none"
+              />
+              <span className="text-[11px] font-medium" style={{ color: connected ? 'var(--success)' : 'var(--warning)' }}>
+                {connected ? 'Connected to Discord' : 'Connecting...'}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="mt-3 flex items-center gap-2 px-3 py-2 rounded-lg" style={{ backgroundColor: 'rgba(192, 57, 43, 0.06)', border: '1px solid rgba(192, 57, 43, 0.12)' }}>
+            <X size={11} style={{ color: 'var(--error)' }} />
+            <span className="text-[10px]" style={{ color: 'var(--error)' }}>{error}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Presence Details */}
+      <div className="rounded-xl p-5 mb-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <p className="text-[12px] font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Presence Details</p>
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>Application Name</span>
+            <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>Artemis IDE</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>App ID</span>
+            <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>1470066535660785835</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>Status Format</span>
+            <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>Editing [file] | [elapsed]</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>Updates On</span>
+            <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>File open, idle</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Debug Logging Toggle */}
+      <div className="rounded-xl p-5 mb-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>Debug Logging</p>
+            <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Log Discord IPC events to DevTools console for troubleshooting</p>
+          </div>
+          <button
+            onClick={() => {
+              const next = !debugLog
+              setDebugLog(next)
+              window.artemis.discord.setDebug(next).catch(() => {})
+            }}
+            className="w-10 rounded-full relative transition-all duration-200 shrink-0"
+            style={{
+              backgroundColor: debugLog ? 'var(--accent)' : 'var(--bg-elevated)',
+              border: `1px solid ${debugLog ? 'var(--accent)' : 'var(--border-default)'}`,
+              width: 40, height: 22,
+            }}
+          >
+            <div
+              className="absolute top-0.5 w-4 h-4 rounded-full transition-all duration-200"
+              style={{
+                backgroundColor: debugLog ? '#fff' : 'var(--text-muted)',
+                left: debugLog ? 20 : 2,
+              }}
+            />
+          </button>
+        </div>
+      </div>
+
+      {/* Info */}
+      <div className="rounded-xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: 'rgba(88, 101, 242, 0.06)', border: '1px solid rgba(88, 101, 242, 0.1)' }}>
+            <Info size={18} style={{ color: '#5865F2' }} />
+          </div>
+          <div>
+            <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>How it works</p>
+            <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              Discord RPC connects to Discord via a local IPC socket — no credentials needed.
+              Your status will show the current file, language icon, and elapsed time.
+              Toggle off at any time to clear your presence. Enable Debug Logging to see
+              connection events in the DevTools console (Ctrl+Shift+I).
+            </p>
           </div>
         </div>
       </div>
