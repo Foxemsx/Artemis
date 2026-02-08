@@ -13,6 +13,7 @@ import type { ToolCall, ToolResult } from '../types'
 import { webSearch, formatSearchForAgent } from '../../services/webSearchService'
 import { lintFile, formatLintForAgent } from '../../services/linterService'
 import { fetchUrl, formatFetchForAgent } from '../../services/urlFetchService'
+import { mcpClientManager } from '../../services/mcpClient'
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -464,7 +465,6 @@ export class ToolExecutor {
   private async dispatch(name: string, args: Record<string, any>, projectPath?: string): Promise<string> {
     // Route MCP tools to the MCP client manager
     if (name.startsWith('mcp_')) {
-      const { mcpClientManager } = require('../../services/mcpClient')
       return mcpClientManager.callTool(name, args)
     }
 

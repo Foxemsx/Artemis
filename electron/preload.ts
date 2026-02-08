@@ -119,6 +119,10 @@ contextBridge.exposeInMainWorld('artemis', {
       ipcRenderer.invoke('mcp:uninstallServer', serverId),
     searchServers: (query: string) =>
       ipcRenderer.invoke('mcp:searchServers', query),
+    getConnectedTools: () =>
+      ipcRenderer.invoke('mcp:getConnectedTools') as Promise<Array<{ name: string; description: string; serverId: string }>>,
+    getConnectionStatus: () =>
+      ipcRenderer.invoke('mcp:getConnectionStatus') as Promise<Array<{ id: string; name: string; connected: boolean; toolCount: number; tools: string[] }>>,
   },
 
   // ─── Web Search (DuckDuckGo) ────────────────────────────────────────

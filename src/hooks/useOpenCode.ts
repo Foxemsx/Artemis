@@ -692,6 +692,24 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
       systemPrompt += `\nYou have access to web_search (DuckDuckGo, no API key) and fetch_url (fetch any web page) tools. Use web_search when the user asks you to look something up. Use fetch_url when the user shares a URL or you need to read a web page, docs, or article.`
     }
 
+    // ─── MCP Tool Awareness ──────────────────────────────────────
+    try {
+      const mcpTools = await window.artemis.mcp.getConnectedTools()
+      if (mcpTools && mcpTools.length > 0) {
+        const toolsByServer: Record<string, string[]> = {}
+        for (const t of mcpTools) {
+          if (!toolsByServer[t.serverId]) toolsByServer[t.serverId] = []
+          toolsByServer[t.serverId].push(t.name)
+        }
+        const serverList = Object.entries(toolsByServer)
+          .map(([sid, tools]) => `  - ${sid}: ${tools.join(', ')}`)
+          .join('\n')
+        systemPrompt += `\n\n## MCP Tools Available\nYou have Model Context Protocol (MCP) tools connected. These are SPECIALIZED tools that you MUST prefer over generic terminal commands (execute_command) when they cover the same functionality.\n\nConnected MCP servers and tools:\n${serverList}\n\nIMPORTANT: When the user asks for operations that an MCP tool can handle (e.g., git operations via git MCP, GitHub operations via GitHub MCP), ALWAYS use the MCP tool instead of execute_command. MCP tools provide structured, reliable output. The tool names in your tool list that start with "mcp_" are these MCP tools.`
+      }
+    } catch {
+      // MCP tools not available — that's fine
+    }
+
     // ─── URL Auto-Detection ───────────────────────────────────────
     const urlRegex = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi
     const detectedUrls = text.match(urlRegex)

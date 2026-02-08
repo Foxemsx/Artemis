@@ -6,6 +6,7 @@ import { registerAgentIPC } from './api'
 import { webSearch } from './services/webSearchService'
 import { lintFile } from './services/linterService'
 import * as mcpService from './services/mcpService'
+import { mcpClientManager } from './services/mcpClient'
 import * as discordRPC from './services/discordRPCService'
 
 // node-pty is a native module - import with fallback
@@ -629,6 +630,33 @@ ipcMain.handle('mcp:uninstallServer', (_e, serverId: string) =>
   mcpService.uninstallServer(serverId))
 ipcMain.handle('mcp:searchServers', (_e, query: string) =>
   mcpService.searchServers(query))
+
+// Get connected MCP tools for system prompt injection
+ipcMain.handle('mcp:getConnectedTools', () => {
+  const tools = mcpClientManager.getAllTools()
+  return tools.map((t: any) => ({
+    name: t.name,
+    description: t.description,
+    serverId: t.serverId,
+  }))
+})
+
+// Get per-server connection status
+ipcMain.handle('mcp:getConnectionStatus', () => {
+  const servers = mcpService.getServers()
+  return servers
+    .filter(s => s.installed)
+    .map(s => {
+      const client = mcpClientManager.get(s.id)
+      return {
+        id: s.id,
+        name: s.name,
+        connected: client?.connected || false,
+        toolCount: client?.tools?.length || 0,
+        tools: (client?.tools || []).map((t: any) => t.name),
+      }
+    })
+})
 
 // ─── IPC: Web Search (DuckDuckGo) ──────────────────────────────────────────
 ipcMain.handle('webSearch:search', async (_e, query: string) => {

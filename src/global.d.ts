@@ -163,6 +163,8 @@ interface ArtemisAPI {
     installServer: (serverId: string, config?: Record<string, any>) => Promise<{ success: boolean; serverId: string; error?: string }>
     uninstallServer: (serverId: string) => Promise<{ success: boolean; serverId: string; error?: string }>
     searchServers: (query: string) => Promise<any[]>
+    getConnectedTools: () => Promise<Array<{ name: string; description: string; serverId: string }>>
+    getConnectionStatus: () => Promise<Array<{ id: string; name: string; connected: boolean; toolCount: number; tools: string[] }>>
   }
 
   // Web Search (DuckDuckGo, no API key)

@@ -42,6 +42,14 @@ interface Props {
   visible?: boolean
 }
 
+interface MCPConnectionInfo {
+  id: string
+  name: string
+  connected: boolean
+  toolCount: number
+  tools: string[]
+}
+
 export default function MCPMarketplace({ visible = true }: Props) {
   const [servers, setServers] = useState<MCPServer[]>([])
   const [searchQuery, setSearchQuery] = useState('')
@@ -49,6 +57,7 @@ export default function MCPMarketplace({ visible = true }: Props) {
   const [installingId, setInstallingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [connectionStatus, setConnectionStatus] = useState<MCPConnectionInfo[]>([])
 
   // Load servers on mount
   useEffect(() => {
@@ -59,13 +68,24 @@ export default function MCPMarketplace({ visible = true }: Props) {
     setLoading(true)
     setError(null)
     try {
-      const result = await window.artemis.mcp.getServers()
+      const [result, status] = await Promise.all([
+        window.artemis.mcp.getServers(),
+        window.artemis.mcp.getConnectionStatus().catch(() => [] as MCPConnectionInfo[]),
+      ])
       setServers(result)
+      setConnectionStatus(status)
     } catch (err: any) {
       setError(err.message || 'Failed to load MCP servers')
     } finally {
       setLoading(false)
     }
+  }, [])
+
+  const refreshStatus = useCallback(async () => {
+    try {
+      const status = await window.artemis.mcp.getConnectionStatus()
+      setConnectionStatus(status)
+    } catch { /* ignore */ }
   }, [])
 
   const handleInstall = useCallback(async (serverId: string) => {
@@ -76,6 +96,8 @@ export default function MCPMarketplace({ visible = true }: Props) {
         setServers(prev => prev.map(s =>
           s.id === serverId ? { ...s, installed: true, configuredAt: Date.now() } : s
         ))
+        // Refresh connection status after a short delay to let the server connect
+        setTimeout(refreshStatus, 1500)
       } else {
         setError(result.error || 'Install failed')
       }
@@ -84,7 +106,7 @@ export default function MCPMarketplace({ visible = true }: Props) {
     } finally {
       setInstallingId(null)
     }
-  }, [])
+  }, [refreshStatus])
 
   const handleUninstall = useCallback(async (serverId: string) => {
     try {
@@ -93,6 +115,7 @@ export default function MCPMarketplace({ visible = true }: Props) {
         setServers(prev => prev.map(s =>
           s.id === serverId ? { ...s, installed: false, configuredAt: undefined } : s
         ))
+        setConnectionStatus(prev => prev.filter(c => c.id !== serverId))
       }
     } catch (err: any) {
       setError(err.message)
@@ -110,6 +133,7 @@ export default function MCPMarketplace({ visible = true }: Props) {
 
   const categories = ['code', 'data', 'docs', 'productivity', 'devops']
   const installedCount = servers.filter(s => s.installed).length
+  const connectedCount = connectionStatus.filter(c => c.connected).length
 
   if (!visible) return null
 
@@ -128,8 +152,17 @@ export default function MCPMarketplace({ visible = true }: Props) {
             </h2>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] px-2 py-0.5 rounded-md" style={{ backgroundColor: 'var(--accent-glow)', color: 'var(--accent)' }}>
-              {installedCount} active
+            <span className="text-[10px] px-2 py-0.5 rounded-md flex items-center gap-1.5" style={{ backgroundColor: 'var(--accent-glow)', color: 'var(--accent)' }}>
+              {connectedCount > 0 && (
+                <span className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#4ade80' }} />
+                  {connectedCount} connected
+                </span>
+              )}
+              {installedCount > connectedCount && (
+                <span>{connectedCount > 0 ? ' · ' : ''}{installedCount - connectedCount} offline</span>
+              )}
+              {installedCount === 0 && 'none installed'}
             </span>
             <button
               onClick={loadServers}
@@ -254,11 +287,25 @@ export default function MCPMarketplace({ visible = true }: Props) {
                         <span className="text-[9px] px-1.5 py-0.5 rounded-md" style={{ backgroundColor: `${catColor}12`, color: catColor }}>
                           {server.category}
                         </span>
-                        {server.installed && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded-md font-semibold" style={{ backgroundColor: 'rgba(74, 222, 128, 0.1)', color: 'var(--success)' }}>
-                            Active
-                          </span>
-                        )}
+                        {server.installed && (() => {
+                          const conn = connectionStatus.find(c => c.id === server.id)
+                          const isConnected = conn?.connected || false
+                          return (
+                            <span
+                              className="text-[9px] px-1.5 py-0.5 rounded-md font-semibold flex items-center gap-1"
+                              style={{
+                                backgroundColor: isConnected ? 'rgba(74, 222, 128, 0.1)' : 'rgba(251, 191, 36, 0.1)',
+                                color: isConnected ? 'var(--success)' : '#fbbf24',
+                              }}
+                            >
+                              <span
+                                className="w-1.5 h-1.5 rounded-full shrink-0"
+                                style={{ backgroundColor: isConnected ? '#4ade80' : '#fbbf24' }}
+                              />
+                              {isConnected ? `Connected · ${conn?.toolCount || 0} tools` : 'Disconnected'}
+                            </span>
+                          )
+                        })()}
                       </div>
                       <p className="text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
                         by {server.author} · v{server.version}

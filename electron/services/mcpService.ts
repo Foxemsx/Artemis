@@ -187,15 +187,15 @@ export const CURATED_SERVERS: MCPServer[] = [
   {
     id: 'mcp-git',
     name: 'Git',
-    description: 'Git operations: status, diff, log, commit, branch, checkout, and more. Full version control from the AI agent.',
-    author: 'Anthropic',
-    version: '1.0.0',
+    description: 'Full Git operations: status, diff, log, commit, push, pull, branch, merge, rebase, tag, and more. Complete version control from the AI agent.',
+    author: 'mseep',
+    version: '2.1.4',
     category: 'code',
     icon: '📦',
-    repoUrl: 'https://github.com/modelcontextprotocol/servers',
-    tools: ['git_status', 'git_diff', 'git_log', 'git_commit', 'git_add', 'git_branch', 'git_checkout'],
+    repoUrl: 'https://github.com/mseep/git-mcp-server',
+    tools: ['git_status', 'git_diff', 'git_log', 'git_commit', 'git_add', 'git_push', 'git_pull', 'git_branch', 'git_merge', 'git_clone'],
     spawnCommand: 'npx',
-    spawnArgs: ['-y', '@modelcontextprotocol/server-git'],
+    spawnArgs: ['-y', '@mseep/git-mcp-server'],
   },
 ]
 
