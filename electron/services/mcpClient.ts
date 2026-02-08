@@ -110,11 +110,19 @@ export class MCPClient extends EventEmitter {
         const processEnv = { ...process.env, ...env }
 
         // Resolve command to full path on Windows instead of using shell:true
-        const spawnCommand = process.platform === 'win32'
+        let spawnCommand = process.platform === 'win32'
           ? MCPClient.resolveCommand(command)
           : command
+        let spawnArgs = args
 
-        this.process = spawn(spawnCommand, args, {
+        // On Windows, .cmd/.bat files are batch scripts and cannot be spawned
+        // directly without a shell — route them through cmd.exe /c
+        if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(spawnCommand)) {
+          spawnArgs = ['/c', spawnCommand, ...args]
+          spawnCommand = process.env.ComSpec || 'cmd.exe'
+        }
+
+        this.process = spawn(spawnCommand, spawnArgs, {
           stdio: ['pipe', 'pipe', 'pipe'],
           env: processEnv,
           shell: false,

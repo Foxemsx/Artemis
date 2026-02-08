@@ -4,8 +4,6 @@
 
 <br />
 
-<img src="resources/icon.png" alt="Artemis Logo" width="80" />
-
 # Artemis IDE
 
 ### ⚡ The AI-Powered Development Environment Built for Speed
@@ -31,7 +29,6 @@ No subscriptions. No cloud lock-in. Just pure developer power.
 - **Planner Mode** — Get structured plans before any code is written
 - **Chat Mode** — Quick conversational help without tool execution
 - **Multi-Provider Support** — Works with OpenCode Zen, Z.AI, OpenAI, Anthropic, and more
-- **Free Models Available** — Start coding with AI at zero cost
 
 ### 🛠️ Full IDE Experience
 - **Monaco Editor** — The same editor engine that powers VS Code, with syntax highlighting for 40+ languages
@@ -68,32 +65,17 @@ Dark · Light · Cyberpunk · Nord · Monokai · Solarized · Dracula · Rosé P
 
 ## 📸 Screenshots
 
-> **Replace the placeholders below with your own screenshots directly from the IDE!**
-
 ### Main Editor View
-<!-- 📷 PLACEHOLDER: Take a screenshot of the full IDE with a file open in the editor -->
-<!-- ![Editor View](screenshots/editor.png) -->
-`screenshots/editor.png` — *Add a screenshot of the editor with a file open and the file explorer visible*
+![Editor View](screenshots/editor.png)
 
 ### AI Chat in Action
-<!-- 📷 PLACEHOLDER: Screenshot of the AI agent working on a task -->
-<!-- ![AI Chat](screenshots/ai-chat.png) -->
-`screenshots/ai-chat.png` — *Add a screenshot of the AI agent responding to a prompt*
+![AI Chat](screenshots/ai-chat.png)
 
 ### MCP Marketplace
-<!-- 📷 PLACEHOLDER: Screenshot of the MCP marketplace panel -->
-<!-- ![MCP Marketplace](screenshots/mcp.png) -->
-`screenshots/mcp.png` — *Add a screenshot of the MCP server marketplace*
+![MCP Marketplace](screenshots/mcp.png)
 
 ### Theme Gallery
-<!-- 📷 PLACEHOLDER: A collage or grid of different themes -->
-<!-- ![Themes](screenshots/themes.png) -->
-`screenshots/themes.png` — *Add a collage showing 3-4 of your favorite themes*
-
-### Terminal
-<!-- 📷 PLACEHOLDER: Screenshot of the integrated terminal -->
-<!-- ![Terminal](screenshots/terminal.png) -->
-`screenshots/terminal.png` — *Add a screenshot of the integrated terminal in action*
+![Themes](screenshots/themes.png)
 
 ---
 

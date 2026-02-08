@@ -15,6 +15,11 @@ if (process.platform === 'win32') {
   app.setAppUserModelId('Artemis IDE')
 }
 
+// Suppress Chrome DevTools Autofill protocol errors
+app.commandLine.appendSwitch('disable-features', 'AutofillServerCommunication,Autofill')
+
+let isQuitting = false
+
 // node-pty is a native module - import with fallback
 let ptyModule: typeof import('node-pty') | null = null
 try {
@@ -116,10 +121,14 @@ function createWindow() {
 
   // Forward window state events to renderer
   mainWindow.on('maximize', () => {
-    mainWindow?.webContents.send('window:maximized')
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window:maximized')
+    }
   })
   mainWindow.on('unmaximize', () => {
-    mainWindow?.webContents.send('window:unmaximized')
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window:unmaximized')
+    }
   })
 
   // Security: Set Content Security Policy headers
@@ -571,11 +580,15 @@ ipcMain.handle('session:create', (_event, { id, cwd }: { id: string; cwd: string
     sessions.set(id, ptyProcess)
 
     ptyProcess.onData((data: string) => {
-      mainWindow?.webContents.send(`session:data:${id}`, data)
+      if (!isQuitting && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(`session:data:${id}`, data)
+      }
     })
 
     ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
-      mainWindow?.webContents.send(`session:exit:${id}`, exitCode)
+      if (!isQuitting && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(`session:exit:${id}`, exitCode)
+      }
       sessions.delete(id)
     })
 
@@ -778,14 +791,16 @@ app.whenReady().then(async () => {
 })
 
 app.on('before-quit', () => {
-  // Graceful shutdown: disconnect all MCP servers to prevent orphan processes
-  mcpClientManager.disconnectAll()
+  isQuitting = true
 
-  // Kill all PTY sessions
+  // Kill all PTY sessions FIRST to prevent data events to destroyed window
   for (const [_id, session] of Array.from(sessions)) {
     try { session.kill() } catch {}
   }
   sessions.clear()
+
+  // Graceful shutdown: disconnect all MCP servers to prevent orphan processes
+  mcpClientManager.disconnectAll()
 
   // Disconnect Discord RPC
   discordRPC.disconnect()
