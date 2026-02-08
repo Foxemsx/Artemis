@@ -133,6 +133,7 @@ export class AgentLoop {
     let iteration = 0
     let totalContent = ''
     const allToolResults: ToolResult[] = []
+    let totalUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined
 
     while (iteration < maxIterations && !this.aborted) {
       iteration++
@@ -154,6 +155,7 @@ export class AgentLoop {
         reasoningContent: string
         toolCalls: ToolCall[]
         finishReason: StreamDelta['finishReason']
+        usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
         error?: ApiError
       }
 
@@ -183,6 +185,16 @@ export class AgentLoop {
       }
 
       totalContent += streamResult.content
+
+      // Accumulate actual token usage across iterations
+      if (streamResult.usage) {
+        if (!totalUsage) {
+          totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+        }
+        totalUsage.promptTokens += streamResult.usage.promptTokens
+        totalUsage.completionTokens += streamResult.usage.completionTokens
+        totalUsage.totalTokens += streamResult.usage.totalTokens
+      }
 
       // ─── Handle Tool Calls ───────────────────────────────────────────
       if (streamResult.finishReason === 'tool_calls' && streamResult.toolCalls.length > 0) {
@@ -278,6 +290,7 @@ export class AgentLoop {
       iterations: iteration,
       toolCallsExecuted: allToolResults.length,
       contentLength: totalContent.length,
+      usage: totalUsage,
     })
 
     return this.buildResponse(totalContent, allToolResults, iteration, conversation, false)
@@ -308,6 +321,7 @@ export class AgentLoop {
     reasoningContent: string
     toolCalls: ToolCall[]
     finishReason: StreamDelta['finishReason']
+    usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
     error?: ApiError
   }> {
     // Build provider-specific request (adapter handles all conversion)
@@ -329,6 +343,7 @@ export class AgentLoop {
           reasoningContent: result.reasoningContent,
           toolCalls: result.toolCalls,
           finishReason: result.finishReason,
+          usage: result.usage,
         })
       }
 

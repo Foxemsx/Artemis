@@ -69,6 +69,12 @@ export interface StreamDelta {
   toolCalls?: StreamToolCallDelta[]
   /** Set when the stream finishes */
   finishReason?: 'stop' | 'tool_calls' | 'length' | 'content_filter' | null
+  /** Actual token usage from the API (present in the final chunk when supported) */
+  usage?: {
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+  }
 }
 
 export interface StreamToolCallDelta {

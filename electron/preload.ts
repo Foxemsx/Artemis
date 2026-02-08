@@ -99,6 +99,8 @@ contextBridge.exposeInMainWorld('artemis', {
   shell: {
     openPath: (path: string) =>
       ipcRenderer.invoke('shell:openPath', path),
+    openExternal: (url: string) =>
+      ipcRenderer.invoke('shell:openExternal', url),
   },
 
   // ─── Tool Execution ──────────────────────────────────────────────────
@@ -123,6 +125,18 @@ contextBridge.exposeInMainWorld('artemis', {
       ipcRenderer.invoke('mcp:getConnectedTools') as Promise<Array<{ name: string; description: string; serverId: string }>>,
     getConnectionStatus: () =>
       ipcRenderer.invoke('mcp:getConnectionStatus') as Promise<Array<{ id: string; name: string; connected: boolean; toolCount: number; tools: string[] }>>,
+    addCustomServer: (server: { id: string; name: string; description: string; command: string; args: string[]; env?: Record<string, string> }) =>
+      ipcRenderer.invoke('mcp:addCustomServer', server),
+    removeCustomServer: (serverId: string) =>
+      ipcRenderer.invoke('mcp:removeCustomServer', serverId),
+    getCustomServers: () =>
+      ipcRenderer.invoke('mcp:getCustomServers'),
+    getServerLogs: (serverId: string) =>
+      ipcRenderer.invoke('mcp:getServerLogs', serverId),
+    clearServerLogs: (serverId: string) =>
+      ipcRenderer.invoke('mcp:clearServerLogs', serverId),
+    getAllServerLogs: () =>
+      ipcRenderer.invoke('mcp:getAllServerLogs'),
   },
 
   // ─── Web Search (DuckDuckGo) ────────────────────────────────────────

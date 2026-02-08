@@ -12,7 +12,6 @@ import CommandPalette from './components/CommandPalette'
 import type { ActivityView, Project, EditorTab, PtySession } from './types'
 import { detectLanguage } from './types'
 
-// ─── Error Boundary ──────────────────────────────────────────────────────────
 class ErrorBoundary extends Component<
   { children: ReactNode },
   { hasError: boolean; error: Error | null }
@@ -91,7 +90,6 @@ class ErrorBoundary extends Component<
 export default function App() {
   const { theme, setTheme, toggleTheme, isLoaded } = useTheme()
 
-  // ─── Core State ──────────────────────────────────────────────────────────
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
   const [activeView, setActiveView] = useState<ActivityView>('files')
   const [project, setProject] = useState<Project | null>(null)
@@ -100,37 +98,29 @@ export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false)
   const [keybindMap, setKeybindMap] = useState<Record<string, string>>({})
 
-  // ─── Sidebar & Chat State ─────────────────────────────────────────────
   const [sidebarVisible, setSidebarVisible] = useState(true)
   const [chatVisible, setChatVisible] = useState(true)
   const [recentProjects, setRecentProjects] = useState<Project[]>([])
 
-  // ─── Editor State ────────────────────────────────────────────────────────
   const [editorTabs, setEditorTabs] = useState<EditorTab[]>([])
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null)
 
-  // ─── Terminal State ──────────────────────────────────────────────────────
   const [ptyTerminals, setPtyTerminals] = useState<PtySession[]>([])
 
-  // ─── File Explorer Refresh Trigger ─────────────────────────────────────
   const [fileRefreshTrigger, setFileRefreshTrigger] = useState(0)
   const prevStreamingRef = React.useRef(false)
 
-  // ─── Sync project path to opencode hook for tool execution ─────────────
   useEffect(() => {
     opencode.setProjectPath(project?.path || null)
   }, [project?.path, opencode.setProjectPath])
 
-  // ─── Refresh file tree when agent finishes streaming ───────────────────
   useEffect(() => {
     if (prevStreamingRef.current && !opencode.isStreaming) {
-      // Agent just stopped streaming — refresh file explorer
       setFileRefreshTrigger(prev => prev + 1)
     }
     prevStreamingRef.current = opencode.isStreaming
   }, [opencode.isStreaming])
 
-  // ─── Discord RPC: Update presence when active file changes ────────────
   useEffect(() => {
     if (activeTabPath) {
       const fileName = activeTabPath.split(/[\\/]/).pop() || activeTabPath
@@ -140,9 +130,8 @@ export default function App() {
     } else {
       window.artemis.discord.updatePresence(undefined, undefined, project?.name).catch(() => {})
     }
-  }, [activeTabPath, project?.name]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeTabPath, project?.name])
 
-  // ─── Load Persisted State on Mount ───────────────────────────────────────
   useEffect(() => {
     Promise.all([
       window.artemis.store.get('setupComplete'),
@@ -165,28 +154,23 @@ export default function App() {
       })
   }, [])
 
-  // Destructure opencode values for proper dependency tracking
   const { hasApiKey, projectSessions, createSession } = opencode
 
-  // Auto-create a chat session when ready and no sessions exist for active project
   useEffect(() => {
     if (hasApiKey && projectSessions.length === 0) {
       createSession()
     }
   }, [hasApiKey, projectSessions.length, project?.id, createSession])
 
-  // Auto-create a terminal on startup (once app is loaded and setup is complete)
   useEffect(() => {
     if (setupComplete && ptyTerminals.length === 0) {
-      // Small delay to ensure layout is ready
       const timer = setTimeout(() => {
         createTerminal()
       }, 500)
       return () => clearTimeout(timer)
     }
-  }, [setupComplete]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [setupComplete])
 
-  // ─── Load Keybinds ───────────────────────────────────────────────────────
   useEffect(() => {
     window.artemis.store.get('keybinds').then((saved: any) => {
       if (saved && typeof saved === 'object') {
@@ -195,7 +179,6 @@ export default function App() {
     }).catch(() => {})
   }, [])
 
-  // ─── Setup Complete Handler ──────────────────────────────────────────────
   const handleSetupComplete = useCallback(
     async (selectedTheme: string, apiKeys?: { provider: 'zen' | 'zai'; key: string }[]) => {
       console.log('[Artemis] Setup complete, theme:', selectedTheme)
@@ -203,7 +186,6 @@ export default function App() {
       setSetupComplete(true)
       await window.artemis.store.set('setupComplete', true)
       
-      // Store pending API keys for later validation
       if (apiKeys && apiKeys.length > 0) {
         const pendingKeys: Record<string, string> = {}
         for (const { provider, key } of apiKeys) {
@@ -215,16 +197,13 @@ export default function App() {
     [setTheme]
   )
 
-  // ─── Project Management ─────────────────────────────────────────────────
   const addProject = useCallback(async () => {
     const result = await window.artemis.dialog.openFolder()
     if (!result) return
 
-    // Clear editor/terminal state if switching projects
     if (project && project.path !== result.path) {
       setEditorTabs([])
       setActiveTabPath(null)
-      // Kill existing terminals
       for (const term of ptyTerminals) {
         try { await window.artemis.session.kill(term.id) } catch {}
       }
@@ -242,7 +221,6 @@ export default function App() {
     setProject(newProject)
     window.artemis.store.set('lastProject', newProject)
 
-    // Track in recent projects
     setRecentProjects((prev) => {
       const filtered = prev.filter((p) => p.path !== newProject.path)
       const updated = [newProject, ...filtered].slice(0, 10)
@@ -251,9 +229,7 @@ export default function App() {
     })
   }, [project, ptyTerminals])
 
-  // ─── Select Recent Project ─────────────────────────────────────────────
   const selectProject = useCallback(async (selectedProject: Project) => {
-    // Clear editor/terminal state when switching projects
     if (project && project.path !== selectedProject.path) {
       setEditorTabs([])
       setActiveTabPath(null)
@@ -267,7 +243,6 @@ export default function App() {
     setProject(updated)
     window.artemis.store.set('lastProject', updated)
 
-    // Update recent projects
     setRecentProjects((prev) => {
       const filtered = prev.filter((p) => p.path !== updated.path)
       const next = [updated, ...filtered].slice(0, 10)
@@ -276,7 +251,6 @@ export default function App() {
     })
   }, [project, ptyTerminals])
 
-  // ─── Remove Project from Recent ───────────────────────────────────────────
   const removeProject = useCallback((projectId: string) => {
     setRecentProjects((prev) => {
       const filtered = prev.filter((p) => p.id !== projectId)
@@ -285,7 +259,6 @@ export default function App() {
     })
   }, [])
 
-  // ─── Open Project Directory in File Explorer ──────────────────────────────
   const handleOpenProjectDirectory = useCallback(async (projectPath: string) => {
     try {
       await window.artemis.shell.openPath(projectPath)
@@ -294,9 +267,7 @@ export default function App() {
     }
   }, [])
 
-  // ─── File Operations ──────────────────────────────────────────────────────
   const openFile = useCallback(async (filePath: string) => {
-    // Check if tab already open
     const existing = editorTabs.find((t) => t.path === filePath)
     if (existing) {
       setActiveTabPath(filePath)
@@ -334,19 +305,26 @@ export default function App() {
   }, [activeTabPath])
 
   const closeOtherTabs = useCallback((keepPath: string) => {
-    setEditorTabs((prev) => prev.filter((t) => t.path === keepPath))
+    setEditorTabs((prev) => prev.filter((t) => t.path === keepPath || t.isPinned))
     setActiveTabPath(keepPath)
   }, [])
 
   const closeAllTabs = useCallback(() => {
-    setEditorTabs([])
-    setActiveTabPath(null)
+    setEditorTabs((prev) => {
+      const pinned = prev.filter(t => t.isPinned)
+      return pinned
+    })
+    setActiveTabPath((prev) => {
+      return prev
+    })
   }, [])
 
   const closeTabsToRight = useCallback((path: string) => {
     setEditorTabs((prev) => {
       const idx = prev.findIndex((t) => t.path === path)
-      const next = prev.slice(0, idx + 1)
+      const left = prev.slice(0, idx + 1)
+      const rightPinned = prev.slice(idx + 1).filter(t => t.isPinned)
+      const next = [...left, ...rightPinned]
       if (activeTabPath && !next.find(t => t.path === activeTabPath)) {
         setActiveTabPath(next.length > 0 ? next[next.length - 1].path : null)
       }
@@ -375,11 +353,33 @@ export default function App() {
     )
   }, [])
 
-  // ─── File System Operations (for context menus) ────────────────────────────
+  const pinTab = useCallback((path: string) => {
+    setEditorTabs((prev) =>
+      prev.map((t) => (t.path === path ? { ...t, isPinned: true } : t))
+    )
+  }, [])
+
+  const unpinTab = useCallback((path: string) => {
+    setEditorTabs((prev) =>
+      prev.map((t) => (t.path === path ? { ...t, isPinned: false } : t))
+    )
+  }, [])
+
+  const reorderTabs = useCallback((fromPath: string, toPath: string) => {
+    setEditorTabs((prev) => {
+      const tabs = [...prev]
+      const fromIndex = tabs.findIndex(t => t.path === fromPath)
+      const toIndex = tabs.findIndex(t => t.path === toPath)
+      if (fromIndex === -1 || toIndex === -1) return prev
+      const [moved] = tabs.splice(fromIndex, 1)
+      tabs.splice(toIndex, 0, moved)
+      return tabs
+    })
+  }, [])
+
   const deletePath = useCallback(async (filePath: string) => {
     try {
       await window.artemis.fs.delete(filePath)
-      // Close tab if it was open
       setEditorTabs(prev => prev.filter(t => t.path !== filePath.replace(/\\/g, '/')))
     } catch (err) {
       console.error('[Artemis] Failed to delete:', err)
@@ -391,7 +391,6 @@ export default function App() {
       const dir = oldPath.replace(/[\\/][^\\/]+$/, '')
       const newPath = `${dir}/${newName}`.replace(/\\/g, '/')
       await window.artemis.fs.rename(oldPath.replace(/\\/g, '/'), newPath)
-      // Update any open tab with the old path
       setEditorTabs(prev => prev.map(t =>
         t.path === oldPath.replace(/\\/g, '/') ? { ...t, path: newPath, name: newName } : t
       ))
@@ -407,7 +406,6 @@ export default function App() {
     try {
       const fullPath = `${dirPath}/${name}`.replace(/\\/g, '/')
       await window.artemis.fs.writeFile(fullPath, '')
-      // Open the new file
       openFile(fullPath)
     } catch (err) {
       console.error('[Artemis] Failed to create file:', err)
@@ -423,7 +421,6 @@ export default function App() {
     }
   }, [])
 
-  // ─── Terminal Operations ──────────────────────────────────────────────────
   const createTerminal = useCallback(async () => {
     const cwd = project?.path || '.'
     const id = `terminal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -444,7 +441,6 @@ export default function App() {
 
     setPtyTerminals((prev) => [...prev, newTerm])
 
-    // Listen for exit
     const removeExitListener = window.artemis.session.onExit(id, (code) => {
       setPtyTerminals((prev) =>
         prev.map((t) =>
@@ -462,13 +458,11 @@ export default function App() {
     setPtyTerminals((prev) => prev.filter((t) => t.id !== id))
   }, [])
 
-  // ─── View Switching ──────────────────────────────────────────────────────
   const switchView = useCallback((view: ActivityView) => {
     setActiveView(view)
     setShowCommandPalette(false)
   }, [])
 
-  // ─── Chat Wrappers ────────────────────────────────────────────────────────
   const handleCreateSession = useCallback(() => {
     opencode.createSession()
   }, [opencode])
@@ -477,13 +471,11 @@ export default function App() {
     await opencode.sendMessage(text, fileContext, modeOverride, planText, images)
   }, [opencode])
 
-  // ─── Reset Setup (show intro again) ───────────────────────────────────────
   const resetSetup = useCallback(async () => {
     await window.artemis.store.set('setupComplete', false)
     setSetupComplete(false)
   }, [])
 
-  // ─── Keyboard Shortcuts ──────────────────────────────────────────────────
   useEffect(() => {
     const defaults: Record<string, string> = {
       commandPalette: 'Ctrl+K',
@@ -602,9 +594,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [showCommandPalette, keybindMap, activeTabPath, editorTabs, saveFile, opencode, createTerminal, closeTab])
 
-  // ─── Render ──────────────────────────────────────────────────────────────
 
-  // Loading: wait for theme + setup status
   if (!isLoaded || setupComplete === null) {
     return (
       <div
@@ -627,12 +617,10 @@ export default function App() {
     )
   }
 
-  // First-time setup
   if (!setupComplete) {
     return <ThemeSetup onComplete={handleSetupComplete} />
   }
 
-  // Main app layout
   return (
     <ErrorBoundary>
       <div
@@ -654,6 +642,9 @@ export default function App() {
             onViewChange={switchView}
             isReady={opencode.isReady}
             hasApiKey={opencode.hasApiKey}
+            activeModel={opencode.activeModel}
+            sessionTokenUsage={opencode.sessionTokenUsage}
+            totalTokenUsage={opencode.totalTokenUsage}
           />
 
           {sidebarVisible && (
@@ -684,7 +675,6 @@ export default function App() {
             activeView={activeView}
             theme={theme}
             projectPath={project?.path || null}
-            // Editor
             editorTabs={editorTabs}
             activeTabPath={activeTabPath}
             onOpenFile={openFile}
@@ -695,11 +685,13 @@ export default function App() {
             onSelectTab={selectTab}
             onSaveFile={saveFile}
             onTabContentChange={handleTabContentChange}
+            onPinTab={pinTab}
+            onUnpinTab={unpinTab}
+            onReorderTabs={reorderTabs}
             onDeletePath={deletePath}
             onRenamePath={renamePath}
             onCreateFile={createFileInDir}
             onCreateFolder={createFolderInDir}
-            // Chat
             sessions={opencode.projectSessions}
             activeSessionId={opencode.activeSessionId}
             messages={opencode.messages}
@@ -726,11 +718,9 @@ export default function App() {
               setActiveView('terminal')
               createTerminal()
             }}
-            // Terminal
             ptyTerminals={ptyTerminals}
             onNewTerminal={createTerminal}
             onCloseTerminal={closeTerminal}
-            // Settings
             onToggleTheme={toggleTheme}
             onSetTheme={setTheme}
             apiKeys={opencode.apiKeys}
@@ -753,7 +743,6 @@ export default function App() {
           projectTokenCount={opencode.projectTokenCount}
         />
 
-        {/* Command Palette Overlay */}
         <AnimatePresence>
           {showCommandPalette && (
             <CommandPalette

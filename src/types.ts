@@ -1,11 +1,9 @@
-// ─── Theme & Navigation ──────────────────────────────────────────────────────
 export type Theme = 'dark' | 'light' | 'cyberpunk' | 'nord' | 'monokai' | 'solarized' | 'dracula' | 'rosepine' | 'pine' | 'catppuccin' | 'gruvbox' | 'materialocean' | 'everforest' | 'sakura' | 'beach' | 'space'
 export type ActivityView = 'files' | 'chat' | 'terminal' | 'settings' | 'problems' | 'search' | 'mcp'
 export type AgentMode = 'builder' | 'planner' | 'chat'
 export type EditApprovalMode = 'allow-all' | 'session-only' | 'ask'
 export type AIProvider = 'zen' | 'zai'
 
-// ─── Project ─────────────────────────────────────────────────────────────────
 export interface Project {
   id: string
   name: string
@@ -13,7 +11,6 @@ export interface Project {
   lastOpened: number
 }
 
-// ─── File Explorer ───────────────────────────────────────────────────────────
 export interface FileNode {
   name: string
   path: string
@@ -21,16 +18,15 @@ export interface FileNode {
   children?: FileNode[]
 }
 
-// ─── Editor ──────────────────────────────────────────────────────────────────
 export interface EditorTab {
   path: string
   name: string
   language: string
   content: string
   isDirty: boolean
+  isPinned?: boolean
 }
 
-// ─── Chat / Agent ────────────────────────────────────────────────────────────
 export interface ChatSession {
   id: string
   title: string
@@ -59,7 +55,6 @@ export interface MessagePart {
   }
   thinking?: {
     steps: AgentStep[]
-    duration: number // in milliseconds
     isComplete: boolean
   }
   reasoning?: {
@@ -68,7 +63,6 @@ export interface MessagePart {
   }
 }
 
-// ─── Agent Step (for thinking/planning blocks) ───────────────────────────────
 export interface AgentStep {
   id: string
   type: 'thinking' | 'tool-call' | 'tool-result' | 'plan' | 'summary'
@@ -82,7 +76,6 @@ export interface AgentStep {
     output: string
   }
   timestamp: number
-  duration?: number // how long this step took
 }
 
 export interface ChatMessage {
@@ -93,7 +86,6 @@ export interface ChatMessage {
   model?: string
   createdAt: string
   planText?: string
-  // Agent thinking metadata
   agentMeta?: {
     startTime: number
     endTime?: number
@@ -102,7 +94,6 @@ export interface ChatMessage {
   }
 }
 
-// ─── Providers / Models ──────────────────────────────────────────────────────
 export interface Provider {
   id: string
   name: string
@@ -114,26 +105,22 @@ export interface Model {
   name: string
   providerId: string
   providerName: string
-  aiProvider: AIProvider  // 'zen' for OpenCode Zen, 'zai' for Z.AI
   maxTokens?: number
   contextWindow?: number
   pricing?: {
-    input: number   // per 1M tokens
-    output: number  // per 1M tokens
+    input: number
+    output: number
   }
   free?: boolean
   description?: string
 }
 
-// ─── Session Token Tracking ──────────────────────────────────────────────────
 export interface SessionTokenUsage {
   promptTokens: number
   completionTokens: number
   totalTokens: number
-  estimatedCost: number   // in USD
 }
 
-// ─── PTY Session (for regular terminal, not chat) ────────────────────────────
 export interface PtySession {
   id: string
   name: string
@@ -142,7 +129,6 @@ export interface PtySession {
   createdAt: number
 }
 
-// ─── Language Detection Utility ──────────────────────────────────────────────
 const EXT_TO_LANG: Record<string, string> = {
   ts: 'typescript', tsx: 'typescriptreact',
   js: 'javascript', jsx: 'javascriptreact',

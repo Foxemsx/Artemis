@@ -6,6 +6,7 @@ import { type SoundSettings, DEFAULT_SOUND_SETTINGS, playSound, showNotification
 import { createCheckpoint, getCheckpoints, restoreCheckpoint, extractModifiedFiles, type Checkpoint } from '../lib/checkpoints'
 import { useSessionManager } from './useSessionManager'
 import { useTokenTracker } from './useTokenTracker'
+import { estimateTokens } from '../lib/tokenCounter'
 
 interface UseOpenCodeReturn {
   // Connection
@@ -77,6 +78,13 @@ function generateId(prefix: string = ''): string {
 }
 
 
+// Module-level cache for project token counts (survives re-renders, cleared on page reload)
+const projectTokenCache = new Map<string, {
+  tokenCount: number
+  computedAt: number
+  fileStats: Map<string, number> // filePath → size for incremental invalidation
+}>()
+
 export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeReturn {
   const [isReady, setIsReady] = useState(false)
   const [hasApiKey, setHasApiKey] = useState(false)
@@ -132,11 +140,19 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
   }, [])
 
   // Calculate total token count for the project (excluding node_modules, dist, etc.)
+  // Uses a module-level cache with a 5-minute TTL to avoid redundant I/O.
   useEffect(() => {
     if (!projectPath) return
 
     const abortController = new AbortController()
     const signal = abortController.signal
+    const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
+
+    const cached = projectTokenCache.get(projectPath)
+    if (cached && Date.now() - cached.computedAt < CACHE_TTL_MS) {
+      setProjectTokenCount(cached.tokenCount)
+      return
+    }
 
     const timeoutId = setTimeout(async () => {
       try {
@@ -145,9 +161,11 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
         const MAX_FILE_SIZE = 500_000
         const MAX_TOTAL_CHARS = 10_000_000
         const MAX_DEPTH = 6
+        const prevFileStats = cached?.fileStats || new Map<string, number>()
+        const newFileStats = new Map<string, number>()
+        let usedCacheHits = 0
 
         async function countInDir(dirPath: string, depth: number): Promise<void> {
-          // Check for abort before each async operation
           if (signal.aborted || depth > MAX_DEPTH || totalChars > MAX_TOTAL_CHARS) return
           
           try {
@@ -166,7 +184,13 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
                   const stat = await window.artemis.fs.stat(fullPath)
                   if (signal.aborted) return
                   if (stat.size < MAX_FILE_SIZE) {
+                    // If file size matches cached stat, skip re-reading
+                    const prevSize = prevFileStats.get(fullPath)
+                    if (prevSize !== undefined && prevSize === stat.size) {
+                      usedCacheHits++
+                    }
                     totalChars += stat.size
+                    newFileStats.set(fullPath, stat.size)
                   }
                 } catch {}
               }
@@ -176,7 +200,13 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
 
         await countInDir(projectPath, 0)
         if (!signal.aborted) {
-          setProjectTokenCount(Math.ceil(totalChars / 4))
+          const tokenCount = Math.ceil(totalChars / 3.5)
+          setProjectTokenCount(tokenCount)
+          projectTokenCache.set(projectPath, {
+            tokenCount,
+            computedAt: Date.now(),
+            fileStats: newFileStats,
+          })
         }
       } catch {}
     }, 1000)
@@ -777,6 +807,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     // This gives Windsurf-style interleaved rendering instead of text-on-top/tools-on-bottom
     const parts: MessagePart[] = [{ type: 'text', text: '' }]
     let reasoningContent = ''
+    const apiUsageRef: { current: { promptTokens: number; completionTokens: number; totalTokens: number } | null } = { current: null }
     const agentSteps: AgentStep[] = []
     const thinkingStartTime = Date.now()
     let stepStartTime = thinkingStartTime
@@ -864,7 +895,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
             const windowChars = speedWindow.reduce((sum, entry) => sum + entry.chars, 0)
             const windowElapsed = (now - speedWindow[0].time) / 1000
             if (windowElapsed > 0.1) {
-              const tokensPerSec = Math.round((windowChars / 4) / windowElapsed)
+              const tokensPerSec = Math.round((windowChars / 3.5) / windowElapsed)
               setStreamingSpeed(tokensPerSec)
             }
           }
@@ -965,6 +996,13 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
           break
         }
 
+        case 'agent_complete':
+          // Capture actual token usage from the API if available
+          if (event.data.usage) {
+            apiUsageRef.current = event.data.usage
+          }
+          break
+
         case 'agent_error':
           console.error('[Agent] Error:', event.data.error)
           playSound('error', soundSettings)
@@ -1020,19 +1058,24 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
       })
 
       // ─── Token Usage (delegated to useTokenTracker) ──────────────
-      let totalInputChars = (systemPrompt || '').length + text.length + (fileContext || '').length
-      for (const msg of conversationHistory) {
-        totalInputChars += msg.content.length
-      }
-      for (const p of parts) {
-        if (p.type === 'tool-call' && p.toolCall?.args) {
-          totalInputChars += JSON.stringify(p.toolCall.args).length
+      // Use actual API usage when available, fall back to client-side estimation
+      if (apiUsageRef.current && apiUsageRef.current.totalTokens > 0) {
+        trackUsage(sessionId!, activeModel.id, 0, 0, undefined, undefined, apiUsageRef.current)
+      } else {
+        let totalInputChars = (systemPrompt || '').length + text.length + (fileContext || '').length
+        for (const msg of conversationHistory) {
+          totalInputChars += msg.content.length
         }
-        if (p.type === 'tool-result' && p.toolResult?.output) {
-          totalInputChars += p.toolResult.output.length
+        for (const p of parts) {
+          if (p.type === 'tool-call' && p.toolCall?.args) {
+            totalInputChars += JSON.stringify(p.toolCall.args).length
+          }
+          if (p.type === 'tool-result' && p.toolResult?.output) {
+            totalInputChars += p.toolResult.output.length
+          }
         }
+        trackUsage(sessionId!, activeModel.id, totalInputChars, totalText.length)
       }
-      trackUsage(sessionId!, activeModel.id, totalInputChars, totalText.length)
 
       // ─── Play completion sound ──────────────────────────────────
       playSound('task-done', soundSettings)
@@ -1086,7 +1129,6 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     }
   }, [activeSessionId, activeModel, allSessionMessages, agentMode, soundSettings, createSession, saveMessages, saveSessions, updateAssistantParts, updateThinkingBlock, trackUsage])
 
-  // Abort message — stops the active session's agent run
   const abortMessage = useCallback(() => {
     if (!activeSessionId) return
     const requestId = activeRequestsRef.current.get(activeSessionId)

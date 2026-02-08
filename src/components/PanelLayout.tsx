@@ -25,6 +25,9 @@ interface Props {
   onSelectTab: (path: string) => void
   onSaveFile: (path: string, content: string) => void
   onTabContentChange: (path: string, content: string) => void
+  onPinTab?: (path: string) => void
+  onUnpinTab?: (path: string) => void
+  onReorderTabs?: (fromPath: string, toPath: string) => void
 
   // File system (context menu)
   onDeletePath: (path: string) => void
@@ -76,7 +79,7 @@ interface Props {
 export default function PanelLayout({
   activeView, theme, projectPath,
   editorTabs, activeTabPath, onOpenFile, onCloseTab, onCloseOtherTabs, onCloseAllTabs, onCloseTabsToRight,
-  onSelectTab, onSaveFile, onTabContentChange,
+  onSelectTab, onSaveFile, onTabContentChange, onPinTab, onUnpinTab, onReorderTabs,
   onDeletePath, onRenamePath, onCreateFile, onCreateFolder,
   sessions, activeSessionId, messages, isStreaming, isReady, hasApiKey, error,
   providers, activeModel, agentMode,
@@ -109,6 +112,9 @@ export default function PanelLayout({
                   onCloseTabsToRight={onCloseTabsToRight}
                   onSave={onSaveFile}
                   onContentChange={onTabContentChange}
+                  onPinTab={onPinTab}
+                  onUnpinTab={onUnpinTab}
+                  onReorderTabs={onReorderTabs}
                   theme={theme}
                 />
               </Panel>
@@ -145,6 +151,9 @@ export default function PanelLayout({
                   onCloseTabsToRight={onCloseTabsToRight}
                   onSave={onSaveFile}
                   onContentChange={onTabContentChange}
+                  onPinTab={onPinTab}
+                  onUnpinTab={onUnpinTab}
+                  onReorderTabs={onReorderTabs}
                   theme={theme}
                 />
               </Panel>
@@ -222,6 +231,9 @@ export default function PanelLayout({
                   onCloseTabsToRight={onCloseTabsToRight}
                   onSave={onSaveFile}
                   onContentChange={onTabContentChange}
+                  onPinTab={onPinTab}
+                  onUnpinTab={onUnpinTab}
+                  onReorderTabs={onReorderTabs}
                   theme={theme}
                 />
               </Panel>
@@ -252,6 +264,7 @@ export default function PanelLayout({
                       onEditApprovalModeChange={onEditApprovalModeChange}
                       onClearMessages={onClearMessages}
                       onOpenTerminal={onOpenTerminal}
+                      onOpenFile={onOpenFile}
                       checkpoints={checkpoints}
                       onRestoreCheckpoint={onRestoreCheckpoint}
                     />
@@ -287,6 +300,7 @@ export default function PanelLayout({
                 onEditApprovalModeChange={onEditApprovalModeChange}
                 onClearMessages={onClearMessages}
                 onOpenTerminal={onOpenTerminal}
+                onOpenFile={onOpenFile}
                 checkpoints={checkpoints}
                 onRestoreCheckpoint={onRestoreCheckpoint}
               />

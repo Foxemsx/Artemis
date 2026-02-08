@@ -1,13 +1,9 @@
-/**
- * Sound System — Web Audio API-based notification sounds.
- * No external audio files needed; all sounds are synthesized.
- */
 
 export type SoundType = 'task-done' | 'action-required' | 'error' | 'message-sent'
 
 export interface SoundSettings {
   enabled: boolean
-  volume: number // 0-1
+  volume: number
   taskDone: boolean
   actionRequired: boolean
   errorSound: boolean
@@ -34,13 +30,11 @@ function getAudioContext(): AudioContext {
   return audioCtx
 }
 
-// ─── Sound Generators ────────────────────────────────────────────────────────
 
 function playTaskDone(volume: number) {
   const ctx = getAudioContext()
   const now = ctx.currentTime
 
-  // Pleasant ascending chime: C5 → E5 → G5
   const notes = [523.25, 659.25, 783.99]
   notes.forEach((freq, i) => {
     const osc = ctx.createOscillator()
@@ -61,7 +55,6 @@ function playActionRequired(volume: number) {
   const ctx = getAudioContext()
   const now = ctx.currentTime
 
-  // Two-tone attention bell: A5 → E5 repeated
   for (let i = 0; i < 2; i++) {
     const osc = ctx.createOscillator()
     const gain = ctx.createGain()
@@ -81,7 +74,6 @@ function playError(volume: number) {
   const ctx = getAudioContext()
   const now = ctx.currentTime
 
-  // Low descending buzz: E4 → C4
   const notes = [329.63, 261.63]
   notes.forEach((freq, i) => {
     const osc = ctx.createOscillator()
@@ -102,7 +94,6 @@ function playMessageSent(volume: number) {
   const ctx = getAudioContext()
   const now = ctx.currentTime
 
-  // Quick soft pop
   const osc = ctx.createOscillator()
   const gain = ctx.createGain()
   osc.type = 'sine'
@@ -116,7 +107,6 @@ function playMessageSent(volume: number) {
   osc.stop(now + 0.15)
 }
 
-// ─── Public API ──────────────────────────────────────────────────────────────
 
 export function playSound(type: SoundType, settings: SoundSettings): void {
   if (!settings.enabled) return
@@ -142,17 +132,16 @@ export function showNotification(title: string, body: string, settings: SoundSet
   if (!('Notification' in window)) return
 
   if (Notification.permission === 'granted') {
-    new Notification(title, { body, icon: undefined })
+    new Notification(title, { body, icon: 'resources/icon.png' })
   } else if (Notification.permission !== 'denied') {
     Notification.requestPermission().then(perm => {
       if (perm === 'granted') {
-        new Notification(title, { body, icon: undefined })
+        new Notification(title, { body, icon: 'resources/icon.png' })
       }
     })
   }
 }
 
-/** Preview a sound at given volume */
 export function previewSound(type: SoundType, volume: number): void {
   switch (type) {
     case 'task-done': playTaskDone(volume); break

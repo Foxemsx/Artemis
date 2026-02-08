@@ -164,6 +164,12 @@ export interface StreamProcessorResult {
   toolCalls: ToolCall[]
   /** How the stream ended */
   finishReason: StreamDelta['finishReason']
+  /** Actual token usage from the API (when available) */
+  usage?: {
+    promptTokens: number
+    completionTokens: number
+    totalTokens: number
+  }
 }
 
 /**
@@ -176,6 +182,7 @@ export class StreamProcessor {
   private content: string = ''
   private reasoningContent: string = ''
   private finishReason: StreamDelta['finishReason'] = null
+  private usage: StreamProcessorResult['usage'] = undefined
 
   constructor(private adapter: BaseProvider) {}
 
@@ -215,6 +222,16 @@ export class StreamProcessor {
         this.finishReason = delta.finishReason
       }
 
+      // Accumulate usage (additive — Anthropic splits across message_start and message_delta)
+      if (delta.usage) {
+        if (!this.usage) {
+          this.usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+        }
+        this.usage.promptTokens += delta.usage.promptTokens
+        this.usage.completionTokens += delta.usage.completionTokens
+        this.usage.totalTokens += delta.usage.totalTokens
+      }
+
       deltas.push(delta)
     }
 
@@ -245,6 +262,7 @@ export class StreamProcessor {
       reasoningContent: this.reasoningContent,
       toolCalls: this.toolAccumulator.flush(),
       finishReason: this.finishReason,
+      usage: this.usage,
     }
   }
 
@@ -255,6 +273,7 @@ export class StreamProcessor {
     this.content = ''
     this.reasoningContent = ''
     this.finishReason = null
+    this.usage = undefined
   }
 
   /** Get current accumulated content (for real-time UI updates) */

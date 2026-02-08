@@ -1,6 +1,6 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import MonacoEditor, { loader } from '@monaco-editor/react'
-import { X, Clipboard } from 'lucide-react'
+import { X, Clipboard, Pin } from 'lucide-react'
 
 // Configure Monaco loader to use CDN for language workers (must run at module level)
 loader.config({
@@ -23,16 +23,28 @@ interface Props {
   onCloseTabsToRight?: (path: string) => void
   onSave: (path: string, content: string) => void
   onContentChange: (path: string, content: string) => void
+  onPinTab?: (path: string) => void
+  onUnpinTab?: (path: string) => void
+  onReorderTabs?: (fromPath: string, toPath: string) => void
   theme: Theme
 }
 
 export default function Editor({
   tabs, activeTabPath, onSelectTab, onCloseTab, onCloseOtherTabs, onCloseAllTabs, onCloseTabsToRight,
-  onSave, onContentChange, theme,
+  onSave, onContentChange, onPinTab, onUnpinTab, onReorderTabs, theme,
 }: Props) {
   const activeTab = tabs.find((t) => t.path === activeTabPath) || null
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; path: string } | null>(null)
+
+  // Sort tabs: pinned tabs first, then unpinned in original order
+  const sortedTabs = useMemo(() => {
+    const pinned = tabs.filter(t => t.isPinned)
+    const unpinned = tabs.filter(t => !t.isPinned)
+    return [...pinned, ...unpinned]
+  }, [tabs])
   const [confirmClose, setConfirmClose] = useState<{ path: string; action: 'close' | 'closeOthers' | 'closeAll' | 'closeRight' } | null>(null)
+  const [dragOverPath, setDragOverPath] = useState<string | null>(null)
+  const [dragSource, setDragSource] = useState<string | null>(null)
 
   const handleEditorChange = useCallback((value: string | undefined) => {
     if (activeTab && value !== undefined) {
@@ -57,6 +69,7 @@ export default function Editor({
 
   const tryCloseTab = useCallback((path: string) => {
     const tab = tabs.find(t => t.path === path)
+    if (tab?.isPinned) return // Pinned tabs can't be closed
     if (tab?.isDirty) {
       setConfirmClose({ path, action: 'close' })
     } else {
@@ -65,9 +78,13 @@ export default function Editor({
   }, [tabs, onCloseTab])
 
   const getTabMenuItems = useCallback((path: string): MenuItem[] => {
+    const tab = tabs.find(t => t.path === path)
     const tabIndex = tabs.findIndex(t => t.path === path)
+    const isPinned = tab?.isPinned || false
     return [
-      { label: 'Close', onClick: () => tryCloseTab(path), shortcut: 'Ctrl+W' },
+      { label: isPinned ? 'Unpin Tab' : 'Pin Tab', icon: Pin, onClick: () => isPinned ? onUnpinTab?.(path) : onPinTab?.(path) },
+      { separator: true },
+      { label: 'Close', onClick: () => tryCloseTab(path), shortcut: 'Ctrl+W', disabled: isPinned },
       { label: 'Close Others', onClick: () => {
         const dirtyOthers = tabs.filter(t => t.path !== path && t.isDirty)
         if (dirtyOthers.length > 0) {
@@ -134,43 +151,74 @@ export default function Editor({
           borderBottom: '1px solid var(--border-subtle)',
         }}
       >
-        {tabs.map((tab) => {
+        {sortedTabs.map((tab) => {
           const isActive = tab.path === activeTabPath
+          const isPinned = tab.isPinned || false
+          const isDragOver = dragOverPath === tab.path
           return (
             <div
               key={tab.path}
+              draggable
+              onDragStart={(e) => {
+                setDragSource(tab.path)
+                e.dataTransfer.effectAllowed = 'move'
+                e.dataTransfer.setData('text/plain', tab.path)
+              }}
+              onDragOver={(e) => {
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'move'
+                setDragOverPath(tab.path)
+              }}
+              onDragLeave={() => setDragOverPath(null)}
+              onDrop={(e) => {
+                e.preventDefault()
+                setDragOverPath(null)
+                const fromPath = e.dataTransfer.getData('text/plain')
+                if (fromPath && fromPath !== tab.path) {
+                  onReorderTabs?.(fromPath, tab.path)
+                }
+                setDragSource(null)
+              }}
+              onDragEnd={() => { setDragOverPath(null); setDragSource(null) }}
               className="flex items-center gap-1.5 h-full px-3 cursor-pointer shrink-0 text-[11px] transition-colors duration-75"
               style={{
                 backgroundColor: isActive ? 'var(--bg-primary)' : 'transparent',
                 color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
-                borderRight: '1px solid var(--border-subtle)',
+                borderRight: isPinned ? '1px solid rgba(var(--accent-rgb), 0.15)' : '1px solid var(--border-subtle)',
                 borderBottom: isActive ? '1px solid var(--accent)' : '1px solid transparent',
+                borderLeft: isDragOver ? '2px solid var(--accent)' : '2px solid transparent',
+                opacity: dragSource === tab.path ? 0.5 : 1,
               }}
               onClick={() => onSelectTab(tab.path)}
               onContextMenu={(e) => handleTabContextMenu(e, tab.path)}
             >
+              {isPinned && (
+                <Pin size={10} style={{ color: 'var(--accent)', opacity: 0.7, flexShrink: 0 }} />
+              )}
               <span className="truncate max-w-[120px]">
                 {tab.isDirty && <span style={{ color: 'var(--accent)' }}>&#9679; </span>}
                 {tab.name}
               </span>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  tryCloseTab(tab.path)
-                }}
-                className="p-0.5 rounded transition-colors duration-75"
-                style={{ color: 'var(--text-muted)' }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
-                  e.currentTarget.style.color = 'var(--text-primary)'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent'
-                  e.currentTarget.style.color = 'var(--text-muted)'
-                }}
-              >
-                <X size={12} />
-              </button>
+              {!isPinned && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    tryCloseTab(tab.path)
+                  }}
+                  className="p-0.5 rounded transition-colors duration-75"
+                  style={{ color: 'var(--text-muted)' }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
+                    e.currentTarget.style.color = 'var(--text-primary)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent'
+                    e.currentTarget.style.color = 'var(--text-muted)'
+                  }}
+                >
+                  <X size={12} />
+                </button>
+              )}
             </div>
           )
         })}

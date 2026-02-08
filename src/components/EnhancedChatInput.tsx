@@ -646,24 +646,42 @@ export default function EnhancedChatInput({
     }
   }, [onImagesChange])
 
-  // Handle drag events
+  // Handle drag events — use counter pattern to prevent flicker from child elements
   const [isDragging, setIsDragging] = useState(false)
+  const dragCounterRef = useRef(0)
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current++
+    // Only show overlay if dragging files (not text selections etc.)
+    if (e.dataTransfer?.types?.includes('Files')) {
+      setIsDragging(true)
+    }
+  }, [])
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    setIsDragging(true)
+    // Set the drop effect to show the correct cursor
+    e.dataTransfer.dropEffect = 'copy'
   }, [])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    setIsDragging(false)
+    dragCounterRef.current--
+    // Only hide when we've truly left the container (counter reaches 0)
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0
+      setIsDragging(false)
+    }
   }, [])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
+    dragCounterRef.current = 0
     setIsDragging(false)
 
     const files = e.dataTransfer?.files
@@ -695,6 +713,7 @@ export default function EnhancedChatInput({
       ref={containerRef}
       className="relative"
       onPaste={handlePaste}
+      onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}

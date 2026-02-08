@@ -55,6 +55,11 @@ export class OpenAIChatAdapter extends BaseProvider {
       body.tools = this.formatTools(request.tools)
     }
 
+    // Request actual token usage in the final streaming chunk
+    if (request.stream) {
+      body.stream_options = { include_usage: true }
+    }
+
     return body
   }
 
@@ -97,6 +102,19 @@ export class OpenAIChatAdapter extends BaseProvider {
   parseStreamEvent(json: any): StreamDelta | null {
     // Standard OpenAI Chat Completions streaming format:
     // { choices: [{ delta: { content, tool_calls, ... }, finish_reason }] }
+
+    // With stream_options: { include_usage: true }, the final chunk has
+    // choices=[] and a top-level usage object. Handle that first.
+    if (json.usage && json.choices?.length === 0) {
+      return {
+        usage: {
+          promptTokens: json.usage.prompt_tokens || 0,
+          completionTokens: json.usage.completion_tokens || 0,
+          totalTokens: json.usage.total_tokens || 0,
+        },
+      }
+    }
+
     if (!json.choices || !Array.isArray(json.choices)) return null
 
     const choice = json.choices[0]
@@ -127,8 +145,17 @@ export class OpenAIChatAdapter extends BaseProvider {
         : choice.finish_reason as StreamDelta['finishReason']
     }
 
+    // Extract usage if present on a normal chunk (some providers include it here)
+    if (json.usage) {
+      delta.usage = {
+        promptTokens: json.usage.prompt_tokens || 0,
+        completionTokens: json.usage.completion_tokens || 0,
+        totalTokens: json.usage.total_tokens || 0,
+      }
+    }
+
     // If nothing meaningful, skip
-    if (!delta.content && !delta.reasoningContent && !delta.toolCalls && !delta.finishReason) {
+    if (!delta.content && !delta.reasoningContent && !delta.toolCalls && !delta.finishReason && !delta.usage) {
       return null
     }
 

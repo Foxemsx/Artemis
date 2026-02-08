@@ -1,4 +1,4 @@
-import { Files, MessageSquare, Settings, AlertCircle, Search, Package } from 'lucide-react'
+import { Files, MessageSquare, Settings, AlertCircle, Search, Package, Heart, Github } from 'lucide-react'
 import type { ActivityView } from '../types'
 
 interface Props {
@@ -77,6 +77,42 @@ export default function ActivityBar({ activeView, onViewChange, isReady, hasApiK
       })}
 
       <div className="flex-1" />
+
+      {/* Support & GitHub */}
+      <div className="flex flex-col items-center gap-1 pb-1">
+        <button
+          onClick={() => window.artemis.shell.openExternal('https://buymeacoffee.com/foxemsx')}
+          title="Support Artemis"
+          className="w-10 h-10 flex items-center justify-center rounded-lg transition-all duration-150"
+          style={{ color: 'var(--text-muted)' }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = '#ed64a6'
+            e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = 'var(--text-muted)'
+            e.currentTarget.style.backgroundColor = 'transparent'
+          }}
+        >
+          <Heart size={18} strokeWidth={1.5} />
+        </button>
+        <button
+          onClick={() => window.artemis.shell.openExternal('https://github.com/Foxemsx/Artemis')}
+          title="GitHub Repository"
+          className="w-10 h-10 flex items-center justify-center rounded-lg transition-all duration-150"
+          style={{ color: 'var(--text-muted)' }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = 'var(--text-secondary)'
+            e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = 'var(--text-muted)'
+            e.currentTarget.style.backgroundColor = 'transparent'
+          }}
+        >
+          <Github size={18} strokeWidth={1.5} />
+        </button>
+      </div>
     </div>
   )
 }

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import type { ChatSession, Model, Project, SessionTokenUsage } from '../types'
 import ContextMenu, { type MenuItem } from './ContextMenu'
+import { formatTokenCount, formatCost } from '../lib/formatters'
 
 interface Props {
   // Sessions (for active project)
@@ -34,17 +35,6 @@ interface Props {
   // Token usage
   sessionTokenUsage: SessionTokenUsage
   totalTokenUsage: SessionTokenUsage
-}
-
-function formatTokenCount(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`
-  return count.toString()
-}
-
-function formatCost(cost: number): string {
-  if (cost < 0.01) return '$0.00'
-  return `$${cost.toFixed(4)}`
 }
 
 function getContextPercentage(usage: SessionTokenUsage, model: Model | null): number {

@@ -1,7 +1,3 @@
-/**
- * TODO Plan Parser — Extracts structured TODO/plan items from AI messages.
- * Looks for numbered lists, checkbox patterns, and bullet plans.
- */
 
 export interface TodoItem {
   id: string
@@ -18,21 +14,11 @@ export interface TodoPlan {
   title: string
 }
 
-/**
- * Extract TODO items from a message text.
- * Recognizes patterns like:
- *   1. Do something
- *   - [ ] Do something
- *   - [x] Done thing
- *   - **Step 1**: Do something
- *   TODO: something
- */
 export function extractTodoPlan(text: string, sessionId: string, messageId: string): TodoPlan | null {
   const items: TodoItem[] = []
   const lines = text.split('\n')
   let planTitle = 'Plan'
 
-  // Try to find a title line before the list
   for (const line of lines) {
     const titleMatch = line.match(/^#{1,3}\s+(.+(?:plan|todo|steps|tasks|approach|implementation).*)$/i)
     if (titleMatch) {
@@ -44,7 +30,6 @@ export function extractTodoPlan(text: string, sessionId: string, messageId: stri
   for (const line of lines) {
     const trimmed = line.trim()
 
-    // Checkbox pattern: - [ ] or - [x]
     const checkboxMatch = trimmed.match(/^[-*]\s*\[([ xX✓✗])\]\s+(.+)$/)
     if (checkboxMatch) {
       const isDone = checkboxMatch[1] !== ' '
@@ -57,13 +42,10 @@ export function extractTodoPlan(text: string, sessionId: string, messageId: stri
       continue
     }
 
-    // Numbered list: 1. Do something or 1) Do something
     const numberedMatch = trimmed.match(/^(\d+)[.)]\s+(.+)$/)
     if (numberedMatch) {
       const content = numberedMatch[2].replace(/\*\*/g, '').trim()
-      // Skip very short items or items that are just headers
       if (content.length < 3) continue
-      // Detect done markers
       const isDone = content.startsWith('~~') || content.toLowerCase().startsWith('done:') || content.includes('✅') || content.includes('✓')
       const isInProgress = content.toLowerCase().startsWith('current') || content.includes('🔄') || content.includes('⏳')
       items.push({
@@ -75,7 +57,6 @@ export function extractTodoPlan(text: string, sessionId: string, messageId: stri
       continue
     }
 
-    // Bullet with bold step: - **Step N**: description
     const stepMatch = trimmed.match(/^[-*]\s+\*\*(?:Step\s*\d+|Task\s*\d+)[^*]*\*\*[:\s]*(.+)$/i)
     if (stepMatch) {
       items.push({
@@ -87,7 +68,6 @@ export function extractTodoPlan(text: string, sessionId: string, messageId: stri
     }
   }
 
-  // Only return a plan if we found at least 2 items (single items aren't really a "plan")
   if (items.length < 2) return null
 
   return {
@@ -99,14 +79,10 @@ export function extractTodoPlan(text: string, sessionId: string, messageId: stri
   }
 }
 
-/**
- * Scan all messages in a session and return the latest TODO plan found.
- */
 export function getLatestPlan(
   messages: Array<{ id: string; role: string; sessionId?: string; parts: Array<{ type: string; text?: string }> }>,
   sessionId: string
 ): TodoPlan | null {
-  // Search from newest to oldest
   const sessionMsgs = messages
     .filter(m => m.role === 'assistant' && (!m.sessionId || m.sessionId === sessionId))
     .reverse()

@@ -157,6 +157,117 @@ async function toolListDirectory(args: Record<string, any>, projectPath?: string
 
 async function toolSearchFiles(args: Record<string, any>, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
   const searchPath = await validatePath(args.path, projectPath, onPathApproval)
+
+  // Try ripgrep first — orders of magnitude faster for large codebases
+  try {
+    const rgResult = await searchWithRipgrep(args.pattern, searchPath, args.include)
+    if (rgResult !== null) return rgResult
+  } catch {
+    // ripgrep not available or failed — fall back to JS implementation
+  }
+
+  return searchWithJS(args, searchPath)
+}
+
+// ─── Ripgrep-based search (fast path) ─────────────────────────────────────────
+
+let ripgrepAvailable: boolean | null = null // null = unknown, lazy-detected
+
+async function searchWithRipgrep(pattern: string, searchPath: string, include?: string): Promise<string | null> {
+  // Lazy-detect ripgrep availability
+  if (ripgrepAvailable === false) return null
+
+  return new Promise((resolve) => {
+    const rgArgs = [
+      '--line-number',
+      '--no-heading',
+      '--color', 'never',
+      '--max-count', String(MAX_SEARCH_RESULTS),
+      '--max-filesize', `${MAX_FILE_SIZE_FOR_SEARCH}b`,
+      '--max-depth', String(MAX_SEARCH_DEPTH),
+      '-i', // case-insensitive to match JS behavior
+    ]
+
+    // Add glob filter if specified
+    if (include) {
+      rgArgs.push('--glob', include)
+    }
+
+    // Add ignore patterns
+    for (const dir of Array.from(IGNORE_DIRS)) {
+      rgArgs.push('--glob', `!${dir}`)
+    }
+
+    rgArgs.push('--', pattern, searchPath)
+
+    const rg = spawn('rg', rgArgs, { timeout: 30_000 })
+    let stdout = ''
+    let stderr = ''
+
+    rg.stdout.on('data', (data: Buffer) => {
+      stdout += data.toString()
+      // Cap output to avoid memory issues
+      if (stdout.length > MAX_OUTPUT_LENGTH) {
+        rg.kill()
+      }
+    })
+
+    rg.stderr.on('data', (data: Buffer) => {
+      stderr += data.toString()
+    })
+
+    rg.on('error', () => {
+      // rg binary not found
+      ripgrepAvailable = false
+      resolve(null)
+    })
+
+    rg.on('close', (code) => {
+      if (ripgrepAvailable === false) return // already resolved via error
+
+      ripgrepAvailable = true
+
+      if (code === 1) {
+        // rg exit code 1 = no matches
+        resolve('No matches found.')
+        return
+      }
+
+      if (code !== 0 && code !== 1) {
+        // Unexpected error — fall back to JS
+        resolve(null)
+        return
+      }
+
+      const lines = stdout.trim().split('\n').filter(Boolean)
+      if (lines.length === 0) {
+        resolve('No matches found.')
+        return
+      }
+
+      // Truncate each line's match text to 200 chars
+      const formatted = lines.slice(0, MAX_SEARCH_RESULTS).map(line => {
+        // rg output: filepath:line:text
+        const firstColon = line.indexOf(':')
+        const secondColon = line.indexOf(':', firstColon + 1)
+        if (secondColon === -1) return line.slice(0, 250)
+        const prefix = line.slice(0, secondColon + 1)
+        const text = line.slice(secondColon + 1).trim().slice(0, 200)
+        return `${prefix} ${text}`
+      })
+
+      let output = formatted.join('\n')
+      if (lines.length >= MAX_SEARCH_RESULTS) {
+        output += `\n... (truncated at ${MAX_SEARCH_RESULTS} results)`
+      }
+      resolve(output)
+    })
+  })
+}
+
+// ─── JS fallback search (original implementation) ─────────────────────────────
+
+async function searchWithJS(args: Record<string, any>, searchPath: string): Promise<string> {
   const results: string[] = []
 
   async function search(dir: string, depth: number): Promise<void> {

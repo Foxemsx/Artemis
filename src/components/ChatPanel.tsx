@@ -32,6 +32,7 @@ interface Props {
   onAgentModeChange: (mode: AgentMode) => void
   onClearMessages?: () => void
   onOpenTerminal?: () => void
+  onOpenFile?: (filePath: string) => void
   checkpoints: Checkpoint[]
   onRestoreCheckpoint: (checkpointId: string) => Promise<{ restored: number; errors: string[] } | null>
 }
@@ -41,7 +42,7 @@ export default function ChatPanel({
   providers, activeModel, agentMode, editApprovalMode, onEditApprovalModeChange, projectPath,
   onCreateSession, onSelectSession, onDeleteSession,
   onSendMessage, onAbortMessage, onSelectModel, onAgentModeChange,
-  onClearMessages, onOpenTerminal,
+  onClearMessages, onOpenTerminal, onOpenFile,
   checkpoints, onRestoreCheckpoint,
 }: Props) {
   const [input, setInput] = useState('')
@@ -385,7 +386,7 @@ export default function ChatPanel({
                       onRestore={() => onRestoreCheckpoint(cp.id)}
                     />
                   )}
-                  <ChatMessage message={msg} />
+                  <ChatMessage message={msg} onOpenFile={onOpenFile} />
                 </div>
               )
             })}

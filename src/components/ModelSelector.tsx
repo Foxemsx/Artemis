@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { ChevronDown, Search, Check, Crown, Sparkles, Info, ExternalLink } from 'lucide-react'
 import type { Provider, Model } from '../types'
+import { formatTokenCount } from '../lib/formatters'
 
 interface Props {
   providers: Provider[]
@@ -13,12 +14,6 @@ function getModelTier(model: Model): 'free' | 'premium' {
   const lower = model.id.toLowerCase()
   if (lower.includes('nano') || lower.includes('free') || lower.includes('mini')) return 'free'
   return 'premium'
-}
-
-function formatTokenCount(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(0)}M`
-  if (count >= 1_000) return `${(count / 1_000).toFixed(0)}K`
-  return count.toString()
 }
 
 function formatPrice(price: number): string {
@@ -510,7 +505,7 @@ function ModelItem({
               <div className="flex items-center justify-between">
                 <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Context Window</span>
                 <span className="text-[10px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
-                  {formatTokenCount(model.contextWindow)} tokens
+                  {formatTokenCount(model.contextWindow, 0)} tokens
                 </span>
               </div>
             )}
@@ -518,7 +513,7 @@ function ModelItem({
               <div className="flex items-center justify-between">
                 <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Max Output</span>
                 <span className="text-[10px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
-                  {formatTokenCount(model.maxTokens)} tokens
+                  {formatTokenCount(model.maxTokens, 0)} tokens
                 </span>
               </div>
             )}

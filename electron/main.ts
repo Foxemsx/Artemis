@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, safeStorage } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { spawn } from 'child_process'
@@ -8,6 +8,12 @@ import { lintFile } from './services/linterService'
 import * as mcpService from './services/mcpService'
 import { mcpClientManager } from './services/mcpClient'
 import * as discordRPC from './services/discordRPCService'
+
+// ─── App Identity (must be before app.whenReady) ─────────────────────────
+app.name = 'Artemis IDE'
+if (process.platform === 'win32') {
+  app.setAppUserModelId('Artemis IDE')
+}
 
 // node-pty is a native module - import with fallback
 let ptyModule: typeof import('node-pty') | null = null
@@ -129,7 +135,7 @@ function createWindow() {
           "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; " +
           "font-src 'self' https://fonts.gstatic.com data:; " +
           "img-src 'self' data: https: blob:; " +
-          "connect-src 'self' https://opencode.ai https://api.z.ai https://*.opencode.ai https://*.z.ai https://html.duckduckgo.com; " +
+          "connect-src 'self' https://opencode.ai https://api.z.ai https://*.opencode.ai https://*.z.ai https://html.duckduckgo.com https://api.openai.com https://api.anthropic.com https://webcache.googleusercontent.com; " +
           "object-src 'none'; " +
           "frame-ancestors 'none'; " +
           "base-uri 'self';"
@@ -230,7 +236,10 @@ function validateFsPath(filePath: string, operation: string): string {
   }
   
   // Block dangerous system paths (case-insensitive)
-  const dangerous = ['C:\\Windows', 'C:\\Program Files', '/usr', '/etc', '/bin', '/sbin', '/lib', '/lib64', '/sys', '/proc', '/dev']
+  const dangerous = [
+    'C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)', 'C:\\ProgramData',
+    '/usr', '/etc', '/bin', '/sbin', '/lib', '/lib64', '/sys', '/proc', '/dev',
+  ]
   for (const d of dangerous) {
     if (resolved.toLowerCase().startsWith(d.toLowerCase())) {
       throw new Error(`Access denied: cannot ${operation} on system path`)
@@ -339,10 +348,25 @@ ipcMain.handle('fs:rename', async (_e, oldPath: string, newPath: string) => {
 // ─── IPC: Shell Operations ───────────────────────────────────────────────
 ipcMain.handle('shell:openPath', async (_e, targetPath: string) => {
   try {
-    const { shell } = require('electron')
+    if (typeof targetPath !== 'string' || !targetPath.trim()) {
+      throw new Error('Invalid path: must be a non-empty string')
+    }
+    validateFsPath(targetPath, 'open')
     await shell.openPath(targetPath)
   } catch (err: any) {
     console.error('shell:openPath error:', err.message)
+    throw err
+  }
+})
+
+ipcMain.handle('shell:openExternal', async (_e, url: string) => {
+  try {
+    if (typeof url !== 'string' || (!url.startsWith('https://') && !url.startsWith('http://'))) {
+      throw new Error('Invalid URL: must start with http:// or https://')
+    }
+    await shell.openExternal(url)
+  } catch (err: any) {
+    console.error('shell:openExternal error:', err.message)
     throw err
   }
 })
@@ -526,7 +550,7 @@ ipcMain.handle('tools:searchFiles', async (_e, pattern: string, dirPath: string)
 })
 
 // ─── IPC: Session Management (PTY for regular terminal) ────────────────────
-ipcMain.handle('session:create', (event, { id, cwd }: { id: string; cwd: string }) => {
+ipcMain.handle('session:create', (_event, { id, cwd }: { id: string; cwd: string }) => {
   if (!ptyModule) {
     return { error: 'Terminal engine (node-pty) is not available. Please reinstall dependencies.' }
   }
@@ -579,6 +603,29 @@ ipcMain.handle('session:kill', (_e, { id }: { id: string }) => {
 })
 
 // ─── IPC: Zen API Proxy (to bypass CORS) ────────────────────────────────────
+// Security: URL allowlist for API proxy requests to prevent SSRF
+const ALLOWED_API_DOMAINS = new Set([
+  'opencode.ai', 'api.z.ai',
+  'api.openai.com', 'api.anthropic.com',
+  'html.duckduckgo.com',
+])
+
+function isAllowedApiUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false
+    // Check exact domain or subdomain match
+    const hostname = parsed.hostname.toLowerCase()
+    const domains = Array.from(ALLOWED_API_DOMAINS)
+    for (let i = 0; i < domains.length; i++) {
+      if (hostname === domains[i] || hostname.endsWith('.' + domains[i])) return true
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
 ipcMain.handle('zen:request', async (_e, options: {
   url: string
   method: string
@@ -586,6 +633,18 @@ ipcMain.handle('zen:request', async (_e, options: {
   body?: string
 }) => {
   try {
+    // Security: Validate URL against allowlist to prevent SSRF
+    if (!isAllowedApiUrl(options.url)) {
+      return {
+        ok: false,
+        status: 0,
+        statusText: 'Access denied: URL domain is not in the allowed list',
+        data: '',
+        headers: {},
+        error: 'URL domain not allowed. Add it to ALLOWED_API_DOMAINS if needed.',
+      }
+    }
+
     const response = await fetch(options.url, {
       method: options.method,
       headers: options.headers,
@@ -631,6 +690,22 @@ ipcMain.handle('mcp:uninstallServer', (_e, serverId: string) =>
 ipcMain.handle('mcp:searchServers', (_e, query: string) =>
   mcpService.searchServers(query))
 
+// Custom MCP servers
+ipcMain.handle('mcp:addCustomServer', (_e, server: any) =>
+  mcpService.addCustomServer(server))
+ipcMain.handle('mcp:removeCustomServer', (_e, serverId: string) =>
+  mcpService.removeCustomServer(serverId))
+ipcMain.handle('mcp:getCustomServers', () =>
+  mcpService.getCustomServersList())
+
+// MCP Server Logs
+ipcMain.handle('mcp:getServerLogs', (_e, serverId: string) =>
+  mcpService.getServerLogs(serverId))
+ipcMain.handle('mcp:clearServerLogs', (_e, serverId: string) =>
+  mcpService.clearServerLogs(serverId))
+ipcMain.handle('mcp:getAllServerLogs', () =>
+  mcpService.getAllServerLogs())
+
 // Get connected MCP tools for system prompt injection
 ipcMain.handle('mcp:getConnectedTools', () => {
   const tools = mcpClientManager.getAllTools()
@@ -670,7 +745,11 @@ ipcMain.handle('linter:lint', async (_e, filePath: string, projectPath: string) 
 
 // ─── IPC: Discord RPC ──────────────────────────────────────────────────────
 ipcMain.handle('discord:toggle', async (_e, enable: boolean) => {
-  return discordRPC.toggle(enable)
+  const result = await discordRPC.toggle(enable)
+  // Persist Discord RPC enabled state so it survives restart
+  store['discordRpcEnabled'] = enable
+  saveStore(store)
+  return result
 })
 ipcMain.handle('discord:getState', () => discordRPC.getState())
 ipcMain.handle('discord:updatePresence', async (_e, fileName?: string, language?: string, projectName?: string) => {
@@ -686,7 +765,31 @@ ipcMain.handle('discord:setDebug', (_e, enabled: boolean) => discordRPC.setDebug
 registerAgentIPC(() => mainWindow)
 
 // ─── App Lifecycle ─────────────────────────────────────────────────────────
-app.whenReady().then(createWindow)
+app.whenReady().then(async () => {
+  createWindow()
+
+  // Restore Discord RPC if it was enabled before restart
+  if (store['discordRpcEnabled'] === true) {
+    console.log('[Artemis] Restoring Discord RPC from saved state...')
+    discordRPC.toggle(true).catch((err) => {
+      console.error('[Artemis] Failed to restore Discord RPC:', err)
+    })
+  }
+})
+
+app.on('before-quit', () => {
+  // Graceful shutdown: disconnect all MCP servers to prevent orphan processes
+  mcpClientManager.disconnectAll()
+
+  // Kill all PTY sessions
+  for (const [_id, session] of Array.from(sessions)) {
+    try { session.kill() } catch {}
+  }
+  sessions.clear()
+
+  // Disconnect Discord RPC
+  discordRPC.disconnect()
+})
 
 app.on('window-all-closed', () => {
   // Kill all PTY sessions
@@ -694,6 +797,9 @@ app.on('window-all-closed', () => {
     try { session.kill() } catch {}
   }
   sessions.clear()
+
+  // Disconnect all MCP servers to prevent orphan processes
+  mcpClientManager.disconnectAll()
 
   // Disconnect Discord RPC
   discordRPC.disconnect()

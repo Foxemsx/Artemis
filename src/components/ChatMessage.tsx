@@ -27,34 +27,87 @@ import ThinkingBlock from './ThinkingBlock'
 
 interface Props {
   message: ChatMessageType
+  onOpenFile?: (filePath: string) => void
 }
 
-/** Highlight @mentions inside a string, returning an array of ReactNodes */
-function highlightMentions(content: string): React.ReactNode[] {
+// File path regex: matches common absolute/relative paths like /src/foo.ts, C:\Users\..., ./bar.js, src/components/X.tsx
+const FILE_PATH_REGEX = /(?:(?:[A-Za-z]:\\|\/)(?:[\w.\-]+[/\\])*[\w.\-]+\.[a-zA-Z]{1,10}|\.?\/(?:[\w.\-]+\/)*[\w.\-]+\.[a-zA-Z]{1,10}|(?:src|lib|app|components|hooks|pages|electron|scripts|public|assets|styles|utils|config|test|tests|spec)[/\\](?:[\w.\-]+[/\\])*[\w.\-]+\.[a-zA-Z]{1,10})/g
+
+/** Highlight @mentions and file paths inside a string, returning an array of ReactNodes */
+function highlightMentions(content: string, onOpenFile?: (path: string) => void): React.ReactNode[] {
+  // Combine @mentions and file paths into a single pass
   const mentionRegex = /@([\w./-]+)/g
   const result: React.ReactNode[] = []
   let lastIndex = 0
-  let match: RegExpExecArray | null
   let key = 0
 
+  // Collect all matches (mentions + file paths)
+  type Match = { index: number; length: number; type: 'mention' | 'filepath'; text: string }
+  const matches: Match[] = []
+
+  let match: RegExpExecArray | null
   while ((match = mentionRegex.exec(content)) !== null) {
-    if (match.index > lastIndex) {
-      result.push(content.slice(lastIndex, match.index))
-    }
-    result.push(
-      <span
-        key={`m-${key++}`}
-        className="inline-flex items-center rounded px-1.5 py-0.5 text-[12px] font-mono font-medium mx-0.5 align-baseline"
-        style={{
-          backgroundColor: 'rgba(212, 168, 83, 0.15)',
-          color: 'var(--accent)',
-          border: '1px solid rgba(212, 168, 83, 0.25)',
-        }}
-      >
-        {match[0]}
-      </span>
+    matches.push({ index: match.index, length: match[0].length, type: 'mention', text: match[0] })
+  }
+
+  // Find file paths
+  FILE_PATH_REGEX.lastIndex = 0
+  while ((match = FILE_PATH_REGEX.exec(content)) !== null) {
+    // Don't overlap with @mentions
+    const overlaps = matches.some(m => 
+      (match!.index >= m.index && match!.index < m.index + m.length) ||
+      (m.index >= match!.index && m.index < match!.index + match![0].length)
     )
-    lastIndex = match.index + match[0].length
+    if (!overlaps) {
+      matches.push({ index: match.index, length: match[0].length, type: 'filepath', text: match[0] })
+    }
+  }
+
+  // Sort by position
+  matches.sort((a, b) => a.index - b.index)
+
+  for (const m of matches) {
+    if (m.index > lastIndex) {
+      result.push(content.slice(lastIndex, m.index))
+    }
+    if (m.type === 'mention') {
+      result.push(
+        <span
+          key={`m-${key++}`}
+          className="inline-flex items-center rounded px-1.5 py-0.5 text-[12px] font-mono font-medium mx-0.5 align-baseline"
+          style={{
+            backgroundColor: 'rgba(212, 168, 83, 0.15)',
+            color: 'var(--accent)',
+            border: '1px solid rgba(212, 168, 83, 0.25)',
+          }}
+        >
+          {m.text}
+        </span>
+      )
+    } else {
+      // Clickable file path
+      result.push(
+        <span
+          key={`fp-${key++}`}
+          className="inline-flex items-center rounded px-1 py-0.5 text-[12px] font-mono font-medium mx-0.5 align-baseline cursor-pointer transition-all duration-100"
+          style={{
+            backgroundColor: 'rgba(96, 165, 250, 0.1)',
+            color: 'rgb(96, 165, 250)',
+            border: '1px solid rgba(96, 165, 250, 0.2)',
+            textDecoration: 'underline',
+            textDecorationStyle: 'dotted',
+            textUnderlineOffset: '2px',
+          }}
+          title={`Open ${m.text}`}
+          onClick={() => onOpenFile?.(m.text.replace(/\\/g, '/'))}
+          onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(96, 165, 250, 0.2)' }}
+          onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(96, 165, 250, 0.1)' }}
+        >
+          {m.text}
+        </span>
+      )
+    }
+    lastIndex = m.index + m.length
   }
   if (lastIndex < content.length) {
     result.push(content.slice(lastIndex))
@@ -62,11 +115,11 @@ function highlightMentions(content: string): React.ReactNode[] {
   return result
 }
 
-/** Process children of a markdown element, highlighting @mentions in text nodes */
-function processChildren(children: React.ReactNode): React.ReactNode {
+/** Process children of a markdown element, highlighting @mentions and file paths in text nodes */
+function processChildren(children: React.ReactNode, onOpenFile?: (path: string) => void): React.ReactNode {
   return React.Children.map(children, child => {
     if (typeof child === 'string') {
-      const highlighted = highlightMentions(child)
+      const highlighted = highlightMentions(child, onOpenFile)
       return highlighted.length === 1 && typeof highlighted[0] === 'string'
         ? child
         : <>{highlighted}</>
@@ -75,16 +128,36 @@ function processChildren(children: React.ReactNode): React.ReactNode {
   })
 }
 
-/** Render text with @mentions highlighted */
-function HighlightedMarkdown({ text }: { text: string }) {
+/** Render text with @mentions and clickable file paths highlighted */
+function HighlightedMarkdown({ text, onOpenFile }: { text: string; onOpenFile?: (path: string) => void }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
-        p: ({ children, ...props }) => <p {...props}>{processChildren(children)}</p>,
-        li: ({ children, ...props }) => <li {...props}>{processChildren(children)}</li>,
-        td: ({ children, ...props }) => <td {...props}>{processChildren(children)}</td>,
-        th: ({ children, ...props }) => <th {...props}>{processChildren(children)}</th>,
+        p: ({ children, ...props }) => <p {...props}>{processChildren(children, onOpenFile)}</p>,
+        li: ({ children, ...props }) => <li {...props}>{processChildren(children, onOpenFile)}</li>,
+        td: ({ children, ...props }) => <td {...props}>{processChildren(children, onOpenFile)}</td>,
+        th: ({ children, ...props }) => <th {...props}>{processChildren(children, onOpenFile)}</th>,
+        // Also make inline code file paths clickable
+        code: ({ children, className, ...props }) => {
+          const text = typeof children === 'string' ? children : ''
+          const isFilePath = !className && FILE_PATH_REGEX.test(text)
+          FILE_PATH_REGEX.lastIndex = 0
+          if (isFilePath && onOpenFile) {
+            return (
+              <code
+                {...props}
+                className={`${className || ''} cursor-pointer`}
+                style={{ color: 'rgb(96, 165, 250)', textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: '2px' }}
+                title={`Open ${text}`}
+                onClick={() => onOpenFile(text.replace(/\\/g, '/'))}
+              >
+                {children}
+              </code>
+            )
+          }
+          return <code {...props} className={className}>{children}</code>
+        },
       }}
     >
       {text}
@@ -536,7 +609,7 @@ function ImagePart({ image }: { image: NonNullable<MessagePart['image']> }) {
   )
 }
 
-export default function ChatMessage({ message }: Props) {
+export default function ChatMessage({ message, onOpenFile }: Props) {
   const isUser = message.role === 'user'
   const [copied, setCopied] = useState(false)
 
@@ -668,7 +741,7 @@ export default function ChatMessage({ message }: Props) {
                 className="markdown-content text-[13px] leading-relaxed"
                 style={{ color: 'var(--text-primary)' }}
               >
-                <HighlightedMarkdown text={part.text} />
+                <HighlightedMarkdown text={part.text} onOpenFile={onOpenFile} />
               </div>
             )
           }

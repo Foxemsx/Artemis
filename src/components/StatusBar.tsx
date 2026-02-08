@@ -1,5 +1,7 @@
-import { Circle, Sparkles, Cpu, Zap } from 'lucide-react'
+import { useState } from 'react'
+import { Circle, Sparkles, Cpu, Zap, Activity } from 'lucide-react'
 import type { Model, SessionTokenUsage } from '../types'
+import { formatTokenCount, formatCost } from '../lib/formatters'
 
 interface Props {
   projectName: string | null
@@ -12,15 +14,107 @@ interface Props {
   projectTokenCount?: number
 }
 
-function formatTokenCount(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`
-  return count.toString()
-}
+// ─── Token Budget Visualization ──────────────────────────────────────────────
+function TokenBudgetBar({ usedTokens, contextWindow, percent }: { usedTokens: number; contextWindow: number; percent: number }) {
+  const [hovered, setHovered] = useState(false)
 
-function formatCost(cost: number): string {
-  if (cost < 0.01) return '$0.00'
-  return `$${cost.toFixed(4)}`
+  if (usedTokens <= 0) return null
+
+  // Color gradient based on usage: green → yellow → orange → red
+  const getBarColor = (p: number) => {
+    if (p > 90) return '#ef4444' // red
+    if (p > 75) return '#f97316' // orange
+    if (p > 50) return '#eab308' // yellow
+    if (p > 25) return '#22c55e' // green
+    return 'var(--accent)' // accent (low usage)
+  }
+
+  const getGlowColor = (p: number) => {
+    if (p > 90) return 'rgba(239, 68, 68, 0.4)'
+    if (p > 75) return 'rgba(249, 115, 22, 0.3)'
+    if (p > 50) return 'rgba(234, 179, 8, 0.25)'
+    return 'rgba(34, 197, 94, 0.2)'
+  }
+
+  const barColor = getBarColor(percent)
+  const glowColor = getGlowColor(percent)
+  const remaining = contextWindow - usedTokens
+  const label = percent > 90 ? 'NEAR LIMIT' : percent > 75 ? 'HIGH' : ''
+
+  return (
+    <div
+      className="relative flex items-center gap-1.5"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <Activity size={9} style={{ color: barColor, opacity: 0.8 }} />
+      <div
+        className="w-24 h-[6px] rounded-full overflow-hidden relative"
+        style={{ backgroundColor: 'var(--bg-elevated)', boxShadow: `inset 0 1px 2px rgba(0,0,0,0.2)` }}
+      >
+        <div
+          className="h-full rounded-full transition-all duration-500 ease-out"
+          style={{
+            width: `${percent}%`,
+            backgroundColor: barColor,
+            boxShadow: `0 0 6px ${glowColor}`,
+          }}
+        />
+        {/* Animated pulse when near limit */}
+        {percent > 85 && (
+          <div
+            className="absolute inset-0 rounded-full animate-pulse"
+            style={{ backgroundColor: barColor, opacity: 0.15 }}
+          />
+        )}
+      </div>
+      <span className="text-[10px] font-mono font-semibold" style={{ color: barColor }}>
+        {percent.toFixed(0)}%
+      </span>
+      {label && (
+        <span
+          className="text-[8px] font-bold uppercase tracking-wide px-1 py-px rounded"
+          style={{ backgroundColor: `${barColor}20`, color: barColor }}
+        >
+          {label}
+        </span>
+      )}
+
+      {/* Hover tooltip */}
+      {hovered && (
+        <div
+          className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 rounded-lg z-50 whitespace-nowrap"
+          style={{
+            backgroundColor: 'var(--bg-card)',
+            border: '1px solid var(--border-default)',
+            boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+          }}
+        >
+          <div className="text-[11px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+            Context Window Usage
+          </div>
+          <div className="space-y-0.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+            <div className="flex justify-between gap-4">
+              <span>Used:</span>
+              <span className="font-mono" style={{ color: barColor }}>{formatTokenCount(usedTokens)}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span>Remaining:</span>
+              <span className="font-mono">{formatTokenCount(Math.max(0, remaining))}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span>Limit:</span>
+              <span className="font-mono">{formatTokenCount(contextWindow)}</span>
+            </div>
+          </div>
+          {/* Mini visual bar in tooltip */}
+          <div className="mt-1.5 w-full h-[4px] rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-elevated)' }}>
+            <div className="h-full rounded-full" style={{ width: `${percent}%`, backgroundColor: barColor }} />
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function StatusBar({
@@ -98,25 +192,12 @@ export default function StatusBar({
           </div>
         )}
 
-        {/* Context window usage bar */}
-        {sessionTokenUsage.totalTokens > 0 && (
-          <div className="flex items-center gap-1.5">
-            <span>ctx</span>
-            <div
-              className="w-16 h-[4px] rounded-full overflow-hidden"
-              style={{ backgroundColor: 'var(--bg-elevated)' }}
-            >
-              <div
-                className="h-full rounded-full transition-all duration-300"
-                style={{
-                  width: `${contextPercent}%`,
-                  backgroundColor: contextPercent > 80 ? 'var(--error)' : contextPercent > 50 ? 'var(--warning)' : 'var(--accent)',
-                }}
-              />
-            </div>
-            <span>{contextPercent.toFixed(0)}%</span>
-          </div>
-        )}
+        {/* Context window usage bar — enhanced token budget visualization */}
+        <TokenBudgetBar
+          usedTokens={sessionTokenUsage.totalTokens}
+          contextWindow={contextWindow}
+          percent={contextPercent}
+        />
       </div>
 
       {/* Right: model */}

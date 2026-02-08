@@ -61,7 +61,6 @@ export async function runESLint(filePath: string, projectPath: string): Promise<
     const output = await spawnLinter(eslintBin, [
       filePath,
       '--format', 'json',
-      '--no-eslintrc',
       '--no-ignore',
     ], projectPath)
 

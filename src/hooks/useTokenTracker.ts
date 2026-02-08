@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import type { SessionTokenUsage } from '../types'
 import { MODEL_METADATA } from '../lib/zenClient'
+import { estimateTokens } from '../lib/tokenCounter'
 
 const EMPTY_USAGE: SessionTokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0, estimatedCost: 0 }
 
@@ -9,7 +10,7 @@ export interface TokenTrackerReturn {
   totalTokenUsage: SessionTokenUsage
   allSessionTokenUsage: Map<string, SessionTokenUsage>
   setAllSessionTokenUsage: React.Dispatch<React.SetStateAction<Map<string, SessionTokenUsage>>>
-  trackUsage: (sessionId: string, modelId: string, inputChars: number, outputChars: number) => void
+  trackUsage: (sessionId: string, modelId: string, inputChars: number, outputChars: number, inputText?: string, outputText?: string, actualUsage?: { promptTokens: number; completionTokens: number; totalTokens: number }) => void
   restoreSessionUsage: (sessionId: string) => Promise<void>
 }
 
@@ -19,10 +20,12 @@ export function useTokenTracker(activeSessionId: string | null): TokenTrackerRet
 
   const sessionTokenUsage = (activeSessionId ? allSessionTokenUsage.get(activeSessionId) : null) || EMPTY_USAGE
 
-  const trackUsage = useCallback((sessionId: string, modelId: string, inputChars: number, outputChars: number) => {
-    const estPromptTokens = Math.ceil(inputChars / 4)
-    const estCompletionTokens = Math.ceil(outputChars / 4)
-    const estTotalTokens = estPromptTokens + estCompletionTokens
+  const trackUsage = useCallback((sessionId: string, modelId: string, inputChars: number, outputChars: number, inputText?: string, outputText?: string, actualUsage?: { promptTokens: number; completionTokens: number; totalTokens: number }) => {
+    const estPromptTokens = actualUsage ? actualUsage.promptTokens
+      : inputText ? estimateTokens(inputText) : Math.ceil(inputChars / 3.5)
+    const estCompletionTokens = actualUsage ? actualUsage.completionTokens
+      : outputText ? estimateTokens(outputText) : Math.ceil(outputChars / 3.5)
+    const estTotalTokens = actualUsage ? actualUsage.totalTokens : estPromptTokens + estCompletionTokens
     const meta = MODEL_METADATA[modelId]
     let estCost = 0
     if (meta?.pricing) {

@@ -136,13 +136,33 @@ export class AnthropicAdapter extends BaseProvider {
       }
     }
 
-    // Message delta with stop_reason
+    // Message delta with stop_reason (also carries output token usage)
     if (json.type === 'message_delta' && json.delta?.stop_reason) {
       const reason = json.delta.stop_reason
-      return {
+      const delta: StreamDelta = {
         finishReason: reason === 'tool_use' ? 'tool_calls'
           : reason === 'end_turn' ? 'stop'
           : reason as StreamDelta['finishReason'],
+      }
+      // Anthropic sends output_tokens in the message_delta usage
+      if (json.usage?.output_tokens) {
+        delta.usage = {
+          promptTokens: 0, // sent in message_start, accumulated by StreamProcessor
+          completionTokens: json.usage.output_tokens,
+          totalTokens: json.usage.output_tokens,
+        }
+      }
+      return delta
+    }
+
+    // message_start carries input token count
+    if (json.type === 'message_start' && json.message?.usage) {
+      return {
+        usage: {
+          promptTokens: json.message.usage.input_tokens || 0,
+          completionTokens: json.message.usage.output_tokens || 0,
+          totalTokens: (json.message.usage.input_tokens || 0) + (json.message.usage.output_tokens || 0),
+        },
       }
     }
 

@@ -1,8 +1,3 @@
-/**
- * OpenCode Zen & Z.AI API Client
- * Provides model discovery, API key management, and validation.
- * All chat/streaming communication is handled by the agent system in electron/api/.
- */
 
 const PROVIDER_BASE_URLS = {
   zen: 'https://opencode.ai/zen/v1',
@@ -18,13 +13,13 @@ export interface ZenModel {
   endpoint: string
   free?: boolean
   pricing?: {
-    input: number   // per 1M tokens
-    output: number  // per 1M tokens
+    input: number
+    output: number
   }
   maxTokens?: number
   contextWindow?: number
   description?: string
-  aiProvider: AIProvider  // 'zen' for OpenCode Zen, 'zai' for Z.AI
+  aiProvider: AIProvider
 }
 
 interface ZenError {
@@ -113,7 +108,6 @@ export const MODEL_METADATA: Record<string, { contextWindow: number; maxTokens: 
   'alpha-free':                 { contextWindow: 128000, maxTokens: 8192,  description: 'Alpha Free — free experimental model.' },
 }
 
-// ─── Error parser ───────────────────────────────────────────────────────────
 
 function parseApiError(status: number, data: string, provider?: AIProvider): ZenError {
   try {
@@ -177,7 +171,6 @@ function parseApiError(status: number, data: string, provider?: AIProvider): Zen
   }
 }
 
-// ─── ZenClient ──────────────────────────────────────────────────────────────
 
 export class ZenClient {
   private apiKeys: Map<AIProvider, string> = new Map()
@@ -234,7 +227,6 @@ export class ZenClient {
       try {
         data = JSON.parse(response.data)
       } catch {
-        // Keep as string
       }
 
       return { ok: true, status: response.status, data }
@@ -297,7 +289,7 @@ export class ZenClient {
             description: meta.description,
           }),
         }
-        console.log(`[ZenClient] Fetched model:`, { id, name: zenModel.name, aiProvider: provider })
+      console.log(`[ZenClient] Fetched model:`, { id, name: zenModel.name, aiProvider: provider })
         allModels.push(zenModel)
       }
     }
@@ -411,5 +403,4 @@ export class ZenClient {
   }
 }
 
-// Singleton instance
 export const zenClient = new ZenClient()

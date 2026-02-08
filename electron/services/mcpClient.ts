@@ -9,6 +9,7 @@
 
 import { spawn, ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
+import path from 'path'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,12 @@ interface JsonRpcResponse {
   error?: { code: number; message: string; data?: any }
 }
 
+export interface MCPLogEntry {
+  timestamp: number
+  stream: 'stdout' | 'stderr'
+  message: string
+}
+
 // ─── MCP Client ─────────────────────────────────────────────────────────────
 
 export class MCPClient extends EventEmitter {
@@ -58,6 +65,8 @@ export class MCPClient extends EventEmitter {
   private _tools: MCPToolDefinition[] = []
   private _connected: boolean = false
   private _serverId: string
+  private _logs: MCPLogEntry[] = []
+  private static MAX_LOGS = 500
 
   constructor(serverId: string) {
     super()
@@ -67,19 +76,48 @@ export class MCPClient extends EventEmitter {
   get serverId(): string { return this._serverId }
   get connected(): boolean { return this._connected }
   get tools(): MCPToolDefinition[] { return [...this._tools] }
+  get logs(): MCPLogEntry[] { return [...this._logs] }
+
+  private addLog(stream: 'stdout' | 'stderr', message: string): void {
+    const ts = Date.now()
+    this._logs.push({ timestamp: ts, stream, message })
+    if (this._logs.length > MCPClient.MAX_LOGS) {
+      this._logs = this._logs.slice(-MCPClient.MAX_LOGS)
+    }
+    this.emit('log', { stream, message, timestamp: ts })
+  }
+
+  clearLogs(): void {
+    this._logs = []
+  }
 
   /**
    * Start the MCP server process and initialize the connection.
    */
   async connect(command: string, args: string[] = [], env?: Record<string, string>): Promise<void> {
+    // Security: Validate command to prevent injection
+    MCPClient.validateSpawnCommand(command)
+
     return new Promise((resolve, reject) => {
+      let settled = false
+      const settle = (fn: typeof resolve | typeof reject, value?: any) => {
+        if (settled) return
+        settled = true
+        fn(value)
+      }
+
       try {
         const processEnv = { ...process.env, ...env }
-        
-        this.process = spawn(command, args, {
+
+        // Resolve command to full path on Windows instead of using shell:true
+        const spawnCommand = process.platform === 'win32'
+          ? MCPClient.resolveCommand(command)
+          : command
+
+        this.process = spawn(spawnCommand, args, {
           stdio: ['pipe', 'pipe', 'pipe'],
           env: processEnv,
-          shell: process.platform === 'win32',
+          shell: false,
         })
 
         this.process.stdout?.on('data', (data: Buffer) => {
@@ -87,14 +125,16 @@ export class MCPClient extends EventEmitter {
         })
 
         this.process.stderr?.on('data', (data: Buffer) => {
-          console.warn(`[MCP:${this._serverId}] stderr:`, data.toString().trim())
+          const msg = data.toString().trim()
+          console.warn(`[MCP:${this._serverId}] stderr:`, msg)
+          this.addLog('stderr', msg)
         })
 
         this.process.on('error', (err) => {
           console.error(`[MCP:${this._serverId}] Process error:`, err.message)
           this._connected = false
           this.emit('error', err)
-          reject(err)
+          settle(reject, err)
         })
 
         this.process.on('exit', (code) => {
@@ -102,25 +142,72 @@ export class MCPClient extends EventEmitter {
           this._connected = false
           this.rejectAllPending(new Error(`MCP server exited with code ${code}`))
           this.emit('disconnected', code)
+          settle(reject, new Error(`MCP server exited with code ${code} during connect`))
         })
 
-        // Give the process a moment to start, then initialize
-        setTimeout(async () => {
-          try {
-            await this.initialize()
-            await this.discoverTools()
+        // Send initialize immediately — the 30s request timeout handles slow starts
+        this.initialize()
+          .then(() => this.discoverTools())
+          .then(() => {
             this._connected = true
             this.emit('connected', this._tools)
-            resolve()
-          } catch (err: any) {
+            settle(resolve)
+          })
+          .catch((err: any) => {
             this.disconnect()
-            reject(err)
-          }
-        }, 500)
+            settle(reject, err)
+          })
       } catch (err: any) {
-        reject(new Error(`Failed to spawn MCP server: ${err.message}`))
+        settle(reject, new Error(`Failed to spawn MCP server: ${err.message}`))
       }
     })
+  }
+
+  /**
+   * Security: Validate that a spawn command is safe.
+   * Blocks shell metacharacters, path traversal, and dangerous executables.
+   */
+  private static validateSpawnCommand(command: string): void {
+    if (!command || typeof command !== 'string') {
+      throw new Error('Invalid MCP server command: must be a non-empty string')
+    }
+    // Block shell metacharacters
+    if (/[;&|`$(){}\[\]<>\n\r]/.test(command)) {
+      throw new Error('Invalid MCP server command: contains dangerous shell characters')
+    }
+    // Block path traversal
+    if (command.includes('..')) {
+      throw new Error('Invalid MCP server command: path traversal not allowed')
+    }
+  }
+
+  /**
+   * Resolve a command name to its full path on Windows.
+   * This avoids needing shell:true for commands like 'npx', 'node', etc.
+   */
+  private static resolveCommand(command: string): string {
+    // If it's already an absolute path, use it directly
+    if (path.isAbsolute(command)) return command
+
+    // On Windows, .cmd/.bat/.exe are the executable forms — try them BEFORE bare names
+    // (e.g., 'npx' without extension is a shell script that can't be spawned without a shell)
+    const cmdExtensions = ['.cmd', '.bat', '.exe']
+    const pathDirs = (process.env.PATH || '').split(path.delimiter)
+    const fsModule = require('fs')
+
+    for (const dir of pathDirs) {
+      // Try extensions first — these are directly executable on Windows
+      for (const ext of cmdExtensions) {
+        const withExt = path.join(dir, command + ext)
+        try { if (fsModule.existsSync(withExt)) return withExt } catch {}
+      }
+      // Fall back to exact name (for .exe files already named correctly, etc.)
+      const exact = path.join(dir, command)
+      try { if (fsModule.existsSync(exact)) return exact } catch {}
+    }
+
+    // Fall back to the raw command — spawn will throw ENOENT if not found
+    return command
   }
 
   /**

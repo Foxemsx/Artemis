@@ -21,7 +21,6 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 
-// Tool categories for grouping and color coding
 export type ToolCategory = 'read' | 'write' | 'edit' | 'directory' | 'search' | 'execute' | 'mcp' | 'other'
 
 export interface ToolConfig {
@@ -34,9 +33,7 @@ export interface ToolConfig {
   borderColor: string
 }
 
-// Tool configurations with icons and styling - NO EMOJIS
 export const TOOL_CONFIGS: Record<string, ToolConfig> = {
-  // Read operations
   read_file: {
     icon: FileText,
     category: 'read',
@@ -47,7 +44,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     borderColor: 'rgba(96, 165, 250, 0.2)',
   },
 
-  // Write operations
   write_file: {
     icon: FileEdit,
     category: 'write',
@@ -58,7 +54,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     borderColor: 'rgba(74, 222, 128, 0.2)',
   },
 
-  // Edit operations
   str_replace: {
     icon: FileCode,
     category: 'edit',
@@ -69,7 +64,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     borderColor: 'rgba(251, 191, 36, 0.2)',
   },
 
-  // Directory operations
   list_directory: {
     icon: FolderOpen,
     category: 'directory',
@@ -89,7 +83,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     borderColor: 'rgba(167, 139, 250, 0.2)',
   },
 
-  // Search operations
   search_files: {
     icon: Search,
     category: 'search',
@@ -100,7 +93,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     borderColor: 'rgba(244, 114, 182, 0.2)',
   },
 
-  // Execute operations
   run_command: {
     icon: Terminal,
     category: 'execute',
@@ -120,7 +112,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     borderColor: 'rgba(248, 113, 113, 0.2)',
   },
 
-  // Grep search
   grep_search: {
     icon: FileSearch,
     category: 'search',
@@ -131,7 +122,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     borderColor: 'rgba(244, 114, 182, 0.2)',
   },
 
-  // Find files
   find_files: {
     icon: FolderTree,
     category: 'search',
@@ -142,7 +132,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     borderColor: 'rgba(192, 132, 252, 0.2)',
   },
 
-  // File info
   file_info: {
     icon: Info,
     category: 'read',
@@ -153,7 +142,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     borderColor: 'rgba(56, 189, 248, 0.2)',
   },
 
-  // Delete file
   delete_file: {
     icon: Trash2,
     category: 'write',
@@ -164,7 +152,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     borderColor: 'rgba(248, 113, 113, 0.2)',
   },
 
-  // Rename/move file
   rename_file: {
     icon: ArrowRightLeft,
     category: 'write',
@@ -202,7 +189,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     borderColor: 'rgba(167, 139, 250, 0.2)',
   },
 
-  // Todo list
   todo_list: {
     icon: ListTodo,
     category: 'other',
@@ -213,7 +199,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     borderColor: 'rgba(52, 211, 153, 0.2)',
   },
 
-  // Web search
   web_search: {
     icon: Globe,
     category: 'search',
@@ -224,7 +209,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     borderColor: 'rgba(34, 211, 238, 0.2)',
   },
 
-  // Lint file
   lint_file: {
     icon: Eye,
     category: 'read',
@@ -235,7 +219,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     borderColor: 'rgba(251, 191, 36, 0.2)',
   },
 
-  // Fetch URL
   fetch_url: {
     icon: Link,
     category: 'read',
@@ -246,7 +229,6 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
     borderColor: 'rgba(129, 140, 248, 0.2)',
   },
 
-  // Fallback
   default: {
     icon: Wrench,
     category: 'other',
@@ -258,15 +240,11 @@ export const TOOL_CONFIGS: Record<string, ToolConfig> = {
   },
 }
 
-// Get tool configuration by name
 export function getToolConfig(toolName: string): ToolConfig {
   if (TOOL_CONFIGS[toolName]) return TOOL_CONFIGS[toolName]
 
-  // Dynamic MCP tool detection — tools prefixed with mcp_ get a distinct visual
   if (toolName.startsWith('mcp_')) {
-    // Extract readable name: mcp_mcp_git_git_status -> Git Status
     const parts = toolName.replace(/^mcp_/, '').split('_')
-    // Remove server ID prefix (e.g., "mcp_git" -> skip first two parts)
     const toolParts = parts.length > 2 ? parts.slice(2) : parts
     const label = toolParts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ')
 
@@ -284,15 +262,12 @@ export function getToolConfig(toolName: string): ToolConfig {
   return TOOL_CONFIGS.default
 }
 
-// Format tool arguments for display
 export function formatToolArgs(args: Record<string, unknown>): string {
   if (!args || Object.keys(args).length === 0) return ''
   
-  // Prioritize certain keys for display
   const priorityKeys = ['path', 'command', 'pattern', 'content', 'old_string', 'new_string', 'old_str', 'new_str', 'old_path', 'new_path', 'source', 'destination', 'include']
   const entries = Object.entries(args)
   
-  // Sort by priority
   entries.sort((a, b) => {
     const aIndex = priorityKeys.indexOf(a[0])
     const bIndex = priorityKeys.indexOf(b[0])
@@ -305,7 +280,6 @@ export function formatToolArgs(args: Record<string, unknown>): string {
   return JSON.stringify(Object.fromEntries(entries), null, 2)
 }
 
-// Get file icon based on extension
 export function getFileIcon(filename: string): LucideIcon {
   const ext = filename.split('.').pop()?.toLowerCase()
   
@@ -325,13 +299,4 @@ export function getFileIcon(filename: string): LucideIcon {
   }
 }
 
-// Truncate long paths for display
-export function truncatePath(path: string, maxLength: number = 50): string {
-  if (path.length <= maxLength) return path
-  
-  const parts = path.split(/[/\\]/)
-  if (parts.length <= 2) return path.slice(-maxLength)
-  
-  // Show first and last parts with ellipsis
-  return parts[0] + '/.../' + parts.slice(-2).join('/')
-}
+export { truncatePath } from './formatters'

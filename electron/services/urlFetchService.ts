@@ -1,7 +1,7 @@
 /**
  * URL Fetch Service — Fetch and summarize web page content for agent context.
  * 
- * When a user pastes a URL in chat or the agent needs to read a web page,
+ * When the agent's fetch_url tool needs to read a web page,
  * this service fetches the content, strips HTML to readable text, and
  * returns a truncated summary suitable for LLM context injection.
  * 

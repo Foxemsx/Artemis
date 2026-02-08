@@ -27,7 +27,6 @@ interface ZenRequestResult {
   error?: string
 }
 
-// ─── Agent API Types ────────────────────────────────────────────────────────
 
 interface AgentProviderConfig {
   id: string
@@ -97,12 +96,10 @@ interface AgentEvent {
 }
 
 interface ArtemisAPI {
-  // Zen API Proxy (CORS bypass)
   zen: {
     request: (options: ZenRequestOptions) => Promise<ZenRequestResult>
   }
 
-  // Session (PTY) Management
   session: {
     create: (id: string, cwd: string) => Promise<{ success?: boolean; error?: string }>
     write: (id: string, data: string) => Promise<void>
@@ -112,12 +109,10 @@ interface ArtemisAPI {
     onExit: (id: string, callback: (code: number) => void) => () => void
   }
 
-  // System Dialogs
   dialog: {
     openFolder: () => Promise<{ path: string; name: string } | null>
   }
 
-  // Persistent Settings Store
   store: {
     get: <T = any>(key: string) => Promise<T | undefined>
     set: (key: string, value: any) => Promise<void>
@@ -125,7 +120,6 @@ interface ArtemisAPI {
     isEncrypted: () => Promise<boolean>
   }
 
-  // Window Controls
   window: {
     minimize: () => Promise<void>
     maximize: () => Promise<void>
@@ -135,7 +129,6 @@ interface ArtemisAPI {
     onUnmaximize: (callback: () => void) => () => void
   }
 
-  // File System Operations
   fs: {
     readDir: (dirPath: string) => Promise<FileEntry[]>
     readFile: (filePath: string) => Promise<string>
@@ -146,18 +139,16 @@ interface ArtemisAPI {
     rename: (oldPath: string, newPath: string) => Promise<void>
   }
 
-  // Shell Operations
   shell: {
     openPath: (path: string) => Promise<string>
+    openExternal: (url: string) => Promise<void>
   }
 
-  // Tool Execution
   tools: {
     runCommand: (command: string, cwd: string) => Promise<{ stdout: string; stderr: string; exitCode: number }>
     searchFiles: (pattern: string, dirPath: string) => Promise<{ file: string; line: number; text: string }[]>
   }
 
-  // MCP Marketplace
   mcp: {
     getServers: () => Promise<any[]>
     installServer: (serverId: string, config?: Record<string, any>) => Promise<{ success: boolean; serverId: string; error?: string }>
@@ -165,19 +156,22 @@ interface ArtemisAPI {
     searchServers: (query: string) => Promise<any[]>
     getConnectedTools: () => Promise<Array<{ name: string; description: string; serverId: string }>>
     getConnectionStatus: () => Promise<Array<{ id: string; name: string; connected: boolean; toolCount: number; tools: string[] }>>
+    addCustomServer: (server: { id: string; name: string; description: string; command: string; args: string[]; env?: Record<string, string> }) => Promise<{ success: boolean; error?: string }>
+    removeCustomServer: (serverId: string) => Promise<{ success: boolean; error?: string }>
+    getCustomServers: () => Promise<Array<{ id: string; name: string; description: string; command: string; args: string[]; env?: Record<string, string> }>>
+    getServerLogs: (serverId: string) => Promise<Array<{ timestamp: number; stream: string; message: string }>>
+    clearServerLogs: (serverId: string) => Promise<void>
+    getAllServerLogs: () => Promise<Record<string, Array<{ timestamp: number; stream: string; message: string }>>>
   }
 
-  // Web Search (DuckDuckGo, no API key)
   webSearch: {
     search: (query: string) => Promise<{ query: string; results: { title: string; url: string; snippet: string }[]; error?: string }>
   }
 
-  // Linter Auto-Fix
   linter: {
     lint: (filePath: string, projectPath: string) => Promise<{ file: string; diagnostics: { file: string; line: number; column: number; severity: string; message: string; ruleId: string; source: string }[]; error?: string }>
   }
 
-  // Discord RPC
   discord: {
     toggle: (enable: boolean) => Promise<{ connected: boolean; enabled: boolean; error?: string }>
     getState: () => Promise<{ connected: boolean; enabled: boolean; error?: string; lastFile?: string }>
@@ -186,17 +180,11 @@ interface ArtemisAPI {
     setDebug: (enabled: boolean) => Promise<void>
   }
 
-  // Agent API (New Provider-Agnostic System)
   agent: {
-    /** Start an autonomous agent run */
     run: (request: AgentRunRequest) => Promise<AgentRunResponse>
-    /** Abort an in-progress agent run */
     abort: (requestId: string) => Promise<{ success: boolean; error?: string }>
-    /** Respond to a tool approval request */
     respondToolApproval: (approvalId: string, approved: boolean) => Promise<{ success: boolean; error?: string }>
-    /** Respond to a path approval request */
     respondPathApproval: (approvalId: string, approved: boolean) => Promise<{ success: boolean; error?: string }>
-    /** Listen for agent events during a run */
     onEvent: (requestId: string, callback: (event: AgentEvent) => void) => () => void
   }
 }
