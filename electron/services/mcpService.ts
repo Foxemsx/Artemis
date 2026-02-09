@@ -590,17 +590,10 @@ export async function installServer(serverId: string, config?: Record<string, an
     console.log(`[Artemis MCP] Installed & connected: ${server.name} (${discoveredTools.length} tools)`)
     return { success: true, serverId }
   } catch (err: any) {
-    // Still save as installed even if connection failed (user can retry)
-    const state: MCPServerState = {
-      installed: true,
-      config: config || {},
-      installedAt: Date.now(),
-    }
-    installedServers.set(serverId, state)
-    saveInstalledServers()
-
+    // Do NOT persist as installed on failure — the user must retry explicitly.
+    // Saving a failed install causes silent reconnection failures on every app start.
     console.error(`[Artemis MCP] Install failed for ${server.name}:`, err.message)
-    return { success: false, serverId, error: `Installed but failed to connect: ${err.message}. The server will attempt to reconnect on next app start.` }
+    return { success: false, serverId, error: `Failed to connect: ${err.message}. Please check the server configuration and try again.` }
   }
 }
 

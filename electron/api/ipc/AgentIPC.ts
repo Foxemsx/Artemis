@@ -15,7 +15,7 @@ import { AgentLoop } from '../agent/AgentLoop'
 import { toolRegistry } from '../tools/ToolRegistry'
 import { toolExecutor } from '../tools/ToolExecutor'
 
-import type { ToolApprovalCallback } from '../agent/AgentLoop'
+import type { ToolApprovalCallback, PathApprovalCallback } from '../agent/AgentLoop'
 import type { ToolCall } from '../types'
 
 // ─── URL Allowlist for HTTP Proxy (SSRF protection) ───────────────────────
@@ -262,28 +262,15 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
         approvalCallback = createApprovalCallback(requestId, mainWindow, onEvent, seqRef)
       }
 
-      // Build path approval callback — scoped to this run, passed per-execute call
-      // to avoid race conditions on the singleton ToolExecutor.
+      // Build path approval callback — scoped to this run, passed through
+      // agentLoop.run() to avoid race conditions on the singleton ToolExecutor.
       const pathApprovalCallback = createPathApprovalCallback(requestId, mainWindow, onEvent, seqRef)
 
-      // Wrap the agent's onEvent to intercept tool executions and pass the per-run callback
-      const originalExecute = toolExecutor.execute.bind(toolExecutor)
-      const scopedExecute = (tc: ToolCall, projectPath?: string) =>
-        originalExecute(tc, projectPath, pathApprovalCallback)
+      const response = await agentLoop.run(request, onEvent, approvalCallback, pathApprovalCallback)
 
-      // Temporarily patch execute for this run's duration
-      toolExecutor.execute = scopedExecute as any
-
-      try {
-        const response = await agentLoop.run(request, onEvent, approvalCallback)
-
-        // Send completion
-        mainWindow.webContents.send(`agent:complete:${requestId}`, response)
-        return response
-      } finally {
-        // Always restore original execute to prevent leaking scoped callbacks
-        toolExecutor.execute = originalExecute
-      }
+      // Send completion
+      mainWindow.webContents.send(`agent:complete:${requestId}`, response)
+      return response
     } catch (err: any) {
       const errorResponse = {
         content: '',

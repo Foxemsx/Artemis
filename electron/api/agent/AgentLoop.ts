@@ -46,6 +46,9 @@ type EventCallback = (event: AgentEvent) => void
  *  Returns true if approved, false if rejected. */
 export type ToolApprovalCallback = (toolCall: ToolCall) => Promise<boolean>
 
+/** Callback that asks the UI for approval before accessing a path outside the project. */
+export type PathApprovalCallback = (filePath: string, reason: string) => Promise<boolean>
+
 const FILE_MODIFYING_TOOLS = new Set([
   'write_file', 'str_replace', 'delete_file', 'move_file', 'create_directory',
   'execute_command',
@@ -90,7 +93,7 @@ export class AgentLoop {
    * Streams AgentEvents to the callback in real-time for UI rendering.
    * Returns the final AgentResponse when complete.
    */
-  async run(request: AgentRequest, onEvent: EventCallback, approvalCallback?: ToolApprovalCallback): Promise<AgentResponse> {
+  async run(request: AgentRequest, onEvent: EventCallback, approvalCallback?: ToolApprovalCallback, pathApprovalCallback?: PathApprovalCallback): Promise<AgentResponse> {
     this.eventSeq = 0
     this.aborted = false
 
@@ -238,7 +241,7 @@ export class AgentLoop {
             }
           }
 
-          const result = await toolExecutor.execute(tc, projectPath)
+          const result = await toolExecutor.execute(tc, projectPath, pathApprovalCallback)
           allToolResults.push(result)
 
           this.emit(onEvent, 'tool_result', {

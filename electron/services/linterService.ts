@@ -251,9 +251,21 @@ function spawnLinter(
 
     let stdout = ''
     let stderr = ''
+    const MAX_STDOUT = 50_000
+    const MAX_STDERR = 10_000
 
-    child.stdout?.on('data', (data: Buffer) => { stdout += data.toString() })
-    child.stderr?.on('data', (data: Buffer) => { stderr += data.toString() })
+    child.stdout?.on('data', (data: Buffer) => {
+      if (stdout.length < MAX_STDOUT) {
+        stdout += data.toString()
+        if (stdout.length > MAX_STDOUT) stdout = stdout.slice(0, MAX_STDOUT)
+      }
+    })
+    child.stderr?.on('data', (data: Buffer) => {
+      if (stderr.length < MAX_STDERR) {
+        stderr += data.toString()
+        if (stderr.length > MAX_STDERR) stderr = stderr.slice(0, MAX_STDERR)
+      }
+    })
 
     const timeout = setTimeout(() => {
       child.kill()

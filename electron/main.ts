@@ -140,6 +140,7 @@ function revokeTrust(folderPath: string): void {
 
 // ─── PTY Session Management ────────────────────────────────────────────────
 const sessions = new Map<string, import('node-pty').IPty>()
+const MAX_PTY_SESSIONS = 20
 
 // ─── Main Window ───────────────────────────────────────────────────────────
 let mainWindow: BrowserWindow | null = null
@@ -852,6 +853,11 @@ ipcMain.handle('session:create', (_event, { id, cwd }: { id: string; cwd: string
 
   if (!ptyModule) {
     return { error: 'Terminal engine (node-pty) is not available. Please reinstall dependencies.' }
+  }
+
+  // Safety: Enforce maximum concurrent session limit to prevent resource exhaustion
+  if (sessions.size >= MAX_PTY_SESSIONS) {
+    return { error: `Maximum terminal sessions reached (${MAX_PTY_SESSIONS}). Close an existing terminal first.` }
   }
 
   // Security: Validate cwd to prevent PTY sessions in arbitrary directories
