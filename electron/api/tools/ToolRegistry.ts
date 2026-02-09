@@ -1,13 +1,6 @@
-/**
- * ToolRegistry — Single source of truth for all tool definitions.
- * 
- * Tools are defined once in universal format. Provider adapters convert
- * these to OpenAI, Anthropic, or any other format automatically.
- */
 
 import type { UniversalToolDefinition } from '../types'
 
-// ─── Tool Definitions ────────────────────────────────────────────────────────
 
 const TOOL_READ_FILE: UniversalToolDefinition = {
   name: 'read_file',
@@ -182,9 +175,7 @@ const TOOL_MOVE_FILE: UniversalToolDefinition = {
   },
 }
 
-// ─── Tool Sets (by agent mode) ──────────────────────────────────────────────
 
-/** All tools — full agent mode */
 const ALL_TOOLS: UniversalToolDefinition[] = [
   TOOL_READ_FILE, TOOL_WRITE_FILE, TOOL_STR_REPLACE,
   TOOL_LIST_DIRECTORY, TOOL_SEARCH_FILES, TOOL_EXECUTE_COMMAND,
@@ -193,7 +184,6 @@ const ALL_TOOLS: UniversalToolDefinition[] = [
   TOOL_WEB_SEARCH, TOOL_LINT_FILE, TOOL_FETCH_URL,
 ]
 
-/** Builder mode — full read/write access */
 const BUILDER_TOOLS: UniversalToolDefinition[] = [
   TOOL_READ_FILE, TOOL_WRITE_FILE, TOOL_STR_REPLACE,
   TOOL_LIST_DIRECTORY, TOOL_SEARCH_FILES, TOOL_EXECUTE_COMMAND,
@@ -202,74 +192,61 @@ const BUILDER_TOOLS: UniversalToolDefinition[] = [
   TOOL_WEB_SEARCH, TOOL_LINT_FILE, TOOL_FETCH_URL,
 ]
 
-/** Planner mode — read-only access */
 const PLANNER_TOOLS: UniversalToolDefinition[] = [
   TOOL_READ_FILE, TOOL_LIST_DIRECTORY, TOOL_SEARCH_FILES,
   TOOL_GET_GIT_DIFF, TOOL_LIST_CODE_DEFINITIONS,
 ]
 
-/** Chat mode — common tools for conversational coding */
 const CHAT_TOOLS: UniversalToolDefinition[] = [
   TOOL_READ_FILE, TOOL_WRITE_FILE, TOOL_STR_REPLACE,
   TOOL_LIST_DIRECTORY, TOOL_SEARCH_FILES, TOOL_EXECUTE_COMMAND,
   TOOL_WEB_SEARCH, TOOL_LINT_FILE, TOOL_FETCH_URL,
 ]
 
-// ─── Registry ────────────────────────────────────────────────────────────────
 
 export class ToolRegistry {
   private tools: Map<string, UniversalToolDefinition> = new Map()
 
   constructor() {
-    // Register all built-in tools
     for (const tool of ALL_TOOLS) {
       this.tools.set(tool.name, tool)
     }
   }
 
-  /** Register a custom tool */
   register(tool: UniversalToolDefinition): void {
     this.tools.set(tool.name, tool)
   }
 
-  /** Unregister a tool by name */
   unregister(name: string): void {
     this.tools.delete(name)
   }
 
-  /** Get a tool definition by name */
   get(name: string): UniversalToolDefinition | undefined {
     return this.tools.get(name)
   }
 
-  /** Get all registered tool definitions */
   getAll(): UniversalToolDefinition[] {
     return Array.from(this.tools.values())
   }
 
-  /** Get tool definitions by name list */
   getByNames(names: string[]): UniversalToolDefinition[] {
     return names
       .map(name => this.tools.get(name))
       .filter((t): t is UniversalToolDefinition => t !== undefined)
   }
 
-  /** Get the builder tool set */
   getBuilderTools(): UniversalToolDefinition[] {
     return BUILDER_TOOLS.filter(t => this.tools.has(t.name))
   }
 
-  /** Get the planner tool set */
   getPlannerTools(): UniversalToolDefinition[] {
     return PLANNER_TOOLS.filter(t => this.tools.has(t.name))
   }
 
-  /** Get the chat tool set */
   getChatTools(): UniversalToolDefinition[] {
     return CHAT_TOOLS.filter(t => this.tools.has(t.name))
   }
 
-  /** Get tools for a specific agent mode */
   getToolsForMode(mode: 'builder' | 'planner' | 'chat'): UniversalToolDefinition[] {
     switch (mode) {
       case 'builder': return this.getBuilderTools()
@@ -279,16 +256,13 @@ export class ToolRegistry {
     }
   }
 
-  /** Check if a tool name is registered */
   has(name: string): boolean {
     return this.tools.has(name)
   }
 
-  /** Get all registered tool names */
   getNames(): string[] {
     return Array.from(this.tools.keys())
   }
 }
 
-// Singleton
 export const toolRegistry = new ToolRegistry()

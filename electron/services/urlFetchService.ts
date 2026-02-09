@@ -1,13 +1,3 @@
-/**
- * URL Fetch Service — Fetch and summarize web page content for agent context.
- * 
- * When the agent's fetch_url tool needs to read a web page,
- * this service fetches the content, strips HTML to readable text, and
- * returns a truncated summary suitable for LLM context injection.
- * 
- * Privacy-first: No tracking, no API keys, direct fetch only.
- */
-
 import dns from 'dns'
 
 export interface FetchResult {
@@ -20,10 +10,8 @@ export interface FetchResult {
 }
 
 const FETCH_TIMEOUT_MS = 20_000
-const MAX_CONTENT_LENGTH = 16_000  // ~4k tokens for agent context
+const MAX_CONTENT_LENGTH = 16_000
 
-// Realistic browser User-Agents — rotated to avoid fingerprinting blocks.
-// This is what Cursor, Windsurf, and similar tools do from their main process.
 const BROWSER_USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -35,10 +23,6 @@ function getRandomUserAgent(): string {
   return BROWSER_USER_AGENTS[Math.floor(Math.random() * BROWSER_USER_AGENTS.length)]
 }
 
-/**
- * Build realistic browser-like headers for a given URL.
- * Sites like Alza, Amazon, Cloudflare-protected sites check multiple headers.
- */
 function buildBrowserHeaders(url: string, userAgent: string): Record<string, string> {
   const parsed = new URL(url)
   return {
@@ -60,9 +44,6 @@ function buildBrowserHeaders(url: string, userAgent: string): Record<string, str
   }
 }
 
-/**
- * Attempt to fetch a URL with a given strategy. Returns the Response or null.
- */
 async function tryFetch(url: string, headers: Record<string, string>, timeoutMs: number): Promise<Response | null> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
@@ -81,83 +62,54 @@ async function tryFetch(url: string, headers: Record<string, string>, timeoutMs:
   }
 }
 
-/**
- * Fetch a URL and extract readable text content.
- * Uses multiple strategies to bypass common 403/bot-protection:
- * 1. Full browser-like headers (works for most sites)
- * 2. Retry with different User-Agent on 403
- * 3. Fall back to Google Cache / reader-mode URL patterns
- */
-/**
- * Security: Check if a hostname resolves to a private/internal IP to prevent SSRF.
- * Blocks RFC1918, loopback, link-local, and cloud metadata endpoints.
- */
 function isPrivateHostname(hostname: string): boolean {
   const lower = hostname.toLowerCase()
-  // Block common cloud metadata endpoints
   if (lower === 'metadata.google.internal' || lower === 'metadata.google.com') return true
-  // Block numeric IP ranges: loopback, RFC1918, link-local, carrier-grade NAT
   const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
   if (ipv4Match) {
     const [, a, b] = ipv4Match.map(Number)
-    if (a === 127) return true                         // 127.0.0.0/8 loopback
-    if (a === 10) return true                          // 10.0.0.0/8
-    if (a === 172 && b >= 16 && b <= 31) return true   // 172.16.0.0/12
-    if (a === 192 && b === 168) return true            // 192.168.0.0/16
-    if (a === 169 && b === 254) return true            // 169.254.0.0/16 link-local (AWS metadata)
-    if (a === 100 && b >= 64 && b <= 127) return true  // 100.64.0.0/10 carrier-grade NAT
-    if (a === 0) return true                           // 0.0.0.0/8
+    if (a === 127) return true
+    if (a === 10) return true
+    if (a === 172 && b >= 16 && b <= 31) return true
+    if (a === 192 && b === 168) return true
+    if (a === 169 && b === 254) return true
+    if (a === 100 && b >= 64 && b <= 127) return true
+    if (a === 0) return true
   }
-  // Block IPv6 loopback and link-local
   if (hostname === '::1' || hostname === '[::1]') return true
   if (lower.startsWith('fe80:') || lower.startsWith('[fe80:')) return true
-  // Block localhost variants
   if (lower === 'localhost' || lower.endsWith('.localhost')) return true
   return false
 }
 
-/**
- * Security: Check if a resolved IP address is private/internal.
- * Used after DNS resolution to catch DNS rebinding attacks where a public
- * hostname resolves to a private IP.
- */
 function isPrivateIP(ip: string): boolean {
-  // IPv4 checks
   const ipv4Match = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
   if (ipv4Match) {
     const [, a, b] = ipv4Match.map(Number)
-    if (a === 127) return true                         // 127.0.0.0/8 loopback
-    if (a === 10) return true                          // 10.0.0.0/8
-    if (a === 172 && b >= 16 && b <= 31) return true   // 172.16.0.0/12
-    if (a === 192 && b === 168) return true            // 192.168.0.0/16
-    if (a === 169 && b === 254) return true            // 169.254.0.0/16 link-local (AWS metadata)
-    if (a === 100 && b >= 64 && b <= 127) return true  // 100.64.0.0/10 carrier-grade NAT
-    if (a === 0) return true                           // 0.0.0.0/8
+    if (a === 127) return true
+    if (a === 10) return true
+    if (a === 172 && b >= 16 && b <= 31) return true
+    if (a === 192 && b === 168) return true
+    if (a === 169 && b === 254) return true
+    if (a === 100 && b >= 64 && b <= 127) return true
+    if (a === 0) return true
   }
-  // IPv6 checks
   if (ip === '::1' || ip === '::') return true
   const lowerIp = ip.toLowerCase()
-  if (lowerIp.startsWith('fe80:')) return true          // link-local
-  if (lowerIp.startsWith('fc') || lowerIp.startsWith('fd')) return true // unique local
+  if (lowerIp.startsWith('fe80:')) return true
+  if (lowerIp.startsWith('fc') || lowerIp.startsWith('fd')) return true
   return false
 }
 
-/**
- * Security: Resolve hostname via DNS and verify the resolved IP is not private.
- * This prevents DNS rebinding attacks where a public hostname resolves to 127.0.0.1 etc.
- */
 async function checkDNSRebinding(hostname: string): Promise<void> {
-  // Skip check for IP literals — already checked by isPrivateHostname
   if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) return
-  if (hostname.includes(':')) return // IPv6 literal
+  if (hostname.includes(':')) return
 
   return new Promise((resolve, reject) => {
     dns.resolve4(hostname, (err, addresses) => {
       if (err) {
-        // Also try resolve6 before giving up
         dns.resolve6(hostname, (err6, addresses6) => {
           if (err6) {
-            // DNS resolution failed — let fetch handle it naturally
             resolve()
             return
           }
@@ -187,7 +139,6 @@ export async function fetchUrl(url: string): Promise<FetchResult> {
     return { url: url || '', title: '', content: '', contentLength: 0, truncated: false, error: 'Invalid URL' }
   }
 
-  // Validate URL format
   let parsed: URL
   try {
     parsed = new URL(url)
@@ -198,12 +149,10 @@ export async function fetchUrl(url: string): Promise<FetchResult> {
     return { url, title: '', content: '', contentLength: 0, truncated: false, error: 'Invalid URL format' }
   }
 
-  // Security: Block requests to private/internal IPs to prevent SSRF
   if (isPrivateHostname(parsed.hostname)) {
     return { url, title: '', content: '', contentLength: 0, truncated: false, error: 'Access denied: requests to private/internal addresses are blocked (SSRF protection)' }
   }
 
-  // Security: Resolve DNS and check for rebinding to private IPs
   try {
     await checkDNSRebinding(parsed.hostname)
   } catch (dnsErr: any) {
@@ -211,12 +160,10 @@ export async function fetchUrl(url: string): Promise<FetchResult> {
   }
 
   try {
-    // Strategy 1: Full browser-like headers
     const ua = getRandomUserAgent()
     const headers = buildBrowserHeaders(url, ua)
     let response = await tryFetch(url, headers, FETCH_TIMEOUT_MS)
 
-    // Strategy 2: On 403, retry with a different UA and minimal Sec-Fetch headers
     if (response && response.status === 403) {
       const altUa = BROWSER_USER_AGENTS.find(u => u !== ua) || ua
       const retryHeaders: Record<string, string> = {
@@ -233,7 +180,6 @@ export async function fetchUrl(url: string): Promise<FetchResult> {
       }
     }
 
-    // Strategy 3: On 403, try Google webcache as last resort
     if (response && response.status === 403) {
       const cacheUrl = `https://webcache.googleusercontent.com/search?q=cache:${encodeURIComponent(url)}`
       const cacheHeaders = buildBrowserHeaders(cacheUrl, ua)
@@ -254,7 +200,6 @@ export async function fetchUrl(url: string): Promise<FetchResult> {
     const contentType = response.headers.get('content-type') || ''
     const rawText = await response.text()
 
-    // Handle JSON responses
     if (contentType.includes('application/json')) {
       let pretty: string
       try {
@@ -272,7 +217,6 @@ export async function fetchUrl(url: string): Promise<FetchResult> {
       }
     }
 
-    // Handle plain text
     if (contentType.includes('text/plain')) {
       const truncated = rawText.length > MAX_CONTENT_LENGTH
       return {
@@ -284,7 +228,6 @@ export async function fetchUrl(url: string): Promise<FetchResult> {
       }
     }
 
-    // Handle HTML — extract readable text
     const title = extractTitle(rawText) || `${parsed.hostname}${parsed.pathname}`
     const readable = htmlToReadableText(rawText)
     const truncated = readable.length > MAX_CONTENT_LENGTH
@@ -304,22 +247,14 @@ export async function fetchUrl(url: string): Promise<FetchResult> {
   }
 }
 
-/**
- * Extract <title> from HTML.
- */
 function extractTitle(html: string): string {
   const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
   return match ? decodeEntities(match[1].trim()) : ''
 }
 
-/**
- * Convert HTML to readable plain text.
- * Strips tags, scripts, styles, and normalizes whitespace.
- */
 function htmlToReadableText(html: string): string {
   let text = html
 
-  // Remove scripts, styles, nav, footer, header, aside
   text = text.replace(/<script[\s\S]*?<\/script>/gi, '')
   text = text.replace(/<style[\s\S]*?<\/style>/gi, '')
   text = text.replace(/<nav[\s\S]*?<\/nav>/gi, '')
@@ -328,23 +263,18 @@ function htmlToReadableText(html: string): string {
   text = text.replace(/<aside[\s\S]*?<\/aside>/gi, '')
   text = text.replace(/<!--[\s\S]*?-->/g, '')
 
-  // Convert block elements to newlines
   text = text.replace(/<\/(p|div|h[1-6]|li|tr|blockquote|pre|section|article)>/gi, '\n')
   text = text.replace(/<(br|hr)\s*\/?>/gi, '\n')
   text = text.replace(/<li[^>]*>/gi, '- ')
 
-  // Convert headings to markdown-style
   text = text.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n')
   text = text.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '\n## $1\n')
   text = text.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '\n### $1\n')
 
-  // Strip remaining tags
   text = text.replace(/<[^>]+>/g, '')
 
-  // Decode entities
   text = decodeEntities(text)
 
-  // Normalize whitespace
   text = text.replace(/[ \t]+/g, ' ')
   text = text.replace(/\n{3,}/g, '\n\n')
   text = text.split('\n').map(l => l.trim()).join('\n')
@@ -353,9 +283,6 @@ function htmlToReadableText(html: string): string {
   return text
 }
 
-/**
- * Decode HTML entities.
- */
 function decodeEntities(str: string): string {
   return str
     .replace(/&amp;/g, '&')
@@ -368,9 +295,6 @@ function decodeEntities(str: string): string {
     .replace(/&#x([0-9a-f]+);/gi, (_m, code) => String.fromCharCode(parseInt(code, 16)))
 }
 
-/**
- * Format fetch result for agent context injection.
- */
 export function formatFetchForAgent(result: FetchResult): string {
   if (result.error) {
     return `Failed to fetch ${result.url}: ${result.error}`

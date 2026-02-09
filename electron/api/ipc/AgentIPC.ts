@@ -1,13 +1,3 @@
-/**
- * AgentIPC — Electron IPC handlers for the agent system.
- * 
- * Bridges the renderer process (UI) with the main process agent loop.
- * Handles:
- * - Starting/stopping agent runs
- * - Streaming events to UI via IPC
- * - HTTP proxying (CORS bypass for API requests)
- * - Agent lifecycle management
- */
 
 import { ipcMain, type BrowserWindow } from 'electron'
 import type { AgentRequest, AgentEvent } from '../types'
@@ -18,8 +8,6 @@ import { toolExecutor } from '../tools/ToolExecutor'
 import type { ToolApprovalCallback, PathApprovalCallback } from '../agent/AgentLoop'
 import type { ToolCall } from '../types'
 
-// ─── URL Allowlist for HTTP Proxy (SSRF protection) ───────────────────────
-// Mirrors the ALLOWED_API_DOMAINS list in main.ts to prevent SSRF via agent HTTP proxies.
 const ALLOWED_API_DOMAINS = new Set([
   'opencode.ai', 'api.z.ai',
   'api.openai.com', 'api.anthropic.com',
@@ -49,11 +37,9 @@ function isAllowedApiUrl(url: string): boolean {
   }
 }
 
-// ─── Active Agent Runs ───────────────────────────────────────────────────
 
 const activeRuns = new Map<string, AgentLoop>()
 
-// ─── Tool Approval System ─────────────────────────────────────────────────
 
 const pendingApprovals = new Map<string, { resolve: (approved: boolean) => void }>()
 const pendingPathApprovals = new Map<string, { resolve: (approved: boolean) => void }>()
@@ -67,7 +53,6 @@ function createApprovalCallback(
   return async (toolCall: ToolCall): Promise<boolean> => {
     const approvalId = `${requestId}-${toolCall.id}`
 
-    // Emit event to renderer asking for approval
     try {
       mainWindow.webContents.send(`agent:event:${requestId}`, {
         type: 'tool_approval_required',
@@ -81,11 +66,9 @@ function createApprovalCallback(
         },
       })
     } catch {
-      // Window may have been closed - reject to be safe
       return false
     }
 
-    // Wait indefinitely for explicit user approval — never auto-approve
     return new Promise<boolean>((resolve) => {
       pendingApprovals.set(approvalId, { resolve })
     })
@@ -116,14 +99,12 @@ function createPathApprovalCallback(
       return false
     }
 
-    // Wait indefinitely for explicit user approval — never auto-approve
     return new Promise<boolean>((resolve) => {
       pendingPathApprovals.set(approvalId, { resolve })
     })
   }
 }
 
-// ─── HTTP Adapter for Electron Main Process ──────────────────────────────────
 
 function createHttpAdapter(mainWindow: BrowserWindow | null) {
   return {
@@ -164,7 +145,7 @@ function createHttpAdapter(mainWindow: BrowserWindow | null) {
       const cancel = () => { cancelled = true; controller.abort() }
 
       try {
-        const timeoutId = setTimeout(() => controller.abort(), 120_000) // 2 minute timeout
+        const timeoutId = setTimeout(() => controller.abort(), 120_000)
 
         const response = await fetch(url, {
           method,
@@ -186,7 +167,6 @@ function createHttpAdapter(mainWindow: BrowserWindow | null) {
           return { ok: false, status: 500, cancel }
         }
 
-        // Stream the response body
         const reader = response.body.getReader()
         const decoder = new TextDecoder()
 
@@ -227,11 +207,9 @@ function createHttpAdapter(mainWindow: BrowserWindow | null) {
   }
 }
 
-// ─── Register IPC Handlers ───────────────────────────────────────────────────
 
 export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): void {
 
-  // ─── Start Agent Run ─────────────────────────────────────────────────
   ipcMain.handle('agent:run', async (_event, request: AgentRequest) => {
     const mainWindow = getMainWindow()
     if (!mainWindow) {
@@ -246,29 +224,23 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
     try {
       const seqRef = { seq: 0 }
 
-      // Stream events to renderer via IPC
       const onEvent = (event: AgentEvent) => {
         seqRef.seq = Math.max(seqRef.seq, event.seq + 1)
         try {
           mainWindow.webContents.send(`agent:event:${requestId}`, event)
         } catch {
-          // Window may have been closed
         }
       }
 
-      // Build approval callback if mode is 'ask'
       let approvalCallback: ToolApprovalCallback | undefined
       if (request.editApprovalMode === 'ask') {
         approvalCallback = createApprovalCallback(requestId, mainWindow, onEvent, seqRef)
       }
 
-      // Build path approval callback — scoped to this run, passed through
-      // agentLoop.run() to avoid race conditions on the singleton ToolExecutor.
       const pathApprovalCallback = createPathApprovalCallback(requestId, mainWindow, onEvent, seqRef)
 
       const response = await agentLoop.run(request, onEvent, approvalCallback, pathApprovalCallback)
 
-      // Send completion
       mainWindow.webContents.send(`agent:complete:${requestId}`, response)
       return response
     } catch (err: any) {
@@ -285,13 +257,11 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
       } catch {}
       return errorResponse
     } finally {
-      // Wait a tick to allow any pending events to be sent before cleaning up
       await new Promise(resolve => setTimeout(resolve, 100))
       activeRuns.delete(requestId)
     }
   })
 
-  // ─── Respond to Tool Approval ──────────────────────────────────
   ipcMain.handle('agent:respondToolApproval', (_event, approvalId: string, approved: boolean) => {
     const pending = pendingApprovals.get(approvalId)
     if (pending) {
@@ -302,7 +272,6 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
     return { success: false, error: 'No pending approval found' }
   })
 
-  // ─── Respond to Path Approval ──────────────────────────────────
   ipcMain.handle('agent:respondPathApproval', (_event, approvalId: string, approved: boolean) => {
     const pending = pendingPathApprovals.get(approvalId)
     if (pending) {
@@ -313,13 +282,11 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
     return { success: false, error: 'No pending path approval found' }
   })
 
-  // ─── Abort Agent Run ─────────────────────────────────────────────────
   ipcMain.handle('agent:abort', (_event, requestId: string) => {
     const agentLoop = activeRuns.get(requestId)
     if (agentLoop) {
       agentLoop.abort()
 
-      // Auto-REJECT all pending approvals for this run to prevent hanging promises
       Array.from(pendingApprovals.entries()).forEach(([approvalId, pending]) => {
         if (approvalId.startsWith(requestId)) {
           pending.resolve(false)
@@ -338,7 +305,6 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
     return { success: false, error: 'No active run found' }
   })
 
-  // ─── Get Tool Definitions ────────────────────────────────────────────
   ipcMain.handle('agent:getTools', (_event, mode?: string) => {
     if (mode) {
       return toolRegistry.getToolsForMode(mode as 'builder' | 'planner' | 'chat')
@@ -346,24 +312,20 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
     return toolRegistry.getAll()
   })
 
-  // ─── Execute Single Tool (for testing / manual use) ──────────────────
   ipcMain.handle('agent:executeTool', async (_event, name: string, args: Record<string, any>, projectPath?: string) => {
     return toolExecutor.execute({ id: `manual-${Date.now()}`, name, arguments: args }, projectPath)
   })
 
-  // ─── Check Active Runs ───────────────────────────────────────────────
   ipcMain.handle('agent:activeRuns', () => {
     return Array.from(activeRuns.keys())
   })
 
-  // ─── HTTP Proxy (CORS bypass) — kept for backward compatibility ──────
   ipcMain.handle('agent:httpRequest', async (_event, options: {
     url: string
     method: string
     headers?: Record<string, string>
     body?: string
   }) => {
-    // Security: Validate URL against allowlist to prevent SSRF
     if (!isAllowedApiUrl(options.url)) {
       return {
         ok: false,
@@ -401,7 +363,6 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
     }
   })
 
-  // ─── Streaming HTTP Proxy ────────────────────────────────────────────
   ipcMain.handle('agent:httpStream', async (_event, options: {
     requestId: string
     url: string
@@ -414,7 +375,6 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
       return { ok: false, status: 0, error: 'Main window not available' }
     }
 
-    // Security: Validate URL against allowlist to prevent SSRF
     if (!isAllowedApiUrl(options.url)) {
       mainWindow.webContents.send(`agent:stream:${options.requestId}`, {
         type: 'error',

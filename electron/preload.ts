@@ -1,7 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 contextBridge.exposeInMainWorld('artemis', {
-  // ─── Zen API Proxy (CORS bypass) ────────────────────────────────────────
   zen: {
     request: (options: {
       url: string
@@ -12,7 +11,6 @@ contextBridge.exposeInMainWorld('artemis', {
 
   },
 
-  // ─── Session (PTY) Management ──────────────────────────────────────────
   session: {
     create: (id: string, cwd: string) =>
       ipcRenderer.invoke('session:create', { id, cwd }),
@@ -40,18 +38,15 @@ contextBridge.exposeInMainWorld('artemis', {
 
   },
 
-  // ─── Project Management ──────────────────────────────────────────────
   project: {
     setPath: (projectPath: string) =>
       ipcRenderer.invoke('project:setPath', projectPath),
   },
 
-  // ─── System Dialogs ───────────────────────────────────────────────────
   dialog: {
     openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
   },
 
-  // ─── Persistent Settings Store ────────────────────────────────────────
   store: {
     get: (key: string) => ipcRenderer.invoke('store:get', key),
     set: (key: string, value: any) => ipcRenderer.invoke('store:set', key, value),
@@ -59,7 +54,6 @@ contextBridge.exposeInMainWorld('artemis', {
     isEncrypted: () => ipcRenderer.invoke('store:isEncrypted'),
   },
 
-  // Security-sensitive capabilities (disabled by default)
   security: {
     getCapabilities: () =>
       ipcRenderer.invoke('security:getCapabilities') as Promise<{ terminal: boolean; commands: boolean }>,
@@ -67,7 +61,6 @@ contextBridge.exposeInMainWorld('artemis', {
       ipcRenderer.invoke('security:requestCapability', capability) as Promise<boolean>,
   },
 
-  // Workspace Trust (VSCode-style folder trust system)
   trust: {
     check: (folderPath: string) =>
       ipcRenderer.invoke('trust:check', folderPath) as Promise<boolean>,
@@ -77,7 +70,6 @@ contextBridge.exposeInMainWorld('artemis', {
       ipcRenderer.invoke('trust:revoke', folderPath) as Promise<boolean>,
   },
 
-  // ─── Window Controls ─────────────────────────────────────────────────
   window: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     maximize: () => ipcRenderer.invoke('window:maximize'),
@@ -95,7 +87,6 @@ contextBridge.exposeInMainWorld('artemis', {
     },
   },
 
-  // ─── File System Operations ───────────────────────────────────────────
   fs: {
     readDir: (dirPath: string) =>
       ipcRenderer.invoke('fs:readDir', dirPath),
@@ -119,7 +110,6 @@ contextBridge.exposeInMainWorld('artemis', {
       ipcRenderer.invoke('fs:rename', oldPath, newPath),
   },
 
-  // ─── Shell Operations ──────────────────────────────────────────────────
   shell: {
     openPath: (path: string) =>
       ipcRenderer.invoke('shell:openPath', path),
@@ -127,7 +117,6 @@ contextBridge.exposeInMainWorld('artemis', {
       ipcRenderer.invoke('shell:openExternal', url),
   },
 
-  // ─── Tool Execution ──────────────────────────────────────────────────
   tools: {
     runCommand: (command: string, cwd: string) =>
       ipcRenderer.invoke('tools:runCommand', command, cwd),
@@ -136,13 +125,11 @@ contextBridge.exposeInMainWorld('artemis', {
       ipcRenderer.invoke('tools:searchFiles', pattern, dirPath),
   },
 
-  // ─── Git Operations (array-based args, safe for commit messages) ────
   git: {
     run: (args: string[], cwd: string) =>
       ipcRenderer.invoke('git:run', args, cwd),
   },
 
-  // ─── MCP Marketplace ──────────────────────────────────────────────────
   mcp: {
     getServers: () => ipcRenderer.invoke('mcp:getServers'),
     installServer: (serverId: string, config?: Record<string, any>) =>
@@ -169,19 +156,16 @@ contextBridge.exposeInMainWorld('artemis', {
       ipcRenderer.invoke('mcp:getAllServerLogs'),
   },
 
-  // ─── Web Search (DuckDuckGo) ────────────────────────────────────────
   webSearch: {
     search: (query: string) =>
       ipcRenderer.invoke('webSearch:search', query),
   },
 
-  // ─── Linter Auto-Fix ────────────────────────────────────────────────
   linter: {
     lint: (filePath: string, projectPath: string) =>
       ipcRenderer.invoke('linter:lint', filePath, projectPath),
   },
 
-  // ─── Discord RPC ────────────────────────────────────────────────────
   discord: {
     toggle: (enable: boolean) =>
       ipcRenderer.invoke('discord:toggle', enable),
@@ -195,7 +179,6 @@ contextBridge.exposeInMainWorld('artemis', {
       ipcRenderer.invoke('discord:setDebug', enabled),
   },
 
-  // ─── Inline Code Completion (AI Ghost Text) ─────────────────────────
   inlineCompletion: {
     complete: (request: { prefix: string; suffix: string; language: string; filepath: string }) =>
       ipcRenderer.invoke('inlineCompletion:complete', request),
@@ -204,25 +187,19 @@ contextBridge.exposeInMainWorld('artemis', {
     fetchModels: (providerId: string) => ipcRenderer.invoke('inlineCompletion:fetchModels', providerId),
   },
 
-  // ─── Agent API (New Provider-Agnostic System) ─────────────────────────
   agent: {
-    /** Start an autonomous agent run. Returns final AgentResponse. */
     run: (request: any) =>
       ipcRenderer.invoke('agent:run', request),
 
-    /** Abort an in-progress agent run */
     abort: (requestId: string) =>
       ipcRenderer.invoke('agent:abort', requestId),
 
-    /** Respond to a tool approval request */
     respondToolApproval: (approvalId: string, approved: boolean) =>
       ipcRenderer.invoke('agent:respondToolApproval', approvalId, approved),
 
-    /** Respond to a path approval request */
     respondPathApproval: (approvalId: string, approved: boolean) =>
       ipcRenderer.invoke('agent:respondPathApproval', approvalId, approved),
 
-    /** Listen for agent events during a run */
     onEvent: (requestId: string, callback: (event: any) => void) => {
       const handler = (_event: any, data: any) => callback(data)
       ipcRenderer.on(`agent:event:${requestId}`, handler)

@@ -1,19 +1,9 @@
-/**
- * Linter Service — Real-time linting integration for ESLint (JS/TS) and Pylint (Python).
- * 
- * Spawns linter processes and parses their output into structured diagnostics.
- * Results are piped to the active model context for auto-fix suggestions.
- */
-
 import { spawn } from 'child_process'
 import path from 'path'
 import fs from 'fs'
 
-// Security: Dangerous shell metacharacters that could enable command injection via filePath
 const DANGEROUS_PATH_CHARS = /[;&|`$(){}[\]\<>\n\r]/
 
-/** Security: Resolve a bare command name to a full path on Windows so spawn works with shell:false.
- *  Finds .cmd/.bat/.exe variants in PATH. */
 function resolveCommand(command: string): string {
   if (process.platform !== 'win32') return command
   if (path.isAbsolute(command)) return command
@@ -30,7 +20,6 @@ function resolveCommand(command: string): string {
   return command
 }
 
-/** Security: Validate that a file path doesn't contain shell metacharacters. */
 function validateLintPath(filePath: string): void {
   if (DANGEROUS_PATH_CHARS.test(filePath)) {
     throw new Error(`Lint path contains dangerous characters: ${filePath}`)
@@ -58,13 +47,9 @@ export interface LintResult {
 
 const LINT_TIMEOUT_MS = 30_000
 
-/**
- * Run ESLint on a file and return structured diagnostics.
- */
 export async function runESLint(filePath: string, projectPath: string): Promise<LintResult> {
   const result: LintResult = { file: filePath, diagnostics: [] }
 
-  // Security: Validate filePath to prevent injection when passed as argument
   try {
     validateLintPath(filePath)
   } catch (err: any) {
@@ -72,10 +57,9 @@ export async function runESLint(filePath: string, projectPath: string): Promise<
     return result
   }
 
-  // Try to find eslint in the project's node_modules
   const eslintPaths = [
     path.join(projectPath, 'node_modules', '.bin', process.platform === 'win32' ? 'eslint.cmd' : 'eslint'),
-    'eslint', // fallback to global
+    'eslint',
   ]
 
   let eslintBin = ''
@@ -122,7 +106,6 @@ export async function runESLint(filePath: string, projectPath: string): Promise<
         }
       }
     } catch {
-      // If JSON parse fails, try line-based parsing
       if (output.stderr) {
         result.error = output.stderr.slice(0, 500)
       }
@@ -134,13 +117,9 @@ export async function runESLint(filePath: string, projectPath: string): Promise<
   return result
 }
 
-/**
- * Run Pylint on a file and return structured diagnostics.
- */
 export async function runPylint(filePath: string, projectPath: string): Promise<LintResult> {
   const result: LintResult = { file: filePath, diagnostics: [] }
 
-  // Security: Validate filePath to prevent injection when passed as argument
   try {
     validateLintPath(filePath)
   } catch (err: any) {
@@ -183,9 +162,6 @@ export async function runPylint(filePath: string, projectPath: string): Promise<
   return result
 }
 
-/**
- * Auto-detect the appropriate linter and run it.
- */
 export async function lintFile(filePath: string, projectPath: string): Promise<LintResult> {
   const ext = path.extname(filePath).toLowerCase()
 
@@ -204,9 +180,6 @@ export async function lintFile(filePath: string, projectPath: string): Promise<L
   }
 }
 
-/**
- * Format lint results for agent context (auto-fix prompt).
- */
 export function formatLintForAgent(result: LintResult): string {
   if (result.error) {
     return `Linter error for ${result.file}: ${result.error}`
@@ -224,17 +197,12 @@ export function formatLintForAgent(result: LintResult): string {
   return lines.join('\n')
 }
 
-/**
- * Spawn a linter process and capture output.
- */
 function spawnLinter(
   command: string,
   args: string[],
   cwd: string
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve) => {
-    // Security: Resolve binary path and use shell:false to prevent command injection.
-    // On Windows, route .cmd/.bat through cmd.exe /c explicitly instead of shell:true.
     let spawnExe = resolveCommand(command)
     let spawnArgs = args
     if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(spawnExe)) {

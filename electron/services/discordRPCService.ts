@@ -1,25 +1,11 @@
-/**
- * Discord RPC Service — Rich Presence integration for Artemis IDE.
- * 
- * Connects to Discord via local IPC socket (no API keys needed).
- * Shows dynamic status: current file, language, elapsed time.
- * Auto-detects Discord installation cross-platform.
- * 
- * Protocol: Discord IPC uses framed messages over a named pipe / Unix socket.
- * Frame format: [opcode: u32 LE] [length: u32 LE] [json payload]
- * Opcodes: 0 = HANDSHAKE, 1 = FRAME, 2 = CLOSE, 3 = PING, 4 = PONG
- */
-
 import { spawn } from 'child_process'
 import path from 'path'
 import fs from 'fs'
 import net from 'net'
 
-// ─── Types ──────────────────────────────────────────────────────────────────
-
 export interface DiscordPresence {
-  details?: string      // Line 1: e.g., "Editing App.tsx"
-  state?: string        // Line 2: e.g., "Workspace: Artemis"
+  details?: string
+  state?: string
   largeImageKey?: string
   largeImageText?: string
   smallImageKey?: string
@@ -36,17 +22,13 @@ export interface DiscordRPCState {
   startTime?: number
 }
 
-// ─── Constants ──────────────────────────────────────────────────────────────
-
 const CLIENT_ID = '1470066535660785835'
 const RPC_VERSION = 1
 
-// IPC Opcodes
 const OP_HANDSHAKE = 0
 const OP_FRAME = 1
 const OP_CLOSE = 2
 
-// Language icon mapping (Discord asset keys — must match uploaded assets in Discord Dev Portal)
 const LANG_ICONS: Record<string, string> = {
   typescript: 'typescript',
   typescriptreact: 'typescript',
@@ -65,8 +47,6 @@ const LANG_ICONS: Record<string, string> = {
   sql: 'sql',
 }
 
-// ─── Debug Logging ──────────────────────────────────────────────────────────
-
 let debugMode = false
 
 function debugLog(...args: any[]): void {
@@ -84,8 +64,6 @@ export function setDebugMode(enabled: boolean): void {
   debugLog('Debug mode', enabled ? 'enabled' : 'disabled')
 }
 
-// ─── Discord IPC Connection ─────────────────────────────────────────────────
-
 let ipcSocket: net.Socket | null = null
 let rpcState: DiscordRPCState = { connected: false, enabled: false }
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -93,9 +71,6 @@ let currentPresence: DiscordPresence | null = null
 let handshakeComplete = false
 let readBuffer = Buffer.alloc(0)
 
-/**
- * Get the Discord IPC socket path (cross-platform).
- */
 function getIPCPath(id: number = 0): string {
   if (process.platform === 'win32') {
     return `\\\\?\\pipe\\discord-ipc-${id}`
@@ -105,19 +80,13 @@ function getIPCPath(id: number = 0): string {
   return path.join(prefix, `discord-ipc-${id}`)
 }
 
-/**
- * Detect if Discord is installed and running on the system.
- * Checks both installation paths and active IPC pipe availability.
- */
 export async function detectDiscord(): Promise<boolean> {
   debugLog('Detecting Discord installation...')
 
-  // First: check if any IPC pipe is available (means Discord is running)
   for (let i = 0; i < 10; i++) {
     const ipcPath = getIPCPath(i)
     try {
       if (process.platform === 'win32') {
-        // On Windows, try a quick connect to the named pipe
         const available = await new Promise<boolean>((resolve) => {
           const testSocket = net.createConnection(ipcPath, () => {
             testSocket.destroy()
@@ -138,7 +107,6 @@ export async function detectDiscord(): Promise<boolean> {
     } catch { continue }
   }
 
-  // Fallback: check installation paths
   if (process.platform === 'win32') {
     const localAppData = process.env.LOCALAPPDATA || ''
     const paths = [
@@ -166,7 +134,6 @@ export async function detectDiscord(): Promise<boolean> {
       } catch { continue }
     }
   } else {
-    // Linux — check if discord is in PATH
     try {
       return await new Promise<boolean>((resolve) => {
         const child = spawn('which', ['discord'], { stdio: ['ignore', 'pipe', 'pipe'] })
@@ -185,10 +152,6 @@ export async function detectDiscord(): Promise<boolean> {
   return false
 }
 
-/**
- * Parse incoming IPC frames from Discord.
- * Discord sends framed JSON responses: [opcode:u32LE][length:u32LE][json]
- */
 function processIncomingData(data: Buffer): void {
   readBuffer = Buffer.concat([readBuffer, data])
 
@@ -235,9 +198,6 @@ function processIncomingData(data: Buffer): void {
   }
 }
 
-/**
- * Write an IPC frame to Discord.
- */
 function writeFrame(opcode: number, payload: string): boolean {
   if (!ipcSocket) return false
 
@@ -255,18 +215,13 @@ function writeFrame(opcode: number, payload: string): boolean {
   }
 }
 
-/**
- * Connect to Discord's local IPC socket.
- */
 export async function connect(): Promise<boolean> {
   if (ipcSocket && rpcState.connected && handshakeComplete) return true
 
   debugLog('Attempting to connect to Discord IPC...')
 
-  // Clean up any stale socket
   disconnectSocket()
 
-  // Try IPC pipes 0-9
   for (let i = 0; i < 10; i++) {
     const ipcPath = getIPCPath(i)
     debugLog(`Trying pipe ${i}: ${ipcPath}`)
@@ -290,9 +245,6 @@ export async function connect(): Promise<boolean> {
   return false
 }
 
-/**
- * Try connecting to a specific IPC path.
- */
 function tryConnect(ipcPath: string, pipeIndex: number): Promise<boolean> {
   return new Promise((resolve) => {
     handshakeComplete = false
@@ -302,11 +254,9 @@ function tryConnect(ipcPath: string, pipeIndex: number): Promise<boolean> {
       ipcSocket = socket
       debugLog(`Socket connected to pipe ${pipeIndex}, sending handshake...`)
 
-      // Send handshake
       const handshake = JSON.stringify({ v: RPC_VERSION, client_id: CLIENT_ID })
       writeFrame(OP_HANDSHAKE, handshake)
 
-      // Wait for READY response before resolving
       const readyTimeout = setTimeout(() => {
         if (!handshakeComplete) {
           debugLog(`Handshake timeout on pipe ${pipeIndex}`)
@@ -325,7 +275,6 @@ function tryConnect(ipcPath: string, pipeIndex: number): Promise<boolean> {
       }, 50)
     })
 
-    // Handle incoming data
     socket.on('data', (data: Buffer) => {
       processIncomingData(data)
     })
@@ -341,7 +290,6 @@ function tryConnect(ipcPath: string, pipeIndex: number): Promise<boolean> {
       handshakeComplete = false
       rpcState.connected = false
 
-      // Auto-reconnect if still enabled
       if (rpcState.enabled && !reconnectTimer) {
         debugLog('Scheduling reconnect in 15s...')
         reconnectTimer = setTimeout(() => {
@@ -354,7 +302,6 @@ function tryConnect(ipcPath: string, pipeIndex: number): Promise<boolean> {
       }
     })
 
-    // Connection timeout
     setTimeout(() => {
       if (!ipcSocket || ipcSocket !== socket) {
         socket.destroy()
@@ -364,9 +311,6 @@ function tryConnect(ipcPath: string, pipeIndex: number): Promise<boolean> {
   })
 }
 
-/**
- * Disconnect the socket without changing enabled state.
- */
 function disconnectSocket(): void {
   handshakeComplete = false
   readBuffer = Buffer.alloc(0)
@@ -377,9 +321,6 @@ function disconnectSocket(): void {
   }
 }
 
-/**
- * Disconnect from Discord RPC.
- */
 export function disconnect(): void {
   debugLog('Disconnecting...')
   rpcState.enabled = false
@@ -395,9 +336,6 @@ export function disconnect(): void {
   debugLog('Disconnected')
 }
 
-/**
- * Set the Rich Presence activity.
- */
 export function setActivity(presence: DiscordPresence): void {
   currentPresence = presence
 
@@ -436,9 +374,6 @@ export function setActivity(presence: DiscordPresence): void {
   writeFrame(OP_FRAME, payload)
 }
 
-/**
- * Update presence based on current editing state.
- */
 export function updatePresence(fileName?: string, language?: string, projectName?: string): void {
   if (!rpcState.enabled) return
 
@@ -461,9 +396,6 @@ export function updatePresence(fileName?: string, language?: string, projectName
   rpcState.lastFile = fileName
 }
 
-/**
- * Clear presence (set to idle).
- */
 export function clearActivity(): void {
   if (!ipcSocket || !handshakeComplete) return
 
@@ -477,16 +409,10 @@ export function clearActivity(): void {
   writeFrame(OP_FRAME, payload)
 }
 
-/**
- * Get current RPC state.
- */
 export function getState(): DiscordRPCState {
   return { ...rpcState }
 }
 
-/**
- * Toggle RPC on/off.
- */
 export async function toggle(enable: boolean): Promise<DiscordRPCState> {
   debugLog('Toggle:', enable)
   if (enable) {

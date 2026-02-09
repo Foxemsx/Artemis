@@ -1,17 +1,7 @@
-/**
- * MCP Service — Model Context Protocol Marketplace backend.
- * 
- * Manages curated MCP servers: browse, install, configure.
- * Installed servers spawn as child processes via stdio MCP protocol.
- * Tools are dynamically registered and available to the agent loop.
- */
-
 import path from 'path'
 import fs from 'fs'
 import { safeStorage } from 'electron'
 import { mcpClientManager, MCPLogEntry } from './mcpClient'
-
-// ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface MCPServer {
   id: string
@@ -20,20 +10,16 @@ export interface MCPServer {
   author: string
   version: string
   category: 'code' | 'data' | 'docs' | 'productivity' | 'devops'
-  icon: string  // emoji or icon identifier
+  icon: string
   npmPackage?: string
   repoUrl?: string
   configSchema?: Record<string, any>
   tools?: string[]
   installed?: boolean
   configuredAt?: number
-  /** Command to spawn the MCP server (npx or local binary) */
   spawnCommand?: string
-  /** Arguments for the spawn command */
   spawnArgs?: string[]
-  /** Required environment variables (keys user must provide) */
   requiredEnv?: string[]
-  /** Default environment variable values (from custom server definitions) */
   defaultEnv?: Record<string, string>
 }
 
@@ -48,8 +34,6 @@ export interface MCPServerState {
   config: Record<string, any>
   installedAt: number
 }
-
-// ─── Curated MCP Servers ────────────────────────────────────────────────────
 
 export const CURATED_SERVERS: MCPServer[] = [
   {
@@ -507,22 +491,14 @@ export const CURATED_SERVERS: MCPServer[] = [
   },
 ]
 
-// ─── State Management ───────────────────────────────────────────────────────
-
 let installedServers: Map<string, MCPServerState> = new Map()
 let storeDir: string = ''
 
-/**
- * Initialize the MCP service with a storage directory.
- */
 export function initMCPService(appDataDir: string): void {
   storeDir = appDataDir
   loadInstalledServers()
 }
 
-/**
- * Get all servers (curated + custom) with their install state.
- */
 export function getServers(): MCPServer[] {
   const allServers = [...CURATED_SERVERS, ...getCustomServers()]
   return allServers.map(server => ({
@@ -532,11 +508,6 @@ export function getServers(): MCPServer[] {
   }))
 }
 
-/**
- * Install/enable an MCP server.
- * Spawns the server process and connects via stdio MCP protocol.
- * Discovers available tools and registers them with the agent system.
- */
 export async function installServer(serverId: string, config?: Record<string, any>): Promise<MCPInstallResult> {
   const allServers = [...CURATED_SERVERS, ...getCustomServers()]
   const server = allServers.find(s => s.id === serverId)
@@ -549,7 +520,6 @@ export async function installServer(serverId: string, config?: Record<string, an
   }
 
   try {
-    // Build environment variables: merge defaultEnv (from custom server definition) with config overrides
     const env: Record<string, string> = {}
     if (server.defaultEnv) {
       for (const [key, value] of Object.entries(server.defaultEnv)) {
@@ -566,7 +536,6 @@ export async function installServer(serverId: string, config?: Record<string, an
       }
     }
 
-    // Connect to the MCP server (spawns the process)
     await mcpClientManager.connect(
       serverId,
       server.spawnCommand,
@@ -577,7 +546,6 @@ export async function installServer(serverId: string, config?: Record<string, an
     const client = mcpClientManager.get(serverId)
     const discoveredTools = client?.tools || []
 
-    // Store installation state
     const state: MCPServerState = {
       installed: true,
       config: config || {},
@@ -590,19 +558,12 @@ export async function installServer(serverId: string, config?: Record<string, an
     console.log(`[Artemis MCP] Installed & connected: ${server.name} (${discoveredTools.length} tools)`)
     return { success: true, serverId }
   } catch (err: any) {
-    // Do NOT persist as installed on failure — the user must retry explicitly.
-    // Saving a failed install causes silent reconnection failures on every app start.
     console.error(`[Artemis MCP] Install failed for ${server.name}:`, err.message)
     return { success: false, serverId, error: `Failed to connect: ${err.message}. Please check the server configuration and try again.` }
   }
 }
 
-/**
- * Uninstall/disable an MCP server.
- * Disconnects the server process and removes persisted state.
- */
 export async function uninstallServer(serverId: string): Promise<MCPInstallResult> {
-  // Disconnect the MCP client
   mcpClientManager.disconnect(serverId)
 
   installedServers.delete(serverId)
@@ -611,10 +572,6 @@ export async function uninstallServer(serverId: string): Promise<MCPInstallResul
   return { success: true, serverId }
 }
 
-/**
- * Reconnect all installed servers on app startup.
- * Called after loadInstalledServers().
- */
 export async function reconnectInstalledServers(): Promise<void> {
   const allServers = [...CURATED_SERVERS, ...getCustomServers()]
   const entries = Array.from(installedServers.entries())
@@ -624,7 +581,6 @@ export async function reconnectInstalledServers(): Promise<void> {
     if (!server?.spawnCommand) continue
 
     try {
-      // Merge defaultEnv (from custom server definition) with persisted config
       const env: Record<string, string> = {}
       if (server.defaultEnv) {
         for (const [key, value] of Object.entries(server.defaultEnv)) {
@@ -654,9 +610,6 @@ export async function reconnectInstalledServers(): Promise<void> {
   }
 }
 
-/**
- * Search curated servers by query.
- */
 export function searchServers(query: string): MCPServer[] {
   const q = query.toLowerCase().trim()
   if (!q) return getServers()
@@ -669,8 +622,6 @@ export function searchServers(query: string): MCPServer[] {
     (s.tools || []).some(t => t.toLowerCase().includes(q))
   )
 }
-
-// ─── Custom MCP Servers ──────────────────────────────────────────────────────
 
 export interface CustomMCPServer {
   id: string
@@ -723,7 +674,6 @@ export function getCustomServers(): MCPServer[] {
 }
 
 export function addCustomServer(server: CustomMCPServer): { success: boolean; error?: string } {
-  // Input validation
   if (!server || typeof server !== 'object') {
     return { success: false, error: 'Invalid server definition' }
   }
@@ -739,7 +689,6 @@ export function addCustomServer(server: CustomMCPServer): { success: boolean; er
   if (!Array.isArray(server.args)) {
     return { success: false, error: 'Invalid server args: must be an array' }
   }
-  // Block shell metacharacters in command
   if (/[;&|`$(){}\[\]<>\n\r]/.test(server.command)) {
     return { success: false, error: 'Invalid server command: contains dangerous shell characters' }
   }
@@ -759,7 +708,6 @@ export function removeCustomServer(serverId: string): { success: boolean; error?
   if (idx === -1) return { success: false, error: 'Custom server not found' }
   servers.splice(idx, 1)
   saveCustomServers(servers)
-  // Also uninstall if installed
   if (installedServers.has(serverId)) {
     mcpClientManager.disconnect(serverId)
     installedServers.delete(serverId)
@@ -771,8 +719,6 @@ export function removeCustomServer(serverId: string): { success: boolean; error?
 export function getCustomServersList(): CustomMCPServer[] {
   return loadCustomServers()
 }
-
-// ─── MCP Server Logs ─────────────────────────────────────────────────────────
 
 export function getServerLogs(serverId: string): MCPLogEntry[] {
   const client = mcpClientManager.get(serverId)
@@ -796,17 +742,12 @@ export function getAllServerLogs(): Record<string, MCPLogEntry[]> {
   return result
 }
 
-// ─── Persistence ────────────────────────────────────────────────────────────
-
 function getMCPStorePath(): string {
   return path.join(storeDir, 'mcp-servers.json')
 }
 
-// ─── Config Encryption Helpers ──────────────────────────────────────────────
-
 function encryptConfigValue(value: string): string {
   if (!safeStorage.isEncryptionAvailable()) {
-    // Security: Refuse to store MCP config secrets in plaintext
     console.warn('[Artemis MCP] safeStorage unavailable — refusing to store MCP config value')
     throw new Error('Encryption unavailable: cannot store MCP config secret without OS keychain. Please configure your system credential manager.')
   }
@@ -843,7 +784,6 @@ function loadInstalledServers(): void {
       if (data && typeof data === 'object') {
         for (const [id, stateVal] of Object.entries(data)) {
           const state = stateVal as MCPServerState
-          // Decrypt config values on load
           if (state.config) {
             state.config = decryptConfig(state.config)
           }
@@ -861,7 +801,6 @@ function saveInstalledServers(): void {
     const filePath = getMCPStorePath()
     const data: Record<string, any> = {}
     for (const [id, state] of Array.from(installedServers)) {
-      // Encrypt config values before writing to disk
       data[id] = {
         ...state,
         config: state.config ? encryptConfig(state.config) : {},

@@ -1,22 +1,3 @@
-/**
- * AgentLoop — The autonomous agentic system.
- * 
- * This is the heart of the IDE's AI capabilities. It:
- * 1. Accepts a user task
- * 2. Sends it to the LLM with available tools
- * 3. Automatically executes any tool calls
- * 4. Feeds results back to the model
- * 5. Repeats until the model responds without tool calls
- * 6. Streams all activity to the UI in real-time
- * 
- * CRITICAL: This module is 100% provider-agnostic. It uses only:
- * - UniversalMessage format for conversation
- * - BaseProvider interface for API communication
- * - ToolExecutor for running tools
- * - ConversationManager for history
- * 
- * All provider differences are hidden behind the adapter layer.
- */
 
 import type {
   AgentRequest,
@@ -38,15 +19,11 @@ import { toolExecutor } from '../tools/ToolExecutor'
 import { StreamProcessor } from './StreamParser'
 import { mcpClientManager } from '../../services/mcpClient'
 
-// ─── Types ───────────────────────────────────────────────────────────────────
 
 type EventCallback = (event: AgentEvent) => void
 
-/** Callback that asks the UI for approval before executing a file-modifying tool.
- *  Returns true if approved, false if rejected. */
 export type ToolApprovalCallback = (toolCall: ToolCall) => Promise<boolean>
 
-/** Callback that asks the UI for approval before accessing a path outside the project. */
 export type PathApprovalCallback = (filePath: string, reason: string) => Promise<boolean>
 
 const FILE_MODIFYING_TOOLS = new Set([
@@ -64,9 +41,7 @@ interface HttpResponse {
 type HttpStreamCallback = (data: { type: 'chunk' | 'done' | 'error'; data?: string; status?: number }) => void
 
 interface HttpAdapter {
-  /** Make a non-streaming HTTP request */
   request(url: string, method: string, headers: Record<string, string>, body?: string): Promise<HttpResponse>
-  /** Start a streaming HTTP request. Calls back with chunks. Returns cleanup function. */
   streamRequest(
     url: string,
     method: string,
@@ -76,7 +51,6 @@ interface HttpAdapter {
   ): Promise<{ ok: boolean; status: number; cancel: () => void }>
 }
 
-// ─── Agent Loop ──────────────────────────────────────────────────────────────
 
 export class AgentLoop {
   private httpAdapter: HttpAdapter
@@ -87,12 +61,6 @@ export class AgentLoop {
     this.httpAdapter = httpAdapter
   }
 
-  /**
-   * Run the autonomous agent loop.
-   * 
-   * Streams AgentEvents to the callback in real-time for UI rendering.
-   * Returns the final AgentResponse when complete.
-   */
   async run(request: AgentRequest, onEvent: EventCallback, approvalCallback?: ToolApprovalCallback, pathApprovalCallback?: PathApprovalCallback): Promise<AgentResponse> {
     this.eventSeq = 0
     this.aborted = false
@@ -101,15 +69,12 @@ export class AgentLoop {
 
     const projectPath = request.projectPath
 
-    // Get the correct provider adapter (completely transparent)
     const adapter = ProviderFactory.getAdapter(request.model, request.provider)
 
-    // Resolve tools based on agent mode
     const builtinTools = request.toolNames
       ? toolRegistry.getByNames(request.toolNames)
       : toolRegistry.getToolsForMode(request.agentMode || 'builder')
 
-    // Merge MCP tools from connected servers
     const mcpTools: UniversalToolDefinition[] = mcpClientManager.getAllTools().map(t => ({
       name: t.name,
       description: `[MCP] ${t.description}`,
@@ -117,23 +82,19 @@ export class AgentLoop {
     }))
     const tools = [...builtinTools, ...mcpTools]
 
-    // Initialize conversation
     const conversation = new ConversationManager(request.conversationHistory)
     if (request.model.contextWindow) {
       conversation.setMaxContextTokens(request.model.contextWindow)
     }
 
-    // Add user message
     let userContent = request.userMessage
     if (request.fileContext) {
       userContent += '\n\n' + request.fileContext
     }
     conversation.addUserMessage(userContent)
 
-    // Emit initial thinking event
     this.emit(onEvent, 'thinking', { message: 'Analyzing request and planning approach...' })
 
-    // ─── Main Agent Loop ───────────────────────────────────────────────
     let iteration = 0
     let totalContent = ''
     const allToolResults: ToolResult[] = []
@@ -143,7 +104,6 @@ export class AgentLoop {
       iteration++
       this.emit(onEvent, 'iteration_start', { iteration, maxIterations })
 
-      // Build the completion request (provider-agnostic)
       const supportsTools = request.model.supportsTools !== false
       const completionRequest: CompletionRequest = {
         model: request.model,
@@ -154,7 +114,6 @@ export class AgentLoop {
         stream: true,
       }
 
-      // Stream the LLM response
       let streamResult: {
         content: string
         reasoningContent: string
@@ -176,13 +135,11 @@ export class AgentLoop {
         return this.buildResponse(totalContent, allToolResults, iteration, conversation, false, errorMsg)
       }
 
-      // Handle abort
       if (this.aborted) {
         this.emit(onEvent, 'agent_aborted', { iteration, content: totalContent })
         return this.buildResponse(totalContent, allToolResults, iteration, conversation, true)
       }
 
-      // Handle stream error
       if (streamResult.error) {
         const errorMsg = `[${streamResult.error.type.toUpperCase()}] ${streamResult.error.message}${streamResult.error.details ? '\n' + streamResult.error.details : ''}`
         this.emit(onEvent, 'agent_error', { error: errorMsg, iteration })
@@ -191,7 +148,6 @@ export class AgentLoop {
 
       totalContent += streamResult.content
 
-      // Accumulate actual token usage across iterations
       if (streamResult.usage) {
         if (!totalUsage) {
           totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
@@ -201,15 +157,12 @@ export class AgentLoop {
         totalUsage.totalTokens += streamResult.usage.totalTokens
       }
 
-      // ─── Handle Tool Calls ───────────────────────────────────────────
       if (streamResult.finishReason === 'tool_calls' && streamResult.toolCalls.length > 0) {
-        // Add assistant message with tool calls to conversation
         conversation.addAssistantToolCallMessage(
           streamResult.content,
           streamResult.toolCalls
         )
 
-        // Execute each tool call
         for (const tc of streamResult.toolCalls) {
           this.emit(onEvent, 'tool_call_start', {
             id: tc.id,
@@ -217,7 +170,6 @@ export class AgentLoop {
             arguments: tc.arguments,
           })
 
-          // Check approval for file-modifying tools
           if (approvalCallback && FILE_MODIFYING_TOOLS.has(tc.name)) {
             const approved = await approvalCallback(tc)
             if (!approved) {
@@ -252,7 +204,6 @@ export class AgentLoop {
             durationMs: result.durationMs,
           })
 
-          // Add tool result to conversation
           conversation.addToolResult(result)
         }
 
@@ -262,11 +213,9 @@ export class AgentLoop {
           continuing: true,
         })
 
-        // Continue the loop — model will see tool results and decide next action
         continue
       }
 
-      // ─── No Tool Calls — Agent is Done ───────────────────────────────
       if (streamResult.content) {
         conversation.addAssistantMessage(streamResult.content)
       }
@@ -280,7 +229,6 @@ export class AgentLoop {
       break
     }
 
-    // ─── Safety: Max iterations reached ──────────────────────────────────
     if (iteration >= maxIterations && !this.aborted) {
       const warning = `\n\n[Agent reached maximum iteration limit (${maxIterations}). Stopping.]`
       totalContent += warning
@@ -290,7 +238,6 @@ export class AgentLoop {
       })
     }
 
-    // ─── Final Response ──────────────────────────────────────────────────
     this.emit(onEvent, 'agent_complete', {
       iterations: iteration,
       toolCallsExecuted: allToolResults.length,
@@ -301,21 +248,14 @@ export class AgentLoop {
     return this.buildResponse(totalContent, allToolResults, iteration, conversation, false)
   }
 
-  /**
-   * Abort the current agent run.
-   */
   abort(): void {
     this.aborted = true
   }
 
-  /**
-   * Check if the agent has been aborted.
-   */
   isAborted(): boolean {
     return this.aborted
   }
 
-  // ─── Private: Stream a single LLM completion ────────────────────────────
 
   private async streamCompletion(
     request: CompletionRequest,
@@ -329,12 +269,10 @@ export class AgentLoop {
     usage?: { promptTokens: number; completionTokens: number; totalTokens: number }
     error?: ApiError
   }> {
-    // Build provider-specific request (adapter handles all conversion)
     const url = adapter.buildUrl(request)
     const headers = adapter.buildHeaders(request)
     const body = adapter.buildRequestBody(request)
 
-    // Create stream processor with the correct adapter for normalization
     const processor = new StreamProcessor(adapter)
 
     return new Promise((resolve) => {
@@ -436,7 +374,6 @@ export class AgentLoop {
     })
   }
 
-  // ─── Private: Emit an event to the UI ──────────────────────────────────
 
   private emit(callback: EventCallback, type: AgentEvent['type'], data: Record<string, any>): void {
     callback({
@@ -447,7 +384,6 @@ export class AgentLoop {
     })
   }
 
-  // ─── Private: Build final response ─────────────────────────────────────
 
   private buildResponse(
     content: string,

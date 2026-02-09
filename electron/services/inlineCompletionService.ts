@@ -1,22 +1,3 @@
-/**
- * Inline Completion Service — AI-powered code completions for the editor.
- *
- * Uses a lightweight/fast model to provide ghost-text suggestions.
- * Designed for minimal latency: short prompts, small responses, cancellable.
- *
- * How it avoids excessive API calls:
- * - Frontend debounces 400ms after last keystroke
- * - Requests are cancellable (aborted if user types again)
- * - Only triggers when prefix is >10 chars (not on whitespace/empty lines)
- * - Max 1 concurrent request at a time — previous HTTP request is truly aborted
- * - LRU cache (50 entries) prevents re-requesting identical contexts
- * - Cooldown (500ms) between API calls prevents rapid-fire billing
- * - Prefix trimmed to last 1500 chars to minimize token usage
- * - Suffix trimmed to 500 chars
- * - Responses capped at configurable max_tokens (default 128)
- * - Smart filtering: skips empty lines, closing braces, trivial contexts
- */
-
 import { net } from 'electron'
 
 export interface InlineCompletionRequest {
@@ -44,7 +25,6 @@ const DEFAULT_CONFIG: InlineCompletionConfig = {
   maxTokens: 128,
 }
 
-// Provider base URLs (mirrors zenClient.ts)
 const BASE_URLS: Record<string, string> = {
   zen: 'https://opencode.ai/zen/v1',
   zai: 'https://api.z.ai/api/paas/v4',
@@ -61,7 +41,6 @@ const BASE_URLS: Record<string, string> = {
   ollama: 'http://localhost:11434/v1',
 }
 
-// ─── LRU Cache ──────────────────────────────────────────────────────────────
 const CACHE_MAX = 50
 
 interface CacheEntry {
@@ -78,12 +57,10 @@ class LRUCache {
   get(key: string): string | undefined {
     const entry = this.map.get(key)
     if (!entry) return undefined
-    // Expire after 60s — code context changes fast
     if (Date.now() - entry.timestamp > 60_000) {
       this.map.delete(key)
       return undefined
     }
-    // Move to end (most recently used)
     this.map.delete(key)
     this.map.set(key, entry)
     return entry.completion
@@ -92,7 +69,6 @@ class LRUCache {
   set(key: string, completion: string) {
     if (this.map.has(key)) this.map.delete(key)
     this.map.set(key, { completion, timestamp: Date.now() })
-    // Evict oldest if over capacity
     if (this.map.size > this.maxSize) {
       const oldest = this.map.keys().next().value
       if (oldest !== undefined) this.map.delete(oldest)
@@ -102,23 +78,20 @@ class LRUCache {
   clear() { this.map.clear() }
 }
 
-// ─── Smart Filtering ────────────────────────────────────────────────────────
-// Lines where inline completion is almost never useful
 const SKIP_LINE_PATTERNS = [
-  /^\s*$/, // empty / whitespace-only
-  /^\s*[}\])\;]+\s*$/, // closing braces/brackets/parens only
-  /^\s*\/\//, // single-line comment
-  /^\s*\/?\*/, // block comment line
-  /^\s*#/, // hash comment (Python, Ruby, etc.)
-  /^\s*import\s/, // import statement (user usually knows what to import)
-  /^\s*from\s.*import\s/, // Python from-import
+  /^\s*$/,
+  /^\s*[}\])\;]+\s*$/,
+  /^\s*\/\//,
+  /^\s*\/\?\*/,
+  /^\s*#/,
+  /^\s*import\s/,
+  /^\s*from\s.*import\s/,
 ]
 
 function shouldSkipLine(line: string): boolean {
   return SKIP_LINE_PATTERNS.some(p => p.test(line))
 }
 
-// ─── Context Trimming ───────────────────────────────────────────────────────
 const MAX_PREFIX_CHARS = 1500
 const MAX_SUFFIX_CHARS = 500
 
@@ -133,7 +106,6 @@ class InlineCompletionService {
 
   setConfig(config: Partial<InlineCompletionConfig>) {
     this.config = { ...this.config, ...config }
-    // Clear cache when model/provider changes to avoid stale completions
     if (config.provider || config.model) this.cache.clear()
   }
 
@@ -170,23 +142,13 @@ class InlineCompletionService {
     return headers
   }
 
-  /**
-   * Build a cache key from the request context.
-   * Uses a hash of the trimmed prefix tail + suffix head + language + model.
-   */
   private cacheKey(prefix: string, suffix: string, language: string): string {
-    // Use last 200 chars of prefix + first 100 chars of suffix as the cache key.
-    // This is enough to identify the exact cursor position context while keeping keys small.
     const pTail = prefix.slice(-200)
     const sHead = suffix.slice(0, 100)
     return `${this.config.model}:${language}:${pTail}:${sHead}`
   }
 
-  /**
-   * Request an inline completion from the configured AI model.
-   */
   async complete(request: InlineCompletionRequest): Promise<InlineCompletionResult> {
-    // Cancel any in-flight request (truly aborts the HTTP call)
     if (this.currentRequest) {
       this.currentRequest.cancel()
       this.currentRequest = null
@@ -206,24 +168,20 @@ class InlineCompletionService {
       return { completion: '' }
     }
 
-    // Smart filtering: skip lines where completions are rarely useful
     const lastLine = request.prefix.split('\n').pop() || ''
     if (shouldSkipLine(lastLine)) {
       return { completion: '' }
     }
 
-    // Trim context to reduce token usage
     const prefix = request.prefix.slice(-MAX_PREFIX_CHARS)
     const suffix = request.suffix.slice(0, MAX_SUFFIX_CHARS)
 
-    // Check cache first — avoid duplicate API calls for identical contexts
     const key = this.cacheKey(prefix, suffix, request.language)
     const cached = this.cache.get(key)
     if (cached !== undefined) {
       return { completion: cached }
     }
 
-    // Cooldown: enforce minimum interval between API calls
     const now = Date.now()
     const elapsed = now - this.lastRequestTime
     if (elapsed < InlineCompletionService.COOLDOWN_MS) {
@@ -231,12 +189,10 @@ class InlineCompletionService {
     }
     this.lastRequestTime = now
 
-    // Build the completion prompt — instruct the model to continue the code
     const systemPrompt = `You are an intelligent code completion engine. Complete the code at the cursor position. Output ONLY the completion text — no explanations, no markdown, no code fences, no repeating existing code. Output 1-3 lines maximum. If there is nothing meaningful to complete, output nothing.`
 
     const userPrompt = `Language: ${request.language}\nFile: ${request.filepath}\n\nCode before cursor:\n\`\`\`\n${prefix}\n\`\`\`\n\nCode after cursor:\n\`\`\`\n${suffix}\n\`\`\`\n\nContinue the code from where the cursor is. Output only the completion:`
 
-    // Z.AI GLM models must use the Anthropic-compatible endpoint
     const isZaiGlm = provider === 'zai' && this.config.model.startsWith('glm-')
     let result: InlineCompletionResult
     if (isZaiGlm) {
@@ -247,7 +203,6 @@ class InlineCompletionService {
       result = await this.completeOpenAI(baseUrl, provider, systemPrompt, userPrompt)
     }
 
-    // Cache the result (even empty ones to avoid re-requesting useless contexts)
     if (result.completion !== undefined) {
       this.cache.set(key, result.completion)
     }
@@ -339,7 +294,6 @@ class InlineCompletionService {
       })
 
       const req = net.request({ url, method: 'POST' })
-      // Anthropic-compatible endpoints always need x-api-key + anthropic-version
       const apiKey = this.apiKeys.get(headerProvider) || ''
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
@@ -348,12 +302,10 @@ class InlineCompletionService {
       if (apiKey) headers['x-api-key'] = apiKey
       for (const [k, v] of Object.entries(headers)) req.setHeader(k, v)
 
-      // Wire up real abort so cancelled requests don't waste tokens
       this.currentRequest = {
         cancel: () => { try { req.abort() } catch {} done({ completion: '' }) },
       }
 
-      // Timeout: abort if API doesn't respond within 8s
       const timeout = setTimeout(() => {
         try { req.abort() } catch {}
         done({ completion: '' })
@@ -383,17 +335,14 @@ class InlineCompletionService {
     })
   }
 
-  /** Remove common LLM artifacts from completion text */
   private cleanCompletion(text: string): string {
     let cleaned = text.trim()
-    // Remove markdown code fences
     if (cleaned.startsWith('```')) {
       const lines = cleaned.split('\n')
-      lines.shift() // remove opening ```
+      lines.shift()
       if (lines[lines.length - 1]?.trim() === '```') lines.pop()
       cleaned = lines.join('\n')
     }
-    // Remove leading/trailing backticks
     if (cleaned.startsWith('`') && cleaned.endsWith('`') && !cleaned.includes('\n')) {
       cleaned = cleaned.slice(1, -1)
     }

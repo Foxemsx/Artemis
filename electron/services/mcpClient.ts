@@ -1,17 +1,6 @@
-/**
- * MCP Client — Model Context Protocol client over stdio (JSON-RPC 2.0).
- * 
- * Spawns MCP server processes and communicates via stdin/stdout.
- * Handles tool discovery (tools/list) and execution (tools/call).
- * 
- * Protocol: https://modelcontextprotocol.io/docs/spec
- */
-
 import { spawn, ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
 import path from 'path'
-
-// ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface MCPToolParameter {
   type: string
@@ -55,8 +44,6 @@ export interface MCPLogEntry {
   message: string
 }
 
-// ─── MCP Client ─────────────────────────────────────────────────────────────
-
 export class MCPClient extends EventEmitter {
   private process: ChildProcess | null = null
   private buffer: string = ''
@@ -91,11 +78,7 @@ export class MCPClient extends EventEmitter {
     this._logs = []
   }
 
-  /**
-   * Start the MCP server process and initialize the connection.
-   */
   async connect(command: string, args: string[] = [], env?: Record<string, string>): Promise<void> {
-    // Security: Validate command to prevent injection
     MCPClient.validateSpawnCommand(command)
 
     return new Promise((resolve, reject) => {
@@ -109,14 +92,11 @@ export class MCPClient extends EventEmitter {
       try {
         const processEnv = { ...process.env, ...env }
 
-        // Resolve command to full path on Windows instead of using shell:true
         let spawnCommand = process.platform === 'win32'
           ? MCPClient.resolveCommand(command)
           : command
         let spawnArgs = args
 
-        // On Windows, .cmd/.bat files are batch scripts and cannot be spawned
-        // directly without a shell — route them through cmd.exe /c
         if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(spawnCommand)) {
           spawnArgs = ['/c', spawnCommand, ...args]
           spawnCommand = process.env.ComSpec || 'cmd.exe'
@@ -153,7 +133,6 @@ export class MCPClient extends EventEmitter {
           settle(reject, new Error(`MCP server exited with code ${code} during connect`))
         })
 
-        // Send initialize immediately — the 30s request timeout handles slow starts
         this.initialize()
           .then(() => this.discoverTools())
           .then(() => {
@@ -171,56 +150,37 @@ export class MCPClient extends EventEmitter {
     })
   }
 
-  /**
-   * Security: Validate that a spawn command is safe.
-   * Blocks shell metacharacters, path traversal, and dangerous executables.
-   */
   private static validateSpawnCommand(command: string): void {
     if (!command || typeof command !== 'string') {
       throw new Error('Invalid MCP server command: must be a non-empty string')
     }
-    // Block shell metacharacters
     if (/[;&|`$(){}\[\]<>\n\r]/.test(command)) {
       throw new Error('Invalid MCP server command: contains dangerous shell characters')
     }
-    // Block path traversal
     if (command.includes('..')) {
       throw new Error('Invalid MCP server command: path traversal not allowed')
     }
   }
 
-  /**
-   * Resolve a command name to its full path on Windows.
-   * This avoids needing shell:true for commands like 'npx', 'node', etc.
-   */
   private static resolveCommand(command: string): string {
-    // If it's already an absolute path, use it directly
     if (path.isAbsolute(command)) return command
 
-    // On Windows, .cmd/.bat/.exe are the executable forms — try them BEFORE bare names
-    // (e.g., 'npx' without extension is a shell script that can't be spawned without a shell)
     const cmdExtensions = ['.cmd', '.bat', '.exe']
     const pathDirs = (process.env.PATH || '').split(path.delimiter)
     const fsModule = require('fs')
 
     for (const dir of pathDirs) {
-      // Try extensions first — these are directly executable on Windows
       for (const ext of cmdExtensions) {
         const withExt = path.join(dir, command + ext)
         try { if (fsModule.existsSync(withExt)) return withExt } catch {}
       }
-      // Fall back to exact name (for .exe files already named correctly, etc.)
       const exact = path.join(dir, command)
       try { if (fsModule.existsSync(exact)) return exact } catch {}
     }
 
-    // Fall back to the raw command — spawn will throw ENOENT if not found
     return command
   }
 
-  /**
-   * Send the initialize handshake.
-   */
   private async initialize(): Promise<void> {
     const result = await this.sendRequest('initialize', {
       protocolVersion: '2024-11-05',
@@ -235,13 +195,9 @@ export class MCPClient extends EventEmitter {
       throw new Error('MCP server did not respond to initialize')
     }
 
-    // Send initialized notification (no response expected)
     this.sendNotification('notifications/initialized', {})
   }
 
-  /**
-   * Discover available tools from the server.
-   */
   private async discoverTools(): Promise<void> {
     const result = await this.sendRequest('tools/list', {})
     if (result?.tools && Array.isArray(result.tools)) {
@@ -257,9 +213,6 @@ export class MCPClient extends EventEmitter {
     }
   }
 
-  /**
-   * Call a tool on the MCP server.
-   */
   async callTool(name: string, args: Record<string, any>): Promise<MCPToolCallResult> {
     if (!this._connected || !this.process) {
       throw new Error(`MCP server ${this._serverId} is not connected`)
@@ -280,9 +233,6 @@ export class MCPClient extends EventEmitter {
     }
   }
 
-  /**
-   * Disconnect and kill the server process.
-   */
   disconnect(): void {
     this._connected = false
     this._tools = []
@@ -291,16 +241,13 @@ export class MCPClient extends EventEmitter {
     if (this.process) {
       try {
         this.process.kill('SIGTERM')
-        // Force kill after 3 seconds
         setTimeout(() => {
-          try { this.process?.kill('SIGKILL') } catch { /* already dead */ }
+          try { this.process?.kill('SIGKILL') } catch { }
         }, 3000)
-      } catch { /* already dead */ }
+      } catch { }
       this.process = null
     }
   }
-
-  // ─── JSON-RPC Transport ──────────────────────────────────────────────
 
   private sendRequest(method: string, params: Record<string, any>): Promise<any> {
     return new Promise((resolve, reject) => {
@@ -340,14 +287,11 @@ export class MCPClient extends EventEmitter {
     this.process.stdin.write(JSON.stringify(notification) + '\n')
   }
 
-  // Security: Maximum buffer size (1MB) to prevent unbounded memory growth
-  // if a server streams data without newlines.
   private static MAX_BUFFER_SIZE = 1_048_576
 
   private handleData(data: string): void {
     this.buffer += data
 
-    // Security: Cap buffer size to prevent OOM from malicious/broken servers
     if (this.buffer.length > MCPClient.MAX_BUFFER_SIZE) {
       console.error(`[MCP:${this._serverId}] Buffer overflow (>${MCPClient.MAX_BUFFER_SIZE} bytes) — disconnecting`)
       this.addLog('stderr', `Buffer overflow: server sent >1MB without newline delimiter. Disconnecting.`)
@@ -357,7 +301,6 @@ export class MCPClient extends EventEmitter {
       return
     }
 
-    // Process complete lines (newline-delimited JSON)
     const lines = this.buffer.split('\n')
     this.buffer = lines.pop() || '' // Keep incomplete last line in buffer
 
@@ -368,7 +311,6 @@ export class MCPClient extends EventEmitter {
       try {
         const response = JSON.parse(trimmed) as JsonRpcResponse
         
-        // Handle response to our request
         if (response.id !== undefined && this.pendingRequests.has(response.id)) {
           const pending = this.pendingRequests.get(response.id)!
           this.pendingRequests.delete(response.id)
@@ -380,12 +322,10 @@ export class MCPClient extends EventEmitter {
             pending.resolve(response.result)
           }
         }
-        // Handle server notifications (no id)
         else if (response.id === undefined) {
           this.emit('notification', response)
         }
       } catch {
-        // Not valid JSON, might be debug output from the server
         console.debug(`[MCP:${this._serverId}] Non-JSON output:`, trimmed.slice(0, 200))
       }
     }
@@ -400,19 +340,10 @@ export class MCPClient extends EventEmitter {
   }
 }
 
-// ─── MCP Client Manager ────────────────────────────────────────────────────
-
-/**
- * Manages multiple MCP client connections.
- */
 class MCPClientManager {
   private clients: Map<string, MCPClient> = new Map()
 
-  /**
-   * Connect to an MCP server and return its client.
-   */
   async connect(serverId: string, command: string, args: string[] = [], env?: Record<string, string>): Promise<MCPClient> {
-    // Disconnect existing if any
     this.disconnect(serverId)
 
     const client = new MCPClient(serverId)
@@ -421,25 +352,16 @@ class MCPClientManager {
     return client
   }
 
-  /**
-   * Get a connected client by server ID.
-   */
   get(serverId: string): MCPClient | undefined {
     return this.clients.get(serverId)
   }
 
-  /**
-   * Get all connected clients.
-   */
   getAll(): MCPClient[] {
     const all: MCPClient[] = []
     Array.from(this.clients.values()).forEach(c => { if (c.connected) all.push(c) })
     return all
   }
 
-  /**
-   * Get all tools from all connected servers, prefixed with server ID.
-   */
   getAllTools(): Array<MCPToolDefinition & { serverId: string; originalName: string }> {
     const tools: Array<MCPToolDefinition & { serverId: string; originalName: string }> = []
     Array.from(this.clients.values()).forEach(client => {
@@ -456,11 +378,7 @@ class MCPClientManager {
     return tools
   }
 
-  /**
-   * Call a tool by its prefixed name.
-   */
   async callTool(prefixedName: string, args: Record<string, any>): Promise<string> {
-    // Find the matching client and original tool name
     const clients = Array.from(this.clients.values())
     for (let ci = 0; ci < clients.length; ci++) {
       const client = clients[ci]
@@ -471,7 +389,6 @@ class MCPClientManager {
         const expectedName = `mcp_${client.serverId.replace(/-/g, '_')}_${tool.name}`
         if (expectedName === prefixedName) {
           const result = await client.callTool(tool.name, args)
-          // Extract text content from result
           const textParts = result.content
             .filter(c => c.type === 'text' && c.text)
             .map(c => c.text!)
@@ -486,16 +403,10 @@ class MCPClientManager {
     throw new Error(`MCP tool not found: ${prefixedName}`)
   }
 
-  /**
-   * Check if a tool name belongs to an MCP server.
-   */
   isMCPTool(name: string): boolean {
     return name.startsWith('mcp_')
   }
 
-  /**
-   * Disconnect a specific server.
-   */
   disconnect(serverId: string): void {
     const client = this.clients.get(serverId)
     if (client) {
@@ -504,14 +415,10 @@ class MCPClientManager {
     }
   }
 
-  /**
-   * Disconnect all servers.
-   */
   disconnectAll(): void {
     Array.from(this.clients.values()).forEach(client => client.disconnect())
     this.clients.clear()
   }
 }
 
-// Singleton
 export const mcpClientManager = new MCPClientManager()

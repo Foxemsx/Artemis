@@ -1,10 +1,3 @@
-/**
- * ToolExecutor — Safe execution engine for all tools.
- * 
- * Runs in the Electron main process with full Node.js access.
- * Every tool execution is wrapped in try/catch with timeout handling.
- * Results are always returned (never thrown) so the agent can recover.
- */
 
 import fs from 'fs'
 import path from 'path'
@@ -15,7 +8,6 @@ import { lintFile, formatLintForAgent } from '../../services/linterService'
 import { fetchUrl, formatFetchForAgent } from '../../services/urlFetchService'
 import { mcpClientManager } from '../../services/mcpClient'
 
-// ─── Configuration ───────────────────────────────────────────────────────────
 
 const COMMAND_TIMEOUT_MS = 60_000
 const MAX_OUTPUT_LENGTH = 50_000
@@ -29,24 +21,20 @@ const IGNORE_DIRS = new Set([
   'dist-electron', '.svelte-kit', '.nuxt',
 ])
 
-// ─── Path Safety ─────────────────────────────────────────────────────────────
 
 type PathApprovalCallback = (filePath: string, reason: string) => Promise<boolean>
 
 function validatePath(filePath: string, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
-  // Security: Block UNC paths and Windows extended paths that could bypass checks
   if (filePath.startsWith('\\\\') || filePath.startsWith('//') || filePath.startsWith('\\?\\')) {
     throw new Error(`Access denied: UNC or extended paths are not allowed`)
   }
 
   const resolved = path.resolve(filePath)
 
-  // Security: Block resolved UNC paths
   if (resolved.startsWith('\\\\') || resolved.startsWith('//')) {
     throw new Error(`Access denied: UNC paths are not allowed`)
   }
 
-  // Always block obvious dangerous system paths (case-insensitive)
   const dangerous = ['C:\\Windows', 'C:\\Program Files', '/usr', '/etc', '/bin', '/sbin', '/lib', '/lib64', '/sys', '/proc', '/dev']
   for (const d of dangerous) {
     if (resolved.toLowerCase().startsWith(d.toLowerCase())) {
@@ -54,16 +42,13 @@ function validatePath(filePath: string, projectPath?: string, onPathApproval?: P
     }
   }
 
-  // If project path is set, enforce containment with case-insensitive comparison
   if (projectPath) {
     const resolvedProject = path.resolve(projectPath)
     const normalizedResolved = resolved.toLowerCase()
     const normalizedProject = resolvedProject.toLowerCase()
     const projectPrefix = normalizedProject + path.sep.toLowerCase()
     
-    // Check if path is within project directory (case-insensitive)
     if (!normalizedResolved.startsWith(projectPrefix) && normalizedResolved !== normalizedProject) {
-      // Path is outside project - ask for approval if callback provided
       if (onPathApproval) {
         return onPathApproval(resolved, `Path is outside the project directory (${resolvedProject})`)
           .then(approved => {
@@ -81,7 +66,6 @@ function validatePath(filePath: string, projectPath?: string, onPathApproval?: P
   return Promise.resolve(resolved)
 }
 
-// ─── Tool Implementations ────────────────────────────────────────────────────
 
 async function toolReadFile(args: Record<string, any>, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
   const filePath = await validatePath(args.path, projectPath, onPathApproval)
@@ -98,16 +82,13 @@ async function toolReadFile(args: Record<string, any>, projectPath?: string, onP
 
 async function toolWriteFile(args: Record<string, any>, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
   const filePath = await validatePath(args.path, projectPath, onPathApproval)
-  // Ensure parent directory exists
   const dir = path.dirname(filePath)
   await fs.promises.mkdir(dir, { recursive: true })
-  // Atomic write: write to temp file then rename
   const tmpPath = filePath + '.tmp.' + Date.now()
   try {
     await fs.promises.writeFile(tmpPath, args.content, 'utf-8')
     await fs.promises.rename(tmpPath, filePath)
   } catch (err) {
-    // Clean up temp file on failure
     try { await fs.promises.unlink(tmpPath) } catch {}
     throw err
   }
@@ -119,7 +100,6 @@ async function toolStrReplace(args: Record<string, any>, projectPath?: string, o
   const content = await fs.promises.readFile(filePath, 'utf-8')
 
   if (!content.includes(args.old_str)) {
-    // Provide helpful context for debugging
     const lines = content.split('\n').length
     throw new Error(
       `Could not find the specified text in ${filePath} (${lines} lines). ` +
@@ -127,7 +107,6 @@ async function toolStrReplace(args: Record<string, any>, projectPath?: string, o
     )
   }
 
-  // Check for multiple occurrences
   const occurrences = content.split(args.old_str).length - 1
   if (occurrences > 1) {
     throw new Error(
@@ -158,23 +137,20 @@ async function toolListDirectory(args: Record<string, any>, projectPath?: string
 async function toolSearchFiles(args: Record<string, any>, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
   const searchPath = await validatePath(args.path, projectPath, onPathApproval)
 
-  // Try ripgrep first — orders of magnitude faster for large codebases
   try {
     const rgResult = await searchWithRipgrep(args.pattern, searchPath, args.include)
     if (rgResult !== null) return rgResult
   } catch {
-    // ripgrep not available or failed — fall back to JS implementation
   }
 
   return searchWithJS(args, searchPath)
 }
 
-// ─── Ripgrep-based search (fast path) ─────────────────────────────────────────
 
-let ripgrepAvailable: boolean | null = null // null = unknown, lazy-detected
+
+let ripgrepAvailable: boolean | null = null
 
 async function searchWithRipgrep(pattern: string, searchPath: string, include?: string): Promise<string | null> {
-  // Lazy-detect ripgrep availability
   if (ripgrepAvailable === false) return null
 
   return new Promise((resolve) => {
@@ -188,12 +164,10 @@ async function searchWithRipgrep(pattern: string, searchPath: string, include?: 
       '-i', // case-insensitive to match JS behavior
     ]
 
-    // Add glob filter if specified
     if (include) {
       rgArgs.push('--glob', include)
     }
 
-    // Add ignore patterns
     for (const dir of Array.from(IGNORE_DIRS)) {
       rgArgs.push('--glob', `!${dir}`)
     }
@@ -206,7 +180,6 @@ async function searchWithRipgrep(pattern: string, searchPath: string, include?: 
 
     rg.stdout.on('data', (data: Buffer) => {
       stdout += data.toString()
-      // Cap output to avoid memory issues
       if (stdout.length > MAX_OUTPUT_LENGTH) {
         rg.kill()
       }
@@ -217,24 +190,20 @@ async function searchWithRipgrep(pattern: string, searchPath: string, include?: 
     })
 
     rg.on('error', () => {
-      // rg binary not found
       ripgrepAvailable = false
       resolve(null)
     })
 
     rg.on('close', (code) => {
-      if (ripgrepAvailable === false) return // already resolved via error
 
       ripgrepAvailable = true
 
       if (code === 1) {
-        // rg exit code 1 = no matches
         resolve('No matches found.')
         return
       }
 
       if (code !== 0 && code !== 1) {
-        // Unexpected error — fall back to JS
         resolve(null)
         return
       }
@@ -245,9 +214,7 @@ async function searchWithRipgrep(pattern: string, searchPath: string, include?: 
         return
       }
 
-      // Truncate each line's match text to 200 chars
       const formatted = lines.slice(0, MAX_SEARCH_RESULTS).map(line => {
-        // rg output: filepath:line:text
         const firstColon = line.indexOf(':')
         const secondColon = line.indexOf(':', firstColon + 1)
         if (secondColon === -1) return line.slice(0, 250)
@@ -265,10 +232,8 @@ async function searchWithRipgrep(pattern: string, searchPath: string, include?: 
   })
 }
 
-// ─── JS fallback search (original implementation) ─────────────────────────────
 
 async function searchWithJS(args: Record<string, any>, searchPath: string): Promise<string> {
-  // Security: Validate and compile regex upfront to catch invalid/dangerous patterns early
   const MAX_PATTERN_LENGTH = 500
   if (!args.pattern || typeof args.pattern !== 'string') {
     return 'Error: No search pattern provided'
@@ -281,7 +246,6 @@ async function searchWithJS(args: Record<string, any>, searchPath: string): Prom
   try {
     regex = new RegExp(args.pattern, 'gi')
   } catch (e: any) {
-    // Security: Fall back to literal string search if regex is invalid
     return searchWithJSLiteral(args.pattern, args, searchPath)
   }
 
@@ -304,7 +268,6 @@ async function searchWithJS(args: Record<string, any>, searchPath: string): Prom
           await search(fullPath, depth + 1)
         }
       } else if (entry.isFile()) {
-        // Apply include filter if specified
         if (args.include) {
           const ext = path.extname(entry.name)
           const pattern = args.include.replace('*', '')
@@ -319,15 +282,13 @@ async function searchWithJS(args: Record<string, any>, searchPath: string): Prom
           const lines = content.split('\n')
 
           for (let i = 0; i < lines.length && results.length < MAX_SEARCH_RESULTS; i++) {
-            // Security: Limit line length to prevent catastrophic backtracking
-            const line = lines[i].slice(0, 1000)
+              const line = lines[i].slice(0, 1000)
             if (regex.test(line)) {
               results.push(`${fullPath}:${i + 1}: ${lines[i].trim().slice(0, 200)}`)
             }
             regex.lastIndex = 0
           }
         } catch {
-          // Skip binary/unreadable files
         }
       }
     }
@@ -343,7 +304,6 @@ async function searchWithJS(args: Record<string, any>, searchPath: string): Prom
   return output
 }
 
-/** Security: Safe literal string search fallback when regex compilation fails. */
 async function searchWithJSLiteral(pattern: string, args: Record<string, any>, searchPath: string): Promise<string> {
   const results: string[] = []
   const lowerPattern = pattern.toLowerCase()
@@ -385,10 +345,8 @@ async function searchWithJSLiteral(pattern: string, args: Record<string, any>, s
   return output
 }
 
-// Dangerous shell metacharacters that could enable command injection
 const DANGEROUS_SHELL_CHARS = /[;&|`$(){}[\]\<>\n\r]/
 
-// Parse a command string into [executable, ...args] without using a shell
 function parseCommandTokens(command: string): { exe: string; args: string[] } {
   const tokens: string[] = []
   let current = ''
@@ -411,30 +369,18 @@ function parseCommandTokens(command: string): { exe: string; args: string[] } {
   return { exe: tokens[0], args: tokens.slice(1) }
 }
 
-// Security: Allowlist of executables the agent may invoke.
-// Only well-known dev tools are permitted; anything else is blocked.
 const ALLOWED_EXECUTABLES = new Set([
-  // Package managers & runners
   'npm', 'npx', 'yarn', 'pnpm', 'bun', 'bunx', 'deno', 'node', 'tsx', 'ts-node',
-  // Version control
   'git',
-  // Build tools
   'tsc', 'vite', 'webpack', 'esbuild', 'rollup', 'turbo', 'nx',
-  // Linters & formatters
   'eslint', 'prettier', 'biome',
-  // Language runtimes
   'python', 'python3', 'pip', 'pip3', 'cargo', 'rustc', 'go', 'java', 'javac', 'ruby', 'gem',
-  // Common CLI utilities
   'cat', 'echo', 'ls', 'dir', 'find', 'grep', 'rg', 'sed', 'awk', 'head', 'tail', 'wc',
   'mkdir', 'rm', 'cp', 'mv', 'touch', 'chmod', 'curl', 'wget',
-  // Docker & containers
   'docker', 'docker-compose', 'podman',
-  // Testing
   'jest', 'vitest', 'mocha', 'pytest',
 ])
 
-/** Resolve a bare command name to a full path on Windows, avoiding shell:true.
- *  Finds .cmd/.bat/.exe variants in PATH so spawn() works without a shell. */
 function resolveWindowsCommand(command: string): string {
   if (path.isAbsolute(command)) return command
   const cmdExtensions = ['.cmd', '.bat', '.exe']
@@ -453,17 +399,14 @@ function resolveWindowsCommand(command: string): string {
 async function toolExecuteCommand(args: Record<string, any>, projectPath: string): Promise<string> {
   const cwd = args.cwd || projectPath || '.'
   
-  // Security: Validate command to prevent injection
   if (!args.command || typeof args.command !== 'string') {
     return 'Error: No command provided'
   }
   
-  // Block dangerous characters that could enable command injection
   if (DANGEROUS_SHELL_CHARS.test(args.command)) {
     return `Error: Command contains potentially dangerous characters. Commands should be simple and not include shell metacharacters like ; & | \` $ ( ) etc.`
   }
 
-  // Block Windows environment variable expansion (%VAR%) and caret escapes (^)
   if (process.platform === 'win32' && (/%[^%]+%/.test(args.command) || args.command.includes('^'))) {
     return 'Error: Command contains shell expansion characters that are not allowed.'
   }
@@ -473,14 +416,11 @@ async function toolExecuteCommand(args: Record<string, any>, projectPath: string
     return 'Error: Empty command'
   }
 
-  // Security: Check executable against allowlist
   const exeBasename = path.basename(exe).replace(/\.(cmd|bat|exe|sh)$/i, '').toLowerCase()
   if (!ALLOWED_EXECUTABLES.has(exeBasename)) {
     return `Error: Executable '${exe}' is not in the allowed list. Allowed: ${Array.from(ALLOWED_EXECUTABLES).slice(0, 20).join(', ')}...`
   }
 
-  // Security: Resolve command to full path on Windows to avoid shell:true.
-  // For .cmd/.bat scripts, route through cmd.exe /c (same approach as mcpClient.ts).
   let spawnExe = process.platform === 'win32' ? resolveWindowsCommand(exe) : exe
   let spawnArgs = cmdArgs
   if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(spawnExe)) {
@@ -489,7 +429,6 @@ async function toolExecuteCommand(args: Record<string, any>, projectPath: string
   }
 
   return new Promise<string>((resolve, reject) => {
-    // Security: shell:false — never pass user input through cmd.exe/sh -c
     const child = spawn(spawnExe, spawnArgs, {
       cwd,
       env: { ...process.env },
@@ -571,7 +510,6 @@ async function toolListCodeDefinitions(args: Record<string, any>, projectPath?: 
         definitions.push(`L${lineNum}: ${line.trim()}`)
       }
     } else {
-      // Generic: look for function-like patterns
       if (/^\s*(?:export\s+)?(?:async\s+)?function\s+\w+/.test(line) ||
           /^\s*(?:export\s+)?class\s+\w+/.test(line)) {
         definitions.push(`L${lineNum}: ${line.trim()}`)
@@ -603,7 +541,6 @@ async function toolMoveFile(args: Record<string, any>, projectPath?: string, onP
   const oldPath = await validatePath(args.old_path, projectPath, onPathApproval)
   const newPath = await validatePath(args.new_path, projectPath, onPathApproval)
 
-  // Ensure target directory exists
   const newDir = path.dirname(newPath)
   await fs.promises.mkdir(newDir, { recursive: true })
 
@@ -635,15 +572,8 @@ async function toolFetchUrl(args: Record<string, any>): Promise<string> {
   return formatFetchForAgent(result)
 }
 
-// ─── Tool Executor Class ─────────────────────────────────────────────────────
 
 export class ToolExecutor {
-  /**
-   * Execute a tool call safely. Always returns a ToolResult, never throws.
-   * 
-   * @param onPathApproval - Per-call path approval callback to avoid race conditions
-   *   on the singleton. Each agent run passes its own callback.
-   */
   async execute(toolCall: ToolCall, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<ToolResult> {
     const startTime = Date.now()
 
@@ -667,9 +597,6 @@ export class ToolExecutor {
     }
   }
 
-  /**
-   * Execute multiple tool calls sequentially.
-   */
   async executeAll(toolCalls: ToolCall[], projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<ToolResult[]> {
     const results: ToolResult[] = []
     for (const tc of toolCalls) {
@@ -678,11 +605,7 @@ export class ToolExecutor {
     return results
   }
 
-  /**
-   * Dispatch to the correct tool implementation.
-   */
   private async dispatch(name: string, args: Record<string, any>, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
-    // Route MCP tools to the MCP client manager
     if (name.startsWith('mcp_')) {
       return mcpClientManager.callTool(name, args)
     }
@@ -708,5 +631,4 @@ export class ToolExecutor {
   }
 }
 
-// Singleton
 export const toolExecutor = new ToolExecutor()

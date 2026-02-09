@@ -12,18 +12,15 @@ import { inlineCompletionService } from './services/inlineCompletionService'
 
 type Capability = 'terminal' | 'commands'
 
-// ─── App Identity (must be before app.whenReady) ─────────────────────────
 app.name = 'Artemis IDE'
 if (process.platform === 'win32') {
   app.setAppUserModelId('Artemis IDE')
 }
 
-// Suppress Chrome DevTools Autofill protocol errors
 app.commandLine.appendSwitch('disable-features', 'AutofillServerCommunication,Autofill')
 
 let isQuitting = false
 
-// node-pty is a native module - import with fallback
 let ptyModule: typeof import('node-pty') | null = null
 try {
   ptyModule = require('node-pty')
@@ -31,23 +28,19 @@ try {
   console.error('node-pty failed to load:', e)
 }
 
-// ─── Persistent Store ──────────────────────────────────────────────────────
 const STORE_DIR = path.join(app.getPath('userData'))
 const STORE_PATH = path.join(STORE_DIR, 'artemis-settings.json')
 
-// Keys that contain sensitive data and must be encrypted
 const SENSITIVE_KEY_PREFIXES = ['apiKey:']
 
 function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY_PREFIXES.some(prefix => key.startsWith(prefix))
 }
 
-// Security: Track whether we've already warned about plaintext fallback
 let plaintextWarningShown = false
 
 function encryptValue(value: string): string {
   if (!safeStorage.isEncryptionAvailable()) {
-    // Security: Refuse to store sensitive values in plaintext
     if (!plaintextWarningShown) {
       plaintextWarningShown = true
       console.warn('[Artemis] ⚠ safeStorage encryption NOT available — refusing to store API keys.')
@@ -64,7 +57,6 @@ function encryptValue(value: string): string {
 
 function decryptValue(stored: string): string {
   if (!stored.startsWith('enc:')) {
-    // Legacy plaintext value — return as-is (will be re-encrypted on next save)
     return stored
   }
   if (!safeStorage.isEncryptionAvailable()) {
@@ -94,10 +86,6 @@ function saveStore(data: Record<string, any>) {
 
 let store = loadStore()
 
-// ─── Workspace Trust ─────────────────────────────────────────────────────────
-// Security: VSCode-style workspace trust. Untrusted folders run in restricted mode
-// (read-only, no terminal, no commands, no agent). Trust is granted per-folder
-// and persisted so the user is only prompted once per new workspace.
 let trustedFolders: Set<string> = new Set(
   Array.isArray(store['trustedFolders']) ? store['trustedFolders'] : []
 )
@@ -116,7 +104,6 @@ function grantTrust(folderPath: string): void {
   trustedFolders.add(resolved)
   store['trustedFolders'] = Array.from(trustedFolders)
   saveStore(store)
-  // Auto-grant all capabilities when workspace is trusted
   capabilities.terminal = true
   capabilities.commands = true
 }
@@ -124,7 +111,6 @@ function grantTrust(folderPath: string): void {
 function revokeTrust(folderPath: string): void {
   const resolved = path.resolve(folderPath)
   trustedFolders.delete(resolved)
-  // Also try case-insensitive removal
   const folders = Array.from(trustedFolders)
   for (let i = 0; i < folders.length; i++) {
     if (folders[i].toLowerCase() === resolved.toLowerCase()) {
@@ -133,24 +119,17 @@ function revokeTrust(folderPath: string): void {
   }
   store['trustedFolders'] = Array.from(trustedFolders)
   saveStore(store)
-  // Revoke capabilities
   capabilities.terminal = false
   capabilities.commands = false
 }
 
-// ─── PTY Session Management ────────────────────────────────────────────────
 const sessions = new Map<string, import('node-pty').IPty>()
 const MAX_PTY_SESSIONS = 20
 
-// ─── Main Window ───────────────────────────────────────────────────────────
 let mainWindow: BrowserWindow | null = null
 
-// Security: Track the active project path for FS containment.
-// Destructive FS IPC ops (write, delete, rename) are restricted to this path.
 let activeProjectPath: string | null = null
 
-// Security: Capabilities that enable OS-level actions from the renderer.
-// Disabled by default; auto-granted when workspace is trusted.
 const capabilities: Record<Capability, boolean> = {
   terminal: false,
   commands: false,
@@ -170,8 +149,6 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      // Security: sandbox=true ensures renderer cannot access Node.js even if compromised.
-      // Preload still works because contextBridge/ipcRenderer are sandbox-compatible.
       sandbox: true,
     },
     show: false,
@@ -184,9 +161,6 @@ function createWindow() {
     }
   })
 
-  // ── Navigation Guards ─────────────────────────────────────────────────
-  // Intercept window.open() and <a target="_blank"> — route external URLs
-  // to the system browser instead of spawning rogue Electron windows.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('http://') || url.startsWith('https://')) {
       shell.openExternal(url)
@@ -194,9 +168,6 @@ function createWindow() {
     return { action: 'deny' }
   })
 
-  // Prevent the main window from navigating away from the app (e.g. clicking
-  // a plain <a href="..."> without target="_blank" would replace the entire
-  // renderer with the external page, breaking the app).
   mainWindow.webContents.on('will-navigate', (event, url) => {
     const appOrigin = process.env.VITE_DEV_SERVER_URL || 'file://'
     if (!url.startsWith(appOrigin)) {
@@ -207,14 +178,12 @@ function createWindow() {
     }
   })
 
-  // Load renderer
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
-  // Forward window state events to renderer
   mainWindow.on('maximize', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('window:maximized')
@@ -226,14 +195,11 @@ function createWindow() {
     }
   })
 
-  // Security: Set Content Security Policy headers
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          // Security: script-src omits 'unsafe-inline' in production to block XSS injection.
-          // In dev mode, Vite's HMR requires 'unsafe-inline' so we conditionally include it.
           `default-src 'self' blob: data:; ` +
           `script-src 'self' ${process.env.VITE_DEV_SERVER_URL ? "'unsafe-inline' " : ""}blob:; ` +
           `worker-src 'self' blob:; ` +
@@ -251,7 +217,6 @@ function createWindow() {
   })
 }
 
-// ─── IPC: Window Controls ──────────────────────────────────────────────────
 ipcMain.handle('window:minimize', () => mainWindow?.minimize())
 ipcMain.handle('window:maximize', () => {
   if (mainWindow?.isMaximized()) {
@@ -263,10 +228,8 @@ ipcMain.handle('window:maximize', () => {
 ipcMain.handle('window:close', () => mainWindow?.close())
 ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false)
 
-// ─── IPC: Store ────────────────────────────────────────────────────────────
 ipcMain.handle('store:get', (_e, key: string) => {
   const raw = store[key]
-  // Decrypt sensitive keys on read
   if (isSensitiveKey(key) && typeof raw === 'string' && raw) {
     return decryptValue(raw)
   }
@@ -274,10 +237,8 @@ ipcMain.handle('store:get', (_e, key: string) => {
 })
 
 ipcMain.handle('store:set', (_e, key: string, value: any) => {
-  // Encrypt sensitive keys on write
   if (isSensitiveKey(key) && typeof value === 'string' && value) {
     store[key] = encryptValue(value)
-    // Sync API key to inline completion service so it's available immediately
     const providerMatch = key.match(/^apiKey:(.+)$/)
     if (providerMatch) {
       inlineCompletionService.setApiKey(providerMatch[1], value)
@@ -288,7 +249,6 @@ ipcMain.handle('store:set', (_e, key: string, value: any) => {
   saveStore(store)
 })
 
-// ─── IPC: Store Directory (for UI display) ─────────────────────────────────
 ipcMain.handle('store:getDir', () => {
   return STORE_DIR
 })
@@ -304,11 +264,9 @@ ipcMain.handle('security:getCapabilities', () => {
 ipcMain.handle('security:requestCapability', async (_e, capRaw: string) => {
   const cap = (capRaw || '').toLowerCase() as Capability
   if (cap !== 'terminal' && cap !== 'commands') return false
-  // Capabilities are auto-granted via workspace trust — no OS dialog needed
   return capabilities[cap]
 })
 
-// ─── IPC: Workspace Trust ─────────────────────────────────────────────────────
 ipcMain.handle('trust:check', (_e, folderPath: string) => {
   if (typeof folderPath !== 'string' || !folderPath.trim()) return false
   return isFolderTrusted(folderPath)
@@ -326,11 +284,9 @@ ipcMain.handle('trust:revoke', (_e, folderPath: string) => {
   return true
 })
 
-// ─── IPC: Set Active Project Path (for restored projects) ───────────────────
 ipcMain.handle('project:setPath', (_e, projectPath: string) => {
   if (typeof projectPath === 'string' && projectPath.trim().length > 0) {
     activeProjectPath = path.resolve(projectPath)
-    // Auto-grant capabilities if this folder is already trusted
     if (isFolderTrusted(projectPath)) {
       capabilities.terminal = true
       capabilities.commands = true
@@ -343,7 +299,6 @@ ipcMain.handle('project:setPath', (_e, projectPath: string) => {
   return false
 })
 
-// ─── IPC: Folder Dialog ────────────────────────────────────────────────────
 ipcMain.handle('dialog:openFolder', async () => {
   const result = await dialog.showOpenDialog(mainWindow!, {
     properties: ['openDirectory'],
@@ -353,71 +308,51 @@ ipcMain.handle('dialog:openFolder', async () => {
   if (result.canceled || result.filePaths.length === 0) return null
 
   const folderPath = result.filePaths[0]
-  // Security: Update active project path for FS containment
   activeProjectPath = path.resolve(folderPath)
   return { path: folderPath, name: path.basename(folderPath) }
 })
 
+const DANGEROUS_SHELL_CHARS = /[;&|`$(){}[\]<>\n\r]/
 
-// ─── Input Validation Helper ───────────────────────────────────────────────
-const DANGEROUS_SHELL_CHARS = /[;&|`$(){}[\]\<>\n\r]/
-
-// Security: Allowlist of executables permitted via tools:runCommand IPC.
-// Mirrors the allowlist in ToolExecutor.ts to prevent arbitrary binary execution.
 const ALLOWED_EXECUTABLES = new Set([
-  // Package managers & runners
   'npm', 'npx', 'yarn', 'pnpm', 'bun', 'bunx', 'deno', 'node', 'tsx', 'ts-node',
-  // Version control
   'git',
-  // Build tools
   'tsc', 'vite', 'webpack', 'esbuild', 'rollup', 'turbo', 'nx',
-  // Linters & formatters
   'eslint', 'prettier', 'biome',
-  // Language runtimes (read-only / build use)
   'python', 'python3', 'pip', 'pip3', 'cargo', 'rustc', 'go', 'java', 'javac', 'ruby', 'gem',
-  // Common CLI utilities
   'cat', 'echo', 'ls', 'dir', 'find', 'grep', 'rg', 'sed', 'awk', 'head', 'tail', 'wc',
   'mkdir', 'rm', 'cp', 'mv', 'touch', 'chmod',
-  // Docker & containers
   'docker', 'docker-compose', 'podman',
-  // Testing
   'jest', 'vitest', 'mocha', 'pytest',
 ])
 
 function validateFsPath(filePath: string, operation: string): string {
-  // Validate input type
   if (typeof filePath !== 'string') {
     throw new Error(`Invalid path: expected string, got ${typeof filePath}`)
   }
   
-  // Block empty paths
   if (!filePath || filePath.trim().length === 0) {
     throw new Error('Invalid path: empty path')
   }
   
-  // Block UNC paths
   if (filePath.startsWith('\\\\') || filePath.startsWith('//')) {
     throw new Error('Access denied: UNC paths are not allowed')
   }
   
-  // Block Windows extended paths
   if (filePath.startsWith('\\?\\')) {
     throw new Error('Access denied: Extended paths are not allowed')
   }
   
-  // Block null bytes
   if (filePath.includes('\0')) {
     throw new Error('Access denied: null bytes in path')
   }
   
   const resolved = path.resolve(filePath)
   
-  // Block resolved UNC paths
   if (resolved.startsWith('\\\\') || resolved.startsWith('//')) {
     throw new Error('Access denied: UNC paths are not allowed')
   }
   
-  // Block dangerous system paths (case-insensitive)
   const dangerous = [
     'C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)', 'C:\\ProgramData',
     '/usr', '/etc', '/bin', '/sbin', '/lib', '/lib64', '/sys', '/proc', '/dev',
@@ -431,17 +366,13 @@ function validateFsPath(filePath: string, operation: string): string {
   return resolved
 }
 
-/** Security: Enforce that destructive FS operations stay within the active project directory.
- *  Blocks write/delete/rename to paths outside the project root. */
 function enforceProjectContainment(resolved: string, operation: string): void {
   const normalizedResolved = resolved.toLowerCase()
 
-  // Always allow app userData (settings/state)
   const userDataDir = app.getPath('userData').toLowerCase()
   const userDataPrefix = userDataDir + path.sep.toLowerCase()
   if (normalizedResolved === userDataDir || normalizedResolved.startsWith(userDataPrefix)) return
 
-  // Deny if no project is open yet
   if (!activeProjectPath) {
     throw new Error(`Access denied: cannot ${operation} without an active project directory`)
   }
@@ -453,7 +384,6 @@ function enforceProjectContainment(resolved: string, operation: string): void {
   }
 }
 
-// ─── IPC: File System Operations ───────────────────────────────────────────
 ipcMain.handle('fs:readDir', async (_e, dirPath: string) => {
   try {
     const validatedPath = validateFsPath(dirPath, 'read directory')
@@ -466,7 +396,6 @@ ipcMain.handle('fs:readDir', async (_e, dirPath: string) => {
         type: e.isDirectory() ? 'directory' as const : 'file' as const,
       }))
       .sort((a, b) => {
-        // Directories first, then alphabetical
         if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
         return a.name.localeCompare(b.name)
       })
@@ -514,7 +443,6 @@ ipcMain.handle('fs:stat', async (_e, filePath: string) => {
   }
 })
 
-// ─── IPC: Create Directory ─────────────────────────────────────────────────
 ipcMain.handle('fs:createDir', async (_e, dirPath: string) => {
   try {
     const validatedPath = validateFsPath(dirPath, 'create directory')
@@ -526,7 +454,6 @@ ipcMain.handle('fs:createDir', async (_e, dirPath: string) => {
   }
 })
 
-// ─── IPC: Delete File/Directory ──────────────────────────────────────────
 ipcMain.handle('fs:delete', async (_e, targetPath: string) => {
   try {
     const validatedPath = validateFsPath(targetPath, 'delete')
@@ -543,7 +470,6 @@ ipcMain.handle('fs:delete', async (_e, targetPath: string) => {
   }
 })
 
-// ─── IPC: Rename/Move File ─────────────────────────────────────────────────
 ipcMain.handle('fs:rename', async (_e, oldPath: string, newPath: string) => {
   try {
     const validatedOld = validateFsPath(oldPath, 'rename (source)')
@@ -557,7 +483,6 @@ ipcMain.handle('fs:rename', async (_e, oldPath: string, newPath: string) => {
   }
 })
 
-// ─── IPC: Shell Operations ───────────────────────────────────────────────
 ipcMain.handle('shell:openPath', async (_e, targetPath: string) => {
   try {
     if (typeof targetPath !== 'string' || !targetPath.trim()) {
@@ -583,10 +508,6 @@ ipcMain.handle('shell:openExternal', async (_e, url: string) => {
   }
 })
 
-// ─── IPC: Tool Execution ──────────────────────────────────────────────────
-
-// Security: Parse a command string into [executable, ...args] without using a shell.
-// This avoids shell injection by never passing user input through cmd.exe/sh -c.
 function parseCommand(command: string): { exe: string; args: string[] } {
   const tokens: string[] = []
   let current = ''
@@ -614,22 +535,18 @@ ipcMain.handle('tools:runCommand', async (_e, command: string, cwd: string) => {
     return { stdout: '', stderr: 'Permission denied: command execution is disabled. Enable it when prompted.', exitCode: -1 }
   }
 
-  // Security: Validate command to prevent injection
   if (!command || typeof command !== 'string') {
     return { stdout: '', stderr: 'Invalid command: expected string', exitCode: -1 }
   }
   
-  // Security: Block dangerous shell metacharacters
   if (DANGEROUS_SHELL_CHARS.test(command)) {
     return { stdout: '', stderr: 'Access denied: command contains dangerous characters', exitCode: -1 }
   }
 
-  // Security: Block Windows environment variable expansion (%VAR%) and caret escapes (^)
   if (process.platform === 'win32' && (/%[^%]+%/.test(command) || command.includes('^'))) {
     return { stdout: '', stderr: 'Access denied: command contains shell expansion characters', exitCode: -1 }
   }
   
-  // Security: Block commands that try to access system directories
   const systemPaths = ['C:\\Windows', '/usr', '/etc', '/bin', '/sbin', '/sys', '/proc']
   for (const sysPath of systemPaths) {
     if (command.toLowerCase().includes(sysPath.toLowerCase())) {
@@ -637,7 +554,6 @@ ipcMain.handle('tools:runCommand', async (_e, command: string, cwd: string) => {
     }
   }
 
-  // Security: Validate cwd is a real directory and not a system path
   if (cwd && typeof cwd === 'string') {
     try {
       validateFsPath(cwd, 'execute command in')
@@ -652,14 +568,11 @@ ipcMain.handle('tools:runCommand', async (_e, command: string, cwd: string) => {
     return { stdout: '', stderr: 'Invalid command: empty executable', exitCode: -1 }
   }
 
-  // Security: Check executable against allowlist to prevent arbitrary binary execution
   const exeBasename = path.basename(exe).replace(/\.(cmd|bat|exe|sh)$/i, '').toLowerCase()
   if (!ALLOWED_EXECUTABLES.has(exeBasename)) {
     return { stdout: '', stderr: `Access denied: executable '${exe}' is not in the allowed list`, exitCode: -1 }
   }
 
-  // Security: Block dangerous eval flags for general-purpose runtimes
-  // These flags allow arbitrary code execution: node -e, python -c, etc.
   const RUNTIME_EVAL_FLAGS: Record<string, string[]> = {
     'node': ['-e', '--eval', '--input-type', '-p', '--print'],
     'tsx': ['-e', '--eval'],
@@ -680,7 +593,6 @@ ipcMain.handle('tools:runCommand', async (_e, command: string, cwd: string) => {
   }
   
   return new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
-    // Spawn directly without a shell — prevents all shell injection vectors
     const child = spawn(exe, args, {
       cwd,
       env: { ...process.env },
@@ -700,7 +612,6 @@ ipcMain.handle('tools:runCommand', async (_e, command: string, cwd: string) => {
       if (stderr.length < MAX_STDERR) stderr += data.toString()
     })
     
-    // Timeout after 60 seconds
     const timeout = setTimeout(() => {
       child.kill()
       resolve({ stdout: stdout.slice(0, 50000), stderr: 'Command timed out after 60 seconds', exitCode: -1 })
@@ -722,10 +633,6 @@ ipcMain.handle('tools:runCommand', async (_e, command: string, cwd: string) => {
   })
 })
 
-// ─── IPC: Git Operations (dedicated handler to avoid DANGEROUS_SHELL_CHARS blocking) ──
-// The generic tools:runCommand blocks $, (), & etc. in the command string for safety,
-// but git commit messages legitimately contain those characters.
-// Since spawn is used with shell: false, the args are safe from injection.
 ipcMain.handle('git:run', async (_e, args: string[], cwd: string) => {
   if (!capabilities.commands) {
     return { stdout: '', stderr: 'Permission denied: command execution is disabled.', exitCode: -1 }
@@ -760,17 +667,15 @@ ipcMain.handle('git:run', async (_e, args: string[], cwd: string) => {
 })
 
 ipcMain.handle('tools:searchFiles', async (_e, pattern: string, dirPath: string) => {
-  // Security: Validate pattern to prevent ReDoS attacks
   const MAX_PATTERN_LENGTH = 500
   if (!pattern || pattern.length > MAX_PATTERN_LENGTH) {
     return { error: `Invalid search pattern. Must be between 1 and ${MAX_PATTERN_LENGTH} characters.` }
   }
   
-  // Reject patterns that could cause catastrophic backtracking
   const dangerousPatterns = [
-    /\([^)]*\+\+?[^{}]*\)\??[+*]/,  // (a+)+, (a*)+, etc.
-    /\([^)]*\*\+?[^{}]*\)\??[+*]/,  // (a*)*, etc.
-    /\([^)]*\+\+?[^{}]*\)\??\{/,    // Quantified groups with repetition
+    /\([^)]*\+\+?[^{}]*\)\??[+*]/,  
+    /\([^)]*\*\+?[^{}]*\)\??[+*]/,  
+    /\([^)]*\+\+?[^{}]*\)\??\{/,    
   ]
   
   for (const dangerous of dangerousPatterns) {
@@ -803,17 +708,15 @@ ipcMain.handle('tools:searchFiles', async (_e, pattern: string, dirPath: string)
             await searchDir(fullPath, depth + 1)
           }
         } else if (entry.isFile()) {
-          // Skip binary/large files
           try {
             const stat = await fs.promises.stat(fullPath)
-            if (stat.size > 500000) continue // Skip files > 500KB
+            if (stat.size > 500000) continue
           } catch { continue }
           
           try {
             const content = await fs.promises.readFile(fullPath, 'utf-8')
             const lines = content.split('\n')
             
-            // Create regex with timeout protection using try-catch
             let regex: RegExp
             try {
               regex = new RegExp(pattern, 'gi')
@@ -822,7 +725,6 @@ ipcMain.handle('tools:searchFiles', async (_e, pattern: string, dirPath: string)
             }
             
             for (let i = 0; i < lines.length && results.length < maxResults; i++) {
-              // Limit line length to prevent regex performance issues
               const line = lines[i].slice(0, 1000)
               if (regex.test(line)) {
                 results.push({
@@ -831,10 +733,9 @@ ipcMain.handle('tools:searchFiles', async (_e, pattern: string, dirPath: string)
                   text: lines[i].trim().slice(0, 200),
                 })
               }
-              regex.lastIndex = 0 // Reset regex
+              regex.lastIndex = 0
             }
           } catch {
-            // Skip files that can't be read as text
           }
         }
       }
@@ -845,7 +746,6 @@ ipcMain.handle('tools:searchFiles', async (_e, pattern: string, dirPath: string)
   return results
 })
 
-// ─── IPC: Session Management (PTY for regular terminal) ────────────────────
 ipcMain.handle('session:create', (_event, { id, cwd }: { id: string; cwd: string }) => {
   if (!capabilities.terminal) {
     return { error: 'Permission denied: terminal is disabled. Enable it when prompted.' }
@@ -855,12 +755,10 @@ ipcMain.handle('session:create', (_event, { id, cwd }: { id: string; cwd: string
     return { error: 'Terminal engine (node-pty) is not available. Please reinstall dependencies.' }
   }
 
-  // Safety: Enforce maximum concurrent session limit to prevent resource exhaustion
   if (sessions.size >= MAX_PTY_SESSIONS) {
     return { error: `Maximum terminal sessions reached (${MAX_PTY_SESSIONS}). Close an existing terminal first.` }
   }
 
-  // Security: Validate cwd to prevent PTY sessions in arbitrary directories
   try {
     validateFsPath(cwd, 'create terminal session in')
     enforceProjectContainment(path.resolve(cwd), 'create terminal session in')
@@ -921,8 +819,6 @@ ipcMain.handle('session:kill', (_e, { id }: { id: string }) => {
   sessions.delete(id)
 })
 
-// ─── IPC: Zen API Proxy (to bypass CORS) ────────────────────────────────────
-// Security: URL allowlist for API proxy requests to prevent SSRF
 const ALLOWED_API_DOMAINS = new Set([
   'opencode.ai', 'api.z.ai',
   'api.openai.com', 'api.anthropic.com',
@@ -943,7 +839,6 @@ function isAllowedApiUrl(url: string): boolean {
   try {
     const parsed = new URL(url)
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false
-    // Check exact domain or subdomain match
     const hostname = parsed.hostname.toLowerCase()
     const domains = Array.from(ALLOWED_API_DOMAINS)
     for (let i = 0; i < domains.length; i++) {
@@ -962,7 +857,6 @@ ipcMain.handle('zen:request', async (_e, options: {
   body?: string
 }) => {
   try {
-    // Security: Validate URL against allowlist to prevent SSRF
     if (!isAllowedApiUrl(options.url)) {
       return {
         ok: false,
@@ -1003,10 +897,8 @@ ipcMain.handle('zen:request', async (_e, options: {
   }
 })
 
-// ─── IPC: MCP Marketplace ───────────────────────────────────────────────────
 mcpService.initMCPService(STORE_DIR)
 
-// Reconnect previously installed MCP servers in the background
 mcpService.reconnectInstalledServers().catch(err => {
   console.warn('[Artemis MCP] Background reconnect failed:', err)
 })
@@ -1019,7 +911,6 @@ ipcMain.handle('mcp:uninstallServer', (_e, serverId: string) =>
 ipcMain.handle('mcp:searchServers', (_e, query: string) =>
   mcpService.searchServers(query))
 
-// Custom MCP servers
 ipcMain.handle('mcp:addCustomServer', (_e, server: any) =>
   mcpService.addCustomServer(server))
 ipcMain.handle('mcp:removeCustomServer', (_e, serverId: string) =>
@@ -1027,7 +918,6 @@ ipcMain.handle('mcp:removeCustomServer', (_e, serverId: string) =>
 ipcMain.handle('mcp:getCustomServers', () =>
   mcpService.getCustomServersList())
 
-// MCP Server Logs
 ipcMain.handle('mcp:getServerLogs', (_e, serverId: string) =>
   mcpService.getServerLogs(serverId))
 ipcMain.handle('mcp:clearServerLogs', (_e, serverId: string) =>
@@ -1035,7 +925,6 @@ ipcMain.handle('mcp:clearServerLogs', (_e, serverId: string) =>
 ipcMain.handle('mcp:getAllServerLogs', () =>
   mcpService.getAllServerLogs())
 
-// Get connected MCP tools for system prompt injection
 ipcMain.handle('mcp:getConnectedTools', () => {
   const tools = mcpClientManager.getAllTools()
   return tools.map((t: any) => ({
@@ -1045,7 +934,6 @@ ipcMain.handle('mcp:getConnectedTools', () => {
   }))
 })
 
-// Get per-server connection status
 ipcMain.handle('mcp:getConnectionStatus', () => {
   const servers = mcpService.getServers()
   return servers
@@ -1062,20 +950,16 @@ ipcMain.handle('mcp:getConnectionStatus', () => {
     })
 })
 
-// ─── IPC: Web Search (DuckDuckGo) ──────────────────────────────────────────
 ipcMain.handle('webSearch:search', async (_e, query: string) => {
   return webSearch(query)
 })
 
-// ─── IPC: Linter Auto-Fix ──────────────────────────────────────────────────
 ipcMain.handle('linter:lint', async (_e, filePath: string, projectPath: string) => {
   return lintFile(filePath, projectPath)
 })
 
-// ─── IPC: Discord RPC ──────────────────────────────────────────────────────
 ipcMain.handle('discord:toggle', async (_e, enable: boolean) => {
   const result = await discordRPC.toggle(enable)
-  // Persist Discord RPC enabled state so it survives restart
   store['discordRpcEnabled'] = enable
   saveStore(store)
   return result
@@ -1087,16 +971,11 @@ ipcMain.handle('discord:updatePresence', async (_e, fileName?: string, language?
 ipcMain.handle('discord:detectDiscord', () => discordRPC.detectDiscord())
 ipcMain.handle('discord:setDebug', (_e, enabled: boolean) => discordRPC.setDebugMode(enabled))
 
-// ─── Inline Code Completion (AI Ghost Text) ──────────────────────────────
-
-// Restore inline completion config (non-sensitive) immediately so IPC handlers work.
-// API key sync is deferred to app.whenReady() where safeStorage is available on Windows.
 ;(() => {
   try {
     const saved = store['inlineCompletionConfig'] as any
     if (saved) {
       inlineCompletionService.setConfig(saved)
-      // Sync non-sensitive settings immediately
       if (saved.provider === 'ollama') {
         const baseUrl = store['baseUrl:ollama'] as string
         if (baseUrl) inlineCompletionService.setBaseUrl('ollama', baseUrl)
@@ -1120,11 +999,9 @@ ipcMain.handle('inlineCompletion:getConfig', () => {
 
 ipcMain.handle('inlineCompletion:setConfig', async (_e, config) => {
   inlineCompletionService.setConfig(config)
-  // Persist config
   store['inlineCompletionConfig'] = inlineCompletionService.getConfig()
   saveStore(store)
 
-  // Sync API key from the main key store if provider changed
   if (config.provider) {
     const keyStoreKey = `apiKey:${config.provider}`
     const encryptedKey = store[keyStoreKey]
@@ -1136,7 +1013,6 @@ ipcMain.handle('inlineCompletion:setConfig', async (_e, config) => {
         console.error('[InlineCompletion] Failed to decrypt API key on config change:', err)
       }
     }
-    // Sync custom base URL for Ollama
     if (config.provider === 'ollama') {
       const baseUrl = store['baseUrl:ollama'] as string
       if (baseUrl) inlineCompletionService.setBaseUrl('ollama', baseUrl)
@@ -1144,9 +1020,6 @@ ipcMain.handle('inlineCompletion:setConfig', async (_e, config) => {
   }
 })
 
-// ─── IPC: Fetch Models for a Provider ──────────────────────────────────────
-// Used by Settings to populate model dropdowns (e.g. OpenRouter, Z.AI).
-// Decrypts the API key from the store and hits the provider's /models endpoint.
 ipcMain.handle('inlineCompletion:fetchModels', async (_e, providerId: string) => {
   const PROVIDER_BASE_URLS: Record<string, string> = {
     zen: 'https://opencode.ai/zen/v1',
@@ -1169,7 +1042,6 @@ ipcMain.handle('inlineCompletion:fetchModels', async (_e, providerId: string) =>
     const baseUrl = customUrl || PROVIDER_BASE_URLS[providerId] || ''
     if (!baseUrl) return { models: [], error: 'Unknown provider' }
 
-    // Decrypt the API key
     let apiKey = ''
     const encKey = store[`apiKey:${providerId}`]
     if (encKey) {
@@ -1224,17 +1096,11 @@ ipcMain.handle('inlineCompletion:fetchModels', async (_e, providerId: string) =>
   }
 })
 
-// ─── Agent API System ─────────────────────────────────────────────────────
-// Register the new provider-agnostic agent IPC handlers.
-// This wires up: agent:run, agent:abort, agent:getTools, agent:executeTool,
-// agent:httpRequest, agent:httpStream, and agent:activeRuns.
 registerAgentIPC(() => mainWindow)
 
-// ─── App Lifecycle ─────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
   createWindow()
 
-  // Sync inline completion API key now that safeStorage is available (Windows requires app ready)
   try {
     const inlineConfig = store['inlineCompletionConfig'] as any
     if (inlineConfig?.provider && inlineConfig.provider !== 'ollama') {
@@ -1248,7 +1114,6 @@ app.whenReady().then(async () => {
     console.error('[InlineCompletion] Failed to sync API key on ready:', err)
   }
 
-  // Restore Discord RPC if it was enabled before restart
   if (store['discordRpcEnabled'] === true) {
     console.log('[Artemis] Restoring Discord RPC from saved state...')
     discordRPC.toggle(true).catch((err) => {
@@ -1260,30 +1125,24 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   isQuitting = true
 
-  // Kill all PTY sessions FIRST to prevent data events to destroyed window
   for (const [_id, session] of Array.from(sessions)) {
     try { session.kill() } catch {}
   }
   sessions.clear()
 
-  // Graceful shutdown: disconnect all MCP servers to prevent orphan processes
   mcpClientManager.disconnectAll()
 
-  // Disconnect Discord RPC
   discordRPC.disconnect()
 })
 
 app.on('window-all-closed', () => {
-  // Kill all PTY sessions
   for (const [_id, session] of Array.from(sessions)) {
     try { session.kill() } catch {}
   }
   sessions.clear()
 
-  // Disconnect all MCP servers to prevent orphan processes
   mcpClientManager.disconnectAll()
 
-  // Disconnect Discord RPC
   discordRPC.disconnect()
 
   if (process.platform !== 'darwin') app.quit()
