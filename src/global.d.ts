@@ -109,6 +109,10 @@ interface ArtemisAPI {
     onExit: (id: string, callback: (code: number) => void) => () => void
   }
 
+  project: {
+    setPath: (projectPath: string) => Promise<boolean>
+  }
+
   dialog: {
     openFolder: () => Promise<{ path: string; name: string } | null>
   }
@@ -118,6 +122,17 @@ interface ArtemisAPI {
     set: (key: string, value: any) => Promise<void>
     getDir: () => Promise<string>
     isEncrypted: () => Promise<boolean>
+  }
+
+  security: {
+    getCapabilities: () => Promise<{ terminal: boolean; commands: boolean }>
+    requestCapability: (capability: 'terminal' | 'commands') => Promise<boolean>
+  }
+
+  trust: {
+    check: (folderPath: string) => Promise<boolean>
+    grant: (folderPath: string) => Promise<boolean>
+    revoke: (folderPath: string) => Promise<boolean>
   }
 
   window: {
@@ -149,6 +164,10 @@ interface ArtemisAPI {
     searchFiles: (pattern: string, dirPath: string) => Promise<{ file: string; line: number; text: string }[]>
   }
 
+  git: {
+    run: (args: string[], cwd: string) => Promise<{ stdout: string; stderr: string; exitCode: number }>
+  }
+
   mcp: {
     getServers: () => Promise<any[]>
     installServer: (serverId: string, config?: Record<string, any>) => Promise<{ success: boolean; serverId: string; error?: string }>
@@ -178,6 +197,12 @@ interface ArtemisAPI {
     updatePresence: (fileName?: string, language?: string, projectName?: string) => Promise<void>
     detectDiscord: () => Promise<boolean>
     setDebug: (enabled: boolean) => Promise<void>
+  }
+
+  inlineCompletion: {
+    complete: (request: { prefix: string; suffix: string; language: string; filepath: string }) => Promise<{ completion: string } | null>
+    getConfig: () => Promise<{ enabled: boolean; provider: string; model: string; maxTokens: number }>
+    setConfig: (config: { enabled?: boolean; provider?: string; model?: string; maxTokens?: number }) => Promise<void>
   }
 
   agent: {

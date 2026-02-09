@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import {
   Plus, X, Copy, FolderOpen, MessageSquare, ChevronDown, ChevronRight,
   Circle, Info, Cpu, DollarSign, Zap, Pencil, Trash2, Sparkles, Server,
-  Folder, Minus
+  Folder, Minus, AlertTriangle
 } from 'lucide-react'
 import type { ChatSession, Model, Project, SessionTokenUsage } from '../types'
 import ContextMenu, { type MenuItem } from './ContextMenu'
@@ -443,6 +443,26 @@ export default function Sidebar({
                   </span>
                 )}
               </div>
+            </div>
+          </div>
+        )}
+
+        {activeModel && activeModel.supportsTools === false && (
+          <div
+            className="mx-3 mb-2 rounded-lg p-2 flex items-start gap-2"
+            style={{
+              backgroundColor: 'rgba(251, 146, 60, 0.08)',
+              border: '1px solid rgba(251, 146, 60, 0.15)',
+            }}
+          >
+            <AlertTriangle size={12} style={{ color: 'var(--warning)', flexShrink: 0, marginTop: 1 }} />
+            <div>
+              <span className="text-[10px] font-semibold block" style={{ color: 'var(--warning)' }}>
+                No Tool Support
+              </span>
+              <span className="text-[9px] leading-tight block mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                This model does not support tool calling. Agent features (Builder/Planner) may not work correctly.
+              </span>
             </div>
           </div>
         )}

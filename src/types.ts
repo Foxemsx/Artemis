@@ -1,8 +1,8 @@
 export type Theme = 'dark' | 'light' | 'cyberpunk' | 'nord' | 'monokai' | 'solarized' | 'dracula' | 'rosepine' | 'pine' | 'catppuccin' | 'gruvbox' | 'materialocean' | 'everforest' | 'sakura' | 'beach' | 'space'
-export type ActivityView = 'files' | 'chat' | 'terminal' | 'settings' | 'problems' | 'search' | 'mcp'
+export type ActivityView = 'files' | 'chat' | 'terminal' | 'settings' | 'problems' | 'search' | 'mcp' | 'git'
 export type AgentMode = 'builder' | 'planner' | 'chat'
 export type EditApprovalMode = 'allow-all' | 'session-only' | 'ask'
-export type AIProvider = 'zen' | 'zai'
+export type AIProvider = 'zen' | 'zai' | 'anthropic' | 'openai' | 'openrouter' | 'moonshot' | 'google' | 'deepseek' | 'groq' | 'mistral' | 'perplexity' | 'synthetic' | 'ollama'
 
 export interface Project {
   id: string
@@ -56,6 +56,7 @@ export interface MessagePart {
   thinking?: {
     steps: AgentStep[]
     isComplete: boolean
+    duration?: number
   }
   reasoning?: {
     content: string
@@ -76,6 +77,7 @@ export interface AgentStep {
     output: string
   }
   timestamp: number
+  duration?: number
 }
 
 export interface ChatMessage {
@@ -105,6 +107,7 @@ export interface Model {
   name: string
   providerId: string
   providerName: string
+  aiProvider?: AIProvider
   maxTokens?: number
   contextWindow?: number
   pricing?: {
@@ -113,12 +116,14 @@ export interface Model {
   }
   free?: boolean
   description?: string
+  supportsTools?: boolean
 }
 
 export interface SessionTokenUsage {
   promptTokens: number
   completionTokens: number
   totalTokens: number
+  estimatedCost: number
 }
 
 export interface PtySession {

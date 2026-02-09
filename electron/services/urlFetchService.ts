@@ -8,6 +8,8 @@
  * Privacy-first: No tracking, no API keys, direct fetch only.
  */
 
+import dns from 'dns'
+
 export interface FetchResult {
   url: string
   title: string
@@ -86,6 +88,100 @@ async function tryFetch(url: string, headers: Record<string, string>, timeoutMs:
  * 2. Retry with different User-Agent on 403
  * 3. Fall back to Google Cache / reader-mode URL patterns
  */
+/**
+ * Security: Check if a hostname resolves to a private/internal IP to prevent SSRF.
+ * Blocks RFC1918, loopback, link-local, and cloud metadata endpoints.
+ */
+function isPrivateHostname(hostname: string): boolean {
+  const lower = hostname.toLowerCase()
+  // Block common cloud metadata endpoints
+  if (lower === 'metadata.google.internal' || lower === 'metadata.google.com') return true
+  // Block numeric IP ranges: loopback, RFC1918, link-local, carrier-grade NAT
+  const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (ipv4Match) {
+    const [, a, b] = ipv4Match.map(Number)
+    if (a === 127) return true                         // 127.0.0.0/8 loopback
+    if (a === 10) return true                          // 10.0.0.0/8
+    if (a === 172 && b >= 16 && b <= 31) return true   // 172.16.0.0/12
+    if (a === 192 && b === 168) return true            // 192.168.0.0/16
+    if (a === 169 && b === 254) return true            // 169.254.0.0/16 link-local (AWS metadata)
+    if (a === 100 && b >= 64 && b <= 127) return true  // 100.64.0.0/10 carrier-grade NAT
+    if (a === 0) return true                           // 0.0.0.0/8
+  }
+  // Block IPv6 loopback and link-local
+  if (hostname === '::1' || hostname === '[::1]') return true
+  if (lower.startsWith('fe80:') || lower.startsWith('[fe80:')) return true
+  // Block localhost variants
+  if (lower === 'localhost' || lower.endsWith('.localhost')) return true
+  return false
+}
+
+/**
+ * Security: Check if a resolved IP address is private/internal.
+ * Used after DNS resolution to catch DNS rebinding attacks where a public
+ * hostname resolves to a private IP.
+ */
+function isPrivateIP(ip: string): boolean {
+  // IPv4 checks
+  const ipv4Match = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (ipv4Match) {
+    const [, a, b] = ipv4Match.map(Number)
+    if (a === 127) return true                         // 127.0.0.0/8 loopback
+    if (a === 10) return true                          // 10.0.0.0/8
+    if (a === 172 && b >= 16 && b <= 31) return true   // 172.16.0.0/12
+    if (a === 192 && b === 168) return true            // 192.168.0.0/16
+    if (a === 169 && b === 254) return true            // 169.254.0.0/16 link-local (AWS metadata)
+    if (a === 100 && b >= 64 && b <= 127) return true  // 100.64.0.0/10 carrier-grade NAT
+    if (a === 0) return true                           // 0.0.0.0/8
+  }
+  // IPv6 checks
+  if (ip === '::1' || ip === '::') return true
+  const lowerIp = ip.toLowerCase()
+  if (lowerIp.startsWith('fe80:')) return true          // link-local
+  if (lowerIp.startsWith('fc') || lowerIp.startsWith('fd')) return true // unique local
+  return false
+}
+
+/**
+ * Security: Resolve hostname via DNS and verify the resolved IP is not private.
+ * This prevents DNS rebinding attacks where a public hostname resolves to 127.0.0.1 etc.
+ */
+async function checkDNSRebinding(hostname: string): Promise<void> {
+  // Skip check for IP literals — already checked by isPrivateHostname
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) return
+  if (hostname.includes(':')) return // IPv6 literal
+
+  return new Promise((resolve, reject) => {
+    dns.resolve4(hostname, (err, addresses) => {
+      if (err) {
+        // Also try resolve6 before giving up
+        dns.resolve6(hostname, (err6, addresses6) => {
+          if (err6) {
+            // DNS resolution failed — let fetch handle it naturally
+            resolve()
+            return
+          }
+          for (const addr of addresses6) {
+            if (isPrivateIP(addr)) {
+              reject(new Error(`SSRF blocked: ${hostname} resolves to private IPv6 address ${addr}`))
+              return
+            }
+          }
+          resolve()
+        })
+        return
+      }
+      for (const addr of addresses) {
+        if (isPrivateIP(addr)) {
+          reject(new Error(`SSRF blocked: ${hostname} resolves to private IP address ${addr}`))
+          return
+        }
+      }
+      resolve()
+    })
+  })
+}
+
 export async function fetchUrl(url: string): Promise<FetchResult> {
   if (!url || typeof url !== 'string') {
     return { url: url || '', title: '', content: '', contentLength: 0, truncated: false, error: 'Invalid URL' }
@@ -100,6 +196,18 @@ export async function fetchUrl(url: string): Promise<FetchResult> {
     }
   } catch {
     return { url, title: '', content: '', contentLength: 0, truncated: false, error: 'Invalid URL format' }
+  }
+
+  // Security: Block requests to private/internal IPs to prevent SSRF
+  if (isPrivateHostname(parsed.hostname)) {
+    return { url, title: '', content: '', contentLength: 0, truncated: false, error: 'Access denied: requests to private/internal addresses are blocked (SSRF protection)' }
+  }
+
+  // Security: Resolve DNS and check for rebinding to private IPs
+  try {
+    await checkDNSRebinding(parsed.hostname)
+  } catch (dnsErr: any) {
+    return { url, title: '', content: '', contentLength: 0, truncated: false, error: dnsErr.message || 'SSRF protection: DNS check failed' }
   }
 
   try {

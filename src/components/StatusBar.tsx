@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Circle, Sparkles, Cpu, Zap, Activity } from 'lucide-react'
+import { Circle, Sparkles, Cpu, Zap, Activity, AlertTriangle } from 'lucide-react'
 import type { Model, SessionTokenUsage } from '../types'
 import { formatTokenCount, formatCost } from '../lib/formatters'
 
@@ -206,6 +206,16 @@ export default function StatusBar({
           <>
             <Sparkles size={9} style={{ color: 'var(--accent)', opacity: 0.6 }} />
             <span>{activeModel.name}</span>
+            {activeModel.supportsTools === false && (
+              <span
+                className="flex items-center gap-0.5 px-1 py-px rounded text-[9px] font-semibold"
+                style={{ backgroundColor: 'rgba(251, 146, 60, 0.12)', color: 'var(--warning)' }}
+                title="This model does not support tool calling — Agent features may not work"
+              >
+                <AlertTriangle size={8} />
+                No Tools
+              </span>
+            )}
           </>
         )}
       </div>

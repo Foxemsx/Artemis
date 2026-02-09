@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { Plus, X } from 'lucide-react'
 import Terminal from './Terminal'
 import type { Theme, PtySession } from '../types'
@@ -7,16 +7,19 @@ interface Props {
   terminals: PtySession[]
   onNewTerminal: () => void
   onCloseTerminal: (id: string) => void
+  onReorderTerminals?: (fromId: string, toId: string) => void
   theme: Theme
   projectPath: string | null
 }
 
 export default function TerminalPanel({
-  terminals, onNewTerminal, onCloseTerminal, theme, projectPath,
+  terminals, onNewTerminal, onCloseTerminal, onReorderTerminals, theme, projectPath,
 }: Props) {
   const [activeTerminalId, setActiveTerminalId] = useState<string | null>(
     terminals.length > 0 ? terminals[0].id : null
   )
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const dragIdRef = useRef<string | null>(null)
 
   // If no terminals, auto-create one when the panel mounts
   const handleNewTerminal = useCallback(() => {
@@ -56,10 +59,39 @@ export default function TerminalPanel({
           {terminals.map((term) => (
             <div
               key={term.id}
+              draggable
+              onDragStart={(e) => {
+                dragIdRef.current = term.id
+                e.dataTransfer.effectAllowed = 'move'
+              }}
+              onDragOver={(e) => {
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'move'
+                if (dragIdRef.current && dragIdRef.current !== term.id) {
+                  setDragOverId(term.id)
+                }
+              }}
+              onDragLeave={() => {
+                setDragOverId((prev) => (prev === term.id ? null : prev))
+              }}
+              onDrop={(e) => {
+                e.preventDefault()
+                if (dragIdRef.current && dragIdRef.current !== term.id && onReorderTerminals) {
+                  onReorderTerminals(dragIdRef.current, term.id)
+                }
+                dragIdRef.current = null
+                setDragOverId(null)
+              }}
+              onDragEnd={() => {
+                dragIdRef.current = null
+                setDragOverId(null)
+              }}
               className="flex items-center gap-1 px-2 py-0.5 rounded cursor-pointer text-[10px] shrink-0 transition-colors duration-75"
               style={{
                 backgroundColor: term.id === activeTerminalId ? 'var(--bg-hover)' : 'transparent',
                 color: term.id === activeTerminalId ? 'var(--text-primary)' : 'var(--text-muted)',
+                outline: dragOverId === term.id ? '1px dashed var(--accent)' : 'none',
+                opacity: dragIdRef.current === term.id ? 0.5 : 1,
               }}
               onClick={() => setActiveTerminalId(term.id)}
             >

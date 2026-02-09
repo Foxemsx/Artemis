@@ -1,10 +1,136 @@
+import type { AIProvider } from '../types'
+import modelsConfig from './models.json'
 
-const PROVIDER_BASE_URLS = {
+const PROVIDER_BASE_URLS: Record<string, string> = {
   zen: 'https://opencode.ai/zen/v1',
   zai: 'https://api.z.ai/api/paas/v4',
-} as const
+  anthropic: 'https://api.anthropic.com/v1',
+  openai: 'https://api.openai.com/v1',
+  openrouter: 'https://openrouter.ai/api/v1',
+  moonshot: 'https://api.moonshot.cn/v1',
+  google: 'https://generativelanguage.googleapis.com/v1beta/openai',
+  deepseek: 'https://api.deepseek.com',
+  groq: 'https://api.groq.com/openai/v1',
+  mistral: 'https://api.mistral.ai/v1',
+  perplexity: 'https://api.perplexity.ai',
+  synthetic: 'https://api.synthetic.new/openai/v1',
+  ollama: 'http://localhost:11434/v1',
+}
 
-type AIProvider = 'zen' | 'zai'
+export interface ProviderInfo {
+  id: AIProvider
+  name: string
+  description: string
+  docsUrl: string
+  placeholder: string
+  helpUrl: string
+  /** Whether this provider supports listing models via API */
+  supportsModelList: boolean
+  /** Whether a custom base URL is configurable */
+  customBaseUrl?: boolean
+  /** Default endpoint format for this provider */
+  defaultFormat: 'openai-chat' | 'openai-responses' | 'anthropic-messages'
+  /** Validation endpoint path (relative to base URL) */
+  validationPath: string
+}
+
+export const PROVIDER_REGISTRY: ProviderInfo[] = [
+  {
+    id: 'zen', name: 'OpenCode Zen',
+    description: 'GPT, Claude, Gemini, DeepSeek, and 20+ models via OpenCode',
+    docsUrl: 'https://opencode.ai/docs', helpUrl: 'https://opencode.ai',
+    placeholder: 'zen-... or sk-...', supportsModelList: true,
+    defaultFormat: 'openai-chat', validationPath: '/models',
+  },
+  {
+    id: 'zai', name: 'Z.AI (Coding Plan)',
+    description: 'GLM 4.7 via Z.AI Coding Plan (Lite/Pro/Max)',
+    docsUrl: 'https://z.ai/docs', helpUrl: 'https://z.ai/manage-apikey/apikey-list',
+    placeholder: 'your Z.AI API key', supportsModelList: true,
+    defaultFormat: 'openai-chat', validationPath: '/models',
+  },
+  {
+    id: 'anthropic', name: 'Anthropic',
+    description: 'Claude Opus, Sonnet & Haiku — direct from Anthropic',
+    docsUrl: 'https://docs.anthropic.com', helpUrl: 'https://console.anthropic.com/settings/keys',
+    placeholder: 'sk-ant-...', supportsModelList: true,
+    defaultFormat: 'anthropic-messages', validationPath: '/models',
+  },
+  {
+    id: 'openai', name: 'OpenAI',
+    description: 'GPT-4o, o1, o3 and more — direct from OpenAI',
+    docsUrl: 'https://platform.openai.com/docs', helpUrl: 'https://platform.openai.com/api-keys',
+    placeholder: 'sk-...', supportsModelList: true,
+    defaultFormat: 'openai-chat', validationPath: '/models',
+  },
+  {
+    id: 'openrouter', name: 'OpenRouter',
+    description: 'Access 200+ models from every major provider through one API',
+    docsUrl: 'https://openrouter.ai/docs', helpUrl: 'https://openrouter.ai/keys',
+    placeholder: 'sk-or-v1-...', supportsModelList: true,
+    defaultFormat: 'openai-chat', validationPath: '/models',
+  },
+  {
+    id: 'google', name: 'Google Gemini',
+    description: 'Gemini Pro & Flash — 1M+ token context for full codebase reading',
+    docsUrl: 'https://ai.google.dev/docs', helpUrl: 'https://aistudio.google.com/apikey',
+    placeholder: 'AIza...', supportsModelList: true,
+    defaultFormat: 'openai-chat', validationPath: '/models',
+  },
+  {
+    id: 'deepseek', name: 'DeepSeek',
+    description: 'DeepSeek-V3/R1 — SOTA coding performance at very low cost',
+    docsUrl: 'https://api-docs.deepseek.com', helpUrl: 'https://platform.deepseek.com/api_keys',
+    placeholder: 'sk-...', supportsModelList: true,
+    defaultFormat: 'openai-chat', validationPath: '/models',
+  },
+  {
+    id: 'groq', name: 'Groq',
+    description: 'Ultra-low latency inference — ideal for fast agentic loops',
+    docsUrl: 'https://console.groq.com/docs', helpUrl: 'https://console.groq.com/keys',
+    placeholder: 'gsk_...', supportsModelList: true,
+    defaultFormat: 'openai-chat', validationPath: '/models',
+  },
+  {
+    id: 'mistral', name: 'Mistral AI',
+    description: 'Codestral & Mistral Large — strong European AI models',
+    docsUrl: 'https://docs.mistral.ai', helpUrl: 'https://console.mistral.ai/api-keys',
+    placeholder: 'your Mistral API key', supportsModelList: true,
+    defaultFormat: 'openai-chat', validationPath: '/models',
+  },
+  {
+    id: 'moonshot', name: 'Moonshot AI (Kimi)',
+    description: 'Kimi K2.5 — fast and capable from Moonshot AI',
+    docsUrl: 'https://platform.moonshot.cn/docs', helpUrl: 'https://platform.moonshot.cn/console/api-keys',
+    placeholder: 'sk-...', supportsModelList: true,
+    defaultFormat: 'openai-chat', validationPath: '/models',
+  },
+  {
+    id: 'perplexity', name: 'Perplexity',
+    description: 'Specialized for real-time web information and citations',
+    docsUrl: 'https://docs.perplexity.ai', helpUrl: 'https://www.perplexity.ai/settings/api',
+    placeholder: 'pplx-...', supportsModelList: false,
+    defaultFormat: 'openai-chat', validationPath: '/chat/completions',
+  },
+  {
+    id: 'synthetic', name: 'Synthetic',
+    description: 'DeepSeek, Qwen, Kimi, GLM & more — OpenAI-compatible API with subscription tiers',
+    docsUrl: 'https://dev.synthetic.new/docs/api/overview', helpUrl: 'https://dev.synthetic.new/docs/api/overview',
+    placeholder: 'syn_...', supportsModelList: true,
+    defaultFormat: 'openai-chat', validationPath: '/models',
+  },
+  {
+    id: 'ollama', name: 'Ollama (Local)',
+    description: 'Privacy-focused local models — runs on your machine, no API key needed',
+    docsUrl: 'https://github.com/ollama/ollama/tree/main/docs', helpUrl: 'https://ollama.com/download',
+    placeholder: 'no key needed (leave empty)', supportsModelList: true,
+    customBaseUrl: true, defaultFormat: 'openai-chat', validationPath: '/models',
+  },
+]
+
+export function getProviderInfo(id: AIProvider): ProviderInfo | undefined {
+  return PROVIDER_REGISTRY.find(p => p.id === id)
+}
 
 export interface ZenModel {
   id: string
@@ -20,6 +146,7 @@ export interface ZenModel {
   contextWindow?: number
   description?: string
   aiProvider: AIProvider
+  supportsTools?: boolean
 }
 
 interface ZenError {
@@ -28,85 +155,33 @@ interface ZenError {
   details?: string
 }
 
-const MODEL_ENDPOINTS: Record<string, string> = {
-  'gpt-5.2': '/responses',
-  'gpt-5.2-codex': '/responses',
-  'gpt-5.1': '/responses',
-  'gpt-5.1-codex': '/responses',
-  'gpt-5.1-codex-max': '/responses',
-  'gpt-5.1-codex-mini': '/responses',
-  'gpt-5': '/responses',
-  'gpt-5-codex': '/responses',
-  'gpt-5-nano': '/responses',
-  'claude-opus-4-6': '/messages',
-  'claude-opus-4-5': '/messages',
-  'claude-opus-4-1': '/messages',
-  'claude-sonnet-4-5': '/messages',
-  'claude-sonnet-4': '/messages',
-  'claude-haiku-4-5': '/messages',
-  'claude-3-5-haiku': '/messages',
-  'gemini-3-pro': '/models/gemini-3-pro',
-  'gemini-3-flash': '/models/gemini-3-flash',
-  'qwen3-coder': '/chat/completions',
-  'minimax-m2.1': '/chat/completions',
-  'minimax-m2.1-free': '/messages',
-  'glm-4.7': '/chat/completions',
-  'glm-4.7-free': '/chat/completions',
-  'glm-4.6': '/chat/completions',
-  'kimi-k2.5': '/chat/completions',
-  'kimi-k2.5-free': '/chat/completions',
-  'kimi-k2-thinking': '/chat/completions',
-  'kimi-k2': '/chat/completions',
-  'big-pickle': '/chat/completions',
-  'trinity-large-preview-free': '/chat/completions',
-  'alpha-g5': '/chat/completions',
-  'alpha-free': '/chat/completions',
-}
+// Central model registry — edit src/lib/models.json to add/remove models
+const zenModels = modelsConfig.zen as Array<{
+  id: string; name: string; endpoint: string; free: boolean
+  contextWindow: number; maxTokens: number
+  pricing?: { input: number; output: number }; description?: string
+  supports_tools?: boolean
+}>
 
-const FREE_MODELS = [
-  'gpt-5-nano',
-  'minimax-m2.1-free',
-  'glm-4.7-free',
-  'kimi-k2.5-free',
-  'big-pickle',
-  'trinity-large-preview-free',
-  'alpha-free',
-]
+const MODEL_ENDPOINTS: Record<string, string> = Object.fromEntries(
+  zenModels.map(m => [m.id, m.endpoint])
+)
 
-export const MODEL_METADATA: Record<string, { contextWindow: number; maxTokens: number; pricing?: { input: number; output: number }; description: string }> = {
-  'gpt-5.2':           { contextWindow: 256000, maxTokens: 32768,  pricing: { input: 1.75,  output: 14.00 },  description: 'Most capable OpenAI model. Excellent at reasoning and code.' },
-  'gpt-5.2-codex':     { contextWindow: 256000, maxTokens: 32768,  pricing: { input: 1.75,  output: 14.00 },  description: 'GPT 5.2 optimized for code generation and editing.' },
-  'gpt-5.1':           { contextWindow: 256000, maxTokens: 32768,  pricing: { input: 1.07,  output: 8.50 },   description: 'High-performance reasoning model from OpenAI.' },
-  'gpt-5.1-codex':     { contextWindow: 256000, maxTokens: 32768,  pricing: { input: 1.07,  output: 8.50 },   description: 'GPT 5.1 tuned for coding tasks with tool calling.' },
-  'gpt-5.1-codex-max': { contextWindow: 256000, maxTokens: 65536,  pricing: { input: 1.25,  output: 10.00 },  description: 'Max context version of GPT 5.1 Codex.' },
-  'gpt-5.1-codex-mini':{ contextWindow: 128000, maxTokens: 16384,  pricing: { input: 0.25,  output: 2.00 },   description: 'Smaller, faster GPT 5.1 Codex variant.' },
-  'gpt-5':             { contextWindow: 128000, maxTokens: 16384,  pricing: { input: 1.07,  output: 8.50 },   description: 'Powerful general-purpose model from OpenAI.' },
-  'gpt-5-codex':       { contextWindow: 128000, maxTokens: 16384,  pricing: { input: 1.07,  output: 8.50 },   description: 'GPT 5 optimized for code.' },
-  'gpt-5-nano':        { contextWindow: 128000, maxTokens: 8192,   description: 'Free, lightweight GPT model for quick tasks.' },
-  'claude-opus-4-6':   { contextWindow: 200000, maxTokens: 32000,  pricing: { input: 5.00,  output: 25.00 },  description: 'Most capable Claude model. Exceptional at complex tasks.' },
-  'claude-opus-4-5':   { contextWindow: 200000, maxTokens: 32000,  pricing: { input: 5.00,  output: 25.00 },  description: 'Highly capable Claude with extended thinking support.' },
-  'claude-opus-4-1':   { contextWindow: 200000, maxTokens: 32000,  pricing: { input: 15.00, output: 75.00 },  description: 'Previous generation Opus model.' },
-  'claude-sonnet-4-5': { contextWindow: 200000, maxTokens: 16000,  pricing: { input: 3.00,  output: 15.00 },  description: 'Best balance of speed, intelligence, and cost.' },
-  'claude-sonnet-4':   { contextWindow: 200000, maxTokens: 8192,   pricing: { input: 3.00,  output: 15.00 },  description: 'Fast, capable model ideal for most tasks.' },
-  'claude-haiku-4-5':  { contextWindow: 200000, maxTokens: 8192,   pricing: { input: 1.00,  output: 5.00 },   description: 'Ultra-fast Claude for quick responses.' },
-  'claude-3-5-haiku':  { contextWindow: 200000, maxTokens: 8192,   pricing: { input: 0.80,  output: 4.00 },   description: 'Claude 3.5 Haiku — fast and cost-effective.' },
-  'gemini-3-pro':      { contextWindow: 1000000, maxTokens: 65536,  pricing: { input: 2.00,  output: 12.00 },  description: 'Google\'s most capable model. 1M token context.' },
-  'gemini-3-flash':    { contextWindow: 1000000, maxTokens: 65536,  pricing: { input: 0.50,  output: 3.00 },   description: 'Ultra-fast Gemini with 1M context window.' },
-  'minimax-m2.1':      { contextWindow: 1000000, maxTokens: 65536,  pricing: { input: 0.30,  output: 1.20 },   description: 'MiniMax M2.1 with 1M token context.' },
-  'minimax-m2.1-free': { contextWindow: 245760,  maxTokens: 16384,  description: 'Free tier MiniMax M2.1.' },
-  'glm-4.7':           { contextWindow: 128000, maxTokens: 16384,  pricing: { input: 0.60,  output: 2.20 },   description: 'Zhipu GLM 4.7 — strong multilingual model.' },
-  'glm-4.7-free':      { contextWindow: 32000,  maxTokens: 4096,   description: 'Free tier GLM 4.7.' },
-  'glm-4.6':           { contextWindow: 128000, maxTokens: 16384,  pricing: { input: 0.60,  output: 2.20 },   description: 'Previous generation GLM model.' },
-  'kimi-k2.5':         { contextWindow: 131072, maxTokens: 16384,  pricing: { input: 0.60,  output: 3.00 },   description: 'Kimi K2.5 — fast and capable.' },
-  'kimi-k2.5-free':    { contextWindow: 32000,  maxTokens: 4096,   description: 'Free tier Kimi K2.5.' },
-  'kimi-k2-thinking':  { contextWindow: 131072, maxTokens: 16384,  pricing: { input: 0.40,  output: 2.50 },   description: 'Kimi K2 with extended reasoning.' },
-  'kimi-k2':           { contextWindow: 131072, maxTokens: 16384,  pricing: { input: 0.40,  output: 2.50 },   description: 'Kimi K2 general-purpose model.' },
-  'qwen3-coder':       { contextWindow: 131072, maxTokens: 32768,  pricing: { input: 0.45,  output: 1.50 },   description: 'Qwen3 Coder 480B — huge code-focused model.' },
-  'big-pickle':                 { contextWindow: 128000, maxTokens: 8192,  description: 'OpenCode community free model.' },
-  'trinity-large-preview-free': { contextWindow: 128000, maxTokens: 8192,  description: 'Trinity Large Preview — free experimental model.' },
-  'alpha-g5':                   { contextWindow: 128000, maxTokens: 8192,  pricing: { input: 0.30,  output: 1.00 },  description: 'Alpha G5 — experimental model.' },
-  'alpha-free':                 { contextWindow: 128000, maxTokens: 8192,  description: 'Alpha Free — free experimental model.' },
-}
+const FREE_MODELS = zenModels.filter(m => m.free).map(m => m.id)
+
+const MODEL_NAME_MAP: Record<string, string> = Object.fromEntries(
+  zenModels.map(m => [m.id, m.name])
+)
+
+export const MODEL_METADATA: Record<string, { contextWindow: number; maxTokens: number; pricing?: { input: number; output: number }; description: string; supportsTools?: boolean }> = Object.fromEntries(
+  zenModels.map(m => [m.id, {
+    contextWindow: m.contextWindow,
+    maxTokens: m.maxTokens,
+    ...(m.pricing && { pricing: m.pricing }),
+    description: m.description || '',
+    ...(m.supports_tools !== undefined && { supportsTools: m.supports_tools }),
+  }])
+)
 
 
 function parseApiError(status: number, data: string, provider?: AIProvider): ZenError {
@@ -174,6 +249,7 @@ function parseApiError(status: number, data: string, provider?: AIProvider): Zen
 
 export class ZenClient {
   private apiKeys: Map<AIProvider, string> = new Map()
+  private customBaseUrls: Map<AIProvider, string> = new Map()
 
   private getDefaultProvider(): AIProvider {
     const configured = this.getConfiguredProviders()
@@ -197,13 +273,33 @@ export class ZenClient {
       .map(([provider, _]) => provider)
   }
 
+  setBaseUrl(provider: AIProvider, url: string) {
+    this.customBaseUrls.set(provider, url)
+  }
+
+  getBaseUrl(provider: AIProvider): string {
+    return this.customBaseUrls.get(provider) || PROVIDER_BASE_URLS[provider] || ''
+  }
+
   private getHeaders(provider?: AIProvider): Record<string, string> {
+    const p = provider || this.getDefaultProvider()
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     }
-    const apiKey = this.apiKeys.get(provider || this.getDefaultProvider()) || null
-    if (apiKey) {
-      headers['Authorization'] = `Bearer ${apiKey}`
+    const apiKey = this.apiKeys.get(p) || null
+
+    if (p === 'anthropic') {
+      if (apiKey) headers['x-api-key'] = apiKey
+      headers['anthropic-version'] = '2023-06-01'
+    } else if (p === 'openrouter') {
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+      headers['HTTP-Referer'] = 'https://artemis.ide'
+      headers['X-Title'] = 'Artemis IDE'
+    } else if (p === 'ollama') {
+      // Ollama typically needs no auth
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
+    } else {
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
     }
     return headers
   }
@@ -256,12 +352,43 @@ export class ZenClient {
       return this.getHardcodedModels()
     }
 
+    // Separate providers that need API fetch from those using hardcoded models
+    const hardcodedOnly: AIProvider[] = []
+    const fetchable: { provider: AIProvider; modelsUrl: string }[] = []
+
     for (const provider of configuredProviders) {
-      const baseUrl = PROVIDER_BASE_URLS[provider]
-      const result = await this.proxyRequest(`${baseUrl}/models`, 'GET', undefined, provider)
+      const info = getProviderInfo(provider)
+      if (info && !info.supportsModelList) {
+        hardcodedOnly.push(provider)
+        continue
+      }
+      const baseUrl = this.getBaseUrl(provider)
+      if (!baseUrl) continue
+      fetchable.push({ provider, modelsUrl: `${baseUrl}/models` })
+    }
+
+    // Add hardcoded-only providers synchronously
+    for (const provider of hardcodedOnly) {
+      allModels.push(...this.getHardcodedModelsForProvider(provider))
+    }
+
+    // Fetch all API-based providers in parallel
+    const results = await Promise.allSettled(
+      fetchable.map(async ({ provider, modelsUrl }) => {
+        const result = await this.proxyRequest(modelsUrl, 'GET', undefined, provider)
+        return { provider, result }
+      })
+    )
+
+    for (const settled of results) {
+      if (settled.status === 'rejected') continue
+
+      const { provider, result } = settled.value
 
       if (!result.ok) {
         console.error(`[ZenClient] Error fetching models from ${provider}:`, result.error)
+        const hardcoded = this.getHardcodedModelsForProvider(provider)
+        if (hardcoded.length > 0) allModels.push(...hardcoded)
         continue
       }
 
@@ -275,21 +402,44 @@ export class ZenClient {
         if (id === 'claude-3-5-haiku') continue
 
         const meta = MODEL_METADATA[id]
+
+        // Determine tool support from API response or hardcoded metadata
+        let supportsTools: boolean | undefined = meta?.supportsTools
+        // OpenRouter includes supported_parameters array with 'tools' / 'tool_choice'
+        if (model.supported_parameters && Array.isArray(model.supported_parameters)) {
+          supportsTools = model.supported_parameters.includes('tools') || model.supported_parameters.includes('tool_choice')
+        }
+
         const zenModel: ZenModel = {
           id,
           name: model.name || this.formatModelName(id),
-          provider: model.provider || this.getProviderFromModelId(id),
+          provider: model.provider || this.getProviderFromModelId(id, provider),
           endpoint: this.getModelEndpoint(id),
-          free: FREE_MODELS.includes(id),
+          free: FREE_MODELS.includes(id) || provider === 'ollama',
           aiProvider: provider,
+          supportsTools,
           ...(meta && {
             maxTokens: meta.maxTokens,
             contextWindow: meta.contextWindow,
             pricing: meta.pricing,
             description: meta.description,
           }),
+          // Use context_length from API if available and no hardcoded value
+          ...(!meta?.contextWindow && model.context_length && { contextWindow: model.context_length }),
+          // Use max_completion_tokens from API if available and no hardcoded value
+          ...(!meta?.maxTokens && model.top_provider?.max_completion_tokens && {
+            maxTokens: model.top_provider.max_completion_tokens,
+          }),
+          // Use pricing from OpenRouter API if available and no hardcoded pricing
+          ...(!meta?.pricing && model.pricing && (parseFloat(model.pricing.prompt) > 0 || parseFloat(model.pricing.completion) > 0) && {
+            pricing: {
+              input: parseFloat(model.pricing.prompt) * 1_000_000,
+              output: parseFloat(model.pricing.completion) * 1_000_000,
+            },
+          }),
+          // Use description from API if available and no hardcoded description
+          ...(!meta?.description && model.description && { description: model.description }),
         }
-      console.log(`[ZenClient] Fetched model:`, { id, name: zenModel.name, aiProvider: provider })
         allModels.push(zenModel)
       }
     }
@@ -308,42 +458,7 @@ export class ZenClient {
   }
 
   private formatModelName(id: string): string {
-    const nameMap: Record<string, string> = {
-      'gpt-5.2': 'GPT 5.2',
-      'gpt-5.2-codex': 'GPT 5.2 Codex',
-      'gpt-5.1': 'GPT 5.1',
-      'gpt-5.1-codex': 'GPT 5.1 Codex',
-      'gpt-5.1-codex-max': 'GPT 5.1 Codex Max',
-      'gpt-5.1-codex-mini': 'GPT 5.1 Codex Mini',
-      'gpt-5': 'GPT 5',
-      'gpt-5-codex': 'GPT 5 Codex',
-      'gpt-5-nano': 'GPT 5 Nano',
-      'claude-opus-4-6': 'Claude Opus 4.6',
-      'claude-opus-4-5': 'Claude Opus 4.5',
-      'claude-opus-4-1': 'Claude Opus 4.1',
-      'claude-sonnet-4-5': 'Claude Sonnet 4.5',
-      'claude-sonnet-4': 'Claude Sonnet 4',
-      'claude-haiku-4-5': 'Claude Haiku 4.5',
-      'claude-3-5-haiku': 'Claude 3.5 Haiku',
-      'gemini-3-pro': 'Gemini 3 Pro',
-      'gemini-3-flash': 'Gemini 3 Flash',
-      'minimax-m2.1': 'MiniMax M2.1',
-      'minimax-m2.1-free': 'MiniMax M2.1 Free',
-      'glm-4.7': 'GLM 4.7',
-      'glm-4.7-free': 'GLM 4.7 Free',
-      'glm-4.6': 'GLM 4.6',
-      'kimi-k2.5': 'Kimi K2.5',
-      'kimi-k2.5-free': 'Kimi K2.5 Free',
-      'kimi-k2-thinking': 'Kimi K2 Thinking',
-      'kimi-k2': 'Kimi K2',
-      'qwen3-coder': 'Qwen3 Coder 480B',
-      'big-pickle': 'Big Pickle',
-      'trinity-large-preview-free': 'Trinity Large Preview Free',
-      'alpha-g5': 'Alpha G5',
-      'alpha-free': 'Alpha Free',
-    }
-
-    return nameMap[id] || id.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+    return MODEL_NAME_MAP[id] || id.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
   }
 
   private getHardcodedModels(): ZenModel[] {
@@ -365,6 +480,7 @@ export class ZenClient {
         endpoint,
         free: FREE_MODELS.includes(id),
         aiProvider,
+        supportsTools: meta?.supportsTools,
         ...(meta && {
           maxTokens: meta.maxTokens,
           contextWindow: meta.contextWindow,
@@ -383,22 +499,87 @@ export class ZenClient {
     return allModels
   }
 
-  private getProviderFromModelId(modelId: string): string {
-    if (modelId.startsWith('gpt')) return 'OpenAI'
+  private getProviderFromModelId(modelId: string, aiProvider?: AIProvider): string {
+    if (aiProvider) {
+      const info = getProviderInfo(aiProvider)
+      if (info) return info.name
+    }
+    if (modelId.startsWith('gpt') || modelId.startsWith('o1') || modelId.startsWith('o3')) return 'OpenAI'
     if (modelId.startsWith('claude')) return 'Anthropic'
     if (modelId.startsWith('gemini')) return 'Google'
     if (modelId.startsWith('minimax')) return 'MiniMax'
     if (modelId.startsWith('glm')) return 'Zhipu'
-    if (modelId.startsWith('kimi')) return 'Moonshot'
+    if (modelId.startsWith('kimi') || modelId.startsWith('moonshot')) return 'Moonshot'
     if (modelId.startsWith('qwen')) return 'Alibaba'
+    if (modelId.startsWith('deepseek')) return 'DeepSeek'
+    if (modelId.startsWith('llama') || modelId.startsWith('mixtral') || modelId.startsWith('gemma')) return 'Meta/Google'
+    if (modelId.startsWith('mistral') || modelId.startsWith('codestral')) return 'Mistral'
+    if (modelId.startsWith('sonar') || modelId.startsWith('pplx')) return 'Perplexity'
     return 'OpenCode'
+  }
+
+  /** Return hardcoded model lists for providers that don't expose /models or as fallback.
+   *  Models are loaded from src/lib/models.json — edit that file to add/remove models. */
+  private getHardcodedModelsForProvider(provider: AIProvider): ZenModel[] {
+    const models: ZenModel[] = []
+    // OpenRouter and Ollama get models from their APIs; zen/zai use the zen model list
+    if (provider === 'openrouter' || provider === 'ollama' || provider === 'zen' || provider === 'zai') {
+      return models
+    }
+
+    const configModels = (modelsConfig as unknown as Record<string, Array<{
+      id: string; name: string; provider: string; contextWindow: number; maxTokens: number
+      pricing?: { input: number; output: number }; description?: string
+      supports_tools?: boolean
+    }>>)[provider]
+
+    if (configModels) {
+      for (const m of configModels) {
+        models.push({
+          id: m.id,
+          name: m.name,
+          provider: m.provider,
+          endpoint: '/chat/completions',
+          free: false,
+          aiProvider: provider,
+          contextWindow: m.contextWindow,
+          maxTokens: m.maxTokens,
+          pricing: m.pricing,
+          description: m.description,
+          supportsTools: m.supports_tools,
+        })
+      }
+    }
+
+    return models
   }
 
   async validateApiKey(provider?: AIProvider): Promise<boolean> {
     const aiProvider = provider || this.getDefaultProvider()
+
+    // Ollama doesn't require a key — just check connectivity
+    if (aiProvider === 'ollama') {
+      const baseUrl = this.getBaseUrl('ollama')
+      const result = await this.proxyRequest(`${baseUrl}/models`, 'GET', undefined, 'ollama')
+      return result.ok
+    }
+
     if (!this.hasApiKey(aiProvider)) return false
-    const baseUrl = PROVIDER_BASE_URLS[aiProvider]
-    const result = await this.proxyRequest(`${baseUrl}/models`, 'GET', undefined, aiProvider)
+
+    const info = getProviderInfo(aiProvider)
+    const baseUrl = this.getBaseUrl(aiProvider)
+    if (!baseUrl) return false
+
+    // Perplexity doesn't have a /models endpoint; validate with a minimal completion
+    if (aiProvider === 'perplexity') {
+      const result = await this.proxyRequest(`${baseUrl}/chat/completions`, 'POST', {
+        model: 'sonar', messages: [{ role: 'user', content: 'hi' }], max_tokens: 1,
+      }, 'perplexity')
+      return result.ok
+    }
+
+    const validationPath = info?.validationPath || '/models'
+    const result = await this.proxyRequest(`${baseUrl}${validationPath}`, 'GET', undefined, aiProvider)
     return result.ok
   }
 }

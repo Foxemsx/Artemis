@@ -40,6 +40,12 @@ contextBridge.exposeInMainWorld('artemis', {
 
   },
 
+  // ─── Project Management ──────────────────────────────────────────────
+  project: {
+    setPath: (projectPath: string) =>
+      ipcRenderer.invoke('project:setPath', projectPath),
+  },
+
   // ─── System Dialogs ───────────────────────────────────────────────────
   dialog: {
     openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
@@ -51,6 +57,24 @@ contextBridge.exposeInMainWorld('artemis', {
     set: (key: string, value: any) => ipcRenderer.invoke('store:set', key, value),
     getDir: () => ipcRenderer.invoke('store:getDir'),
     isEncrypted: () => ipcRenderer.invoke('store:isEncrypted'),
+  },
+
+  // Security-sensitive capabilities (disabled by default)
+  security: {
+    getCapabilities: () =>
+      ipcRenderer.invoke('security:getCapabilities') as Promise<{ terminal: boolean; commands: boolean }>,
+    requestCapability: (capability: 'terminal' | 'commands') =>
+      ipcRenderer.invoke('security:requestCapability', capability) as Promise<boolean>,
+  },
+
+  // Workspace Trust (VSCode-style folder trust system)
+  trust: {
+    check: (folderPath: string) =>
+      ipcRenderer.invoke('trust:check', folderPath) as Promise<boolean>,
+    grant: (folderPath: string) =>
+      ipcRenderer.invoke('trust:grant', folderPath) as Promise<boolean>,
+    revoke: (folderPath: string) =>
+      ipcRenderer.invoke('trust:revoke', folderPath) as Promise<boolean>,
   },
 
   // ─── Window Controls ─────────────────────────────────────────────────
@@ -112,6 +136,12 @@ contextBridge.exposeInMainWorld('artemis', {
       ipcRenderer.invoke('tools:searchFiles', pattern, dirPath),
   },
 
+  // ─── Git Operations (array-based args, safe for commit messages) ────
+  git: {
+    run: (args: string[], cwd: string) =>
+      ipcRenderer.invoke('git:run', args, cwd),
+  },
+
   // ─── MCP Marketplace ──────────────────────────────────────────────────
   mcp: {
     getServers: () => ipcRenderer.invoke('mcp:getServers'),
@@ -163,6 +193,16 @@ contextBridge.exposeInMainWorld('artemis', {
       ipcRenderer.invoke('discord:detectDiscord'),
     setDebug: (enabled: boolean) =>
       ipcRenderer.invoke('discord:setDebug', enabled),
+  },
+
+  // ─── Inline Code Completion (AI Ghost Text) ─────────────────────────
+  inlineCompletion: {
+    complete: (request: { prefix: string; suffix: string; language: string; filepath: string }) =>
+      ipcRenderer.invoke('inlineCompletion:complete', request),
+    getConfig: () =>
+      ipcRenderer.invoke('inlineCompletion:getConfig'),
+    setConfig: (config: { enabled?: boolean; provider?: string; model?: string; maxTokens?: number }) =>
+      ipcRenderer.invoke('inlineCompletion:setConfig', config),
   },
 
   // ─── Agent API (New Provider-Agnostic System) ─────────────────────────

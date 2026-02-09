@@ -1,3 +1,4 @@
+import React from 'react'
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels'
 import type { ActivityView, Theme, ChatSession, ChatMessage, EditorTab, Provider, Model, PtySession, AgentMode, EditApprovalMode, AIProvider } from '../types'
 import FileExplorer from './FileExplorer'
@@ -8,6 +9,7 @@ import Settings from './Settings'
 import ProblemsPanel from './ProblemsPanel'
 import SearchPanel from './SearchPanel'
 import MCPMarketplace from './MCPMarketplace'
+import SourceControlPanel from './SourceControlPanel'
 
 interface Props {
   activeView: ActivityView
@@ -64,6 +66,7 @@ interface Props {
   ptyTerminals: PtySession[]
   onNewTerminal: () => void
   onCloseTerminal: (id: string) => void
+  onReorderTerminals?: (fromId: string, toId: string) => void
 
   // Settings
   onToggleTheme: () => void
@@ -74,6 +77,13 @@ interface Props {
   onSetSoundSettings: (settings: import('../lib/sounds').SoundSettings) => void
   fileRefreshTrigger?: number
   chatVisible?: boolean
+
+  // Workspace Trust: restricted mode
+  isRestrictedMode?: boolean
+  restrictedModeBanner?: React.ReactNode
+
+  // Inline Completion
+  inlineCompletionEnabled?: boolean
 }
 
 export default function PanelLayout({
@@ -85,9 +95,11 @@ export default function PanelLayout({
   providers, activeModel, agentMode,
   onCreateSession, onSelectSession, onDeleteSession, onSendMessage, onAbortMessage,
   onSelectModel, onAgentModeChange, editApprovalMode, onEditApprovalModeChange, onClearMessages, onOpenTerminal, checkpoints, onRestoreCheckpoint,
-  ptyTerminals, onNewTerminal, onCloseTerminal,
+  ptyTerminals, onNewTerminal, onCloseTerminal, onReorderTerminals,
   onToggleTheme, onSetTheme, apiKeys, onSetApiKey, soundSettings, onSetSoundSettings, fileRefreshTrigger,
   chatVisible = true,
+  isRestrictedMode = false, restrictedModeBanner,
+  inlineCompletionEnabled = false,
 }: Props) {
 
   // Problems view — full panel
@@ -116,13 +128,14 @@ export default function PanelLayout({
                   onUnpinTab={onUnpinTab}
                   onReorderTabs={onReorderTabs}
                   theme={theme}
+                  inlineCompletionEnabled={inlineCompletionEnabled}
                 />
               </Panel>
             </PanelGroup>
           </Panel>
           <PanelResizeHandle />
           <Panel defaultSize="40%" minSize="10%" maxSize="60%" id="problems-terminal" collapsible collapsedSize="0%">
-            <TerminalPanel terminals={ptyTerminals} onNewTerminal={onNewTerminal} onCloseTerminal={onCloseTerminal} theme={theme} projectPath={projectPath} />
+            <TerminalPanel terminals={ptyTerminals} onNewTerminal={onNewTerminal} onCloseTerminal={onCloseTerminal} onReorderTerminals={onReorderTerminals} theme={theme} projectPath={projectPath} />
           </Panel>
         </PanelGroup>
       </div>
@@ -155,13 +168,54 @@ export default function PanelLayout({
                   onUnpinTab={onUnpinTab}
                   onReorderTabs={onReorderTabs}
                   theme={theme}
+                  inlineCompletionEnabled={inlineCompletionEnabled}
                 />
               </Panel>
             </PanelGroup>
           </Panel>
           <PanelResizeHandle />
           <Panel defaultSize="40%" minSize="10%" maxSize="60%" id="search-terminal" collapsible collapsedSize="0%">
-            <TerminalPanel terminals={ptyTerminals} onNewTerminal={onNewTerminal} onCloseTerminal={onCloseTerminal} theme={theme} projectPath={projectPath} />
+            <TerminalPanel terminals={ptyTerminals} onNewTerminal={onNewTerminal} onCloseTerminal={onCloseTerminal} onReorderTerminals={onReorderTerminals} theme={theme} projectPath={projectPath} />
+          </Panel>
+        </PanelGroup>
+      </div>
+    )
+  }
+
+  // Git / Source Control view
+  if (activeView === 'git') {
+    return (
+      <div className="flex-1 overflow-hidden">
+        <PanelGroup orientation="vertical" className="flex-1">
+          <Panel defaultSize="60%" minSize="30%" id="git-main">
+            <PanelGroup orientation="horizontal">
+              <Panel defaultSize="35%" minSize="15%" id="git-panel">
+                <SourceControlPanel projectPath={projectPath} onOpenFile={onOpenFile} isRestrictedMode={isRestrictedMode} />
+              </Panel>
+              <PanelResizeHandle />
+              <Panel defaultSize="65%" minSize="20%" id="git-editor">
+                <Editor
+                  tabs={editorTabs}
+                  activeTabPath={activeTabPath}
+                  onSelectTab={onSelectTab}
+                  onCloseTab={onCloseTab}
+                  onCloseOtherTabs={onCloseOtherTabs}
+                  onCloseAllTabs={onCloseAllTabs}
+                  onCloseTabsToRight={onCloseTabsToRight}
+                  onSave={onSaveFile}
+                  onContentChange={onTabContentChange}
+                  onPinTab={onPinTab}
+                  onUnpinTab={onUnpinTab}
+                  onReorderTabs={onReorderTabs}
+                  theme={theme}
+                  inlineCompletionEnabled={inlineCompletionEnabled}
+                />
+              </Panel>
+            </PanelGroup>
+          </Panel>
+          <PanelResizeHandle />
+          <Panel defaultSize="40%" minSize="10%" maxSize="60%" id="git-terminal" collapsible collapsedSize="0%">
+            <TerminalPanel terminals={ptyTerminals} onNewTerminal={onNewTerminal} onCloseTerminal={onCloseTerminal} onReorderTerminals={onReorderTerminals} theme={theme} projectPath={projectPath} />
           </Panel>
         </PanelGroup>
       </div>
@@ -235,39 +289,47 @@ export default function PanelLayout({
                   onUnpinTab={onUnpinTab}
                   onReorderTabs={onReorderTabs}
                   theme={theme}
+                  inlineCompletionEnabled={inlineCompletionEnabled}
                 />
               </Panel>
               {chatVisible && (
                 <>
                   <PanelResizeHandle />
                   <Panel defaultSize={activeView === 'files' ? '25%' : '35%'} minSize="20%" id="chat-side-panel">
-                    <ChatPanel
-                      sessions={sessions}
-                      activeSessionId={activeSessionId}
-                      messages={messages}
-                      isStreaming={isStreaming}
-                      isReady={isReady}
-                      hasApiKey={hasApiKey}
-                      error={error}
-                      providers={providers}
-                      activeModel={activeModel}
-                      agentMode={agentMode}
-                      projectPath={projectPath}
-                      onCreateSession={onCreateSession}
-                      onSelectSession={onSelectSession}
-                      onDeleteSession={onDeleteSession}
-                      onSendMessage={onSendMessage}
-                      onAbortMessage={onAbortMessage}
-                      onSelectModel={onSelectModel}
-                      onAgentModeChange={onAgentModeChange}
-                      editApprovalMode={editApprovalMode}
-                      onEditApprovalModeChange={onEditApprovalModeChange}
-                      onClearMessages={onClearMessages}
-                      onOpenTerminal={onOpenTerminal}
-                      onOpenFile={onOpenFile}
-                      checkpoints={checkpoints}
-                      onRestoreCheckpoint={onRestoreCheckpoint}
-                    />
+                    <div className="relative h-full">
+                      {isRestrictedMode && (
+                        <div className="absolute inset-0 z-20 flex flex-col" style={{ backdropFilter: 'blur(6px)', backgroundColor: 'rgba(10,10,10,0.5)' }}>
+                          {restrictedModeBanner}
+                        </div>
+                      )}
+                      <ChatPanel
+                        sessions={sessions}
+                        activeSessionId={activeSessionId}
+                        messages={messages}
+                        isStreaming={isStreaming}
+                        isReady={isReady}
+                        hasApiKey={hasApiKey}
+                        error={error}
+                        providers={providers}
+                        activeModel={activeModel}
+                        agentMode={agentMode}
+                        projectPath={projectPath}
+                        onCreateSession={onCreateSession}
+                        onSelectSession={onSelectSession}
+                        onDeleteSession={onDeleteSession}
+                        onSendMessage={onSendMessage}
+                        onAbortMessage={onAbortMessage}
+                        onSelectModel={onSelectModel}
+                        onAgentModeChange={onAgentModeChange}
+                        editApprovalMode={editApprovalMode}
+                        onEditApprovalModeChange={onEditApprovalModeChange}
+                        onClearMessages={onClearMessages}
+                        onOpenTerminal={onOpenTerminal}
+                        onOpenFile={onOpenFile}
+                        checkpoints={checkpoints}
+                        onRestoreCheckpoint={onRestoreCheckpoint}
+                      />
+                    </div>
                   </Panel>
                 </>
               )}
@@ -277,33 +339,40 @@ export default function PanelLayout({
           {/* Chat-only view */}
           {activeView === 'chat' && (
             <Panel defaultSize="100%" minSize="30%" id="chat-full-panel">
-              <ChatPanel
-                sessions={sessions}
-                activeSessionId={activeSessionId}
-                messages={messages}
-                isStreaming={isStreaming}
-                isReady={isReady}
-                hasApiKey={hasApiKey}
-                error={error}
-                providers={providers}
-                activeModel={activeModel}
-                agentMode={agentMode}
-                projectPath={projectPath}
-                onCreateSession={onCreateSession}
-                onSelectSession={onSelectSession}
-                onDeleteSession={onDeleteSession}
-                onSendMessage={onSendMessage}
-                onAbortMessage={onAbortMessage}
-                onSelectModel={onSelectModel}
-                onAgentModeChange={onAgentModeChange}
-                editApprovalMode={editApprovalMode}
-                onEditApprovalModeChange={onEditApprovalModeChange}
-                onClearMessages={onClearMessages}
-                onOpenTerminal={onOpenTerminal}
-                onOpenFile={onOpenFile}
-                checkpoints={checkpoints}
-                onRestoreCheckpoint={onRestoreCheckpoint}
-              />
+              <div className="relative h-full">
+                {isRestrictedMode && (
+                  <div className="absolute inset-0 z-20 flex flex-col" style={{ backdropFilter: 'blur(6px)', backgroundColor: 'rgba(10,10,10,0.5)' }}>
+                    {restrictedModeBanner}
+                  </div>
+                )}
+                <ChatPanel
+                  sessions={sessions}
+                  activeSessionId={activeSessionId}
+                  messages={messages}
+                  isStreaming={isStreaming}
+                  isReady={isReady}
+                  hasApiKey={hasApiKey}
+                  error={error}
+                  providers={providers}
+                  activeModel={activeModel}
+                  agentMode={agentMode}
+                  projectPath={projectPath}
+                  onCreateSession={onCreateSession}
+                  onSelectSession={onSelectSession}
+                  onDeleteSession={onDeleteSession}
+                  onSendMessage={onSendMessage}
+                  onAbortMessage={onAbortMessage}
+                  onSelectModel={onSelectModel}
+                  onAgentModeChange={onAgentModeChange}
+                  editApprovalMode={editApprovalMode}
+                  onEditApprovalModeChange={onEditApprovalModeChange}
+                  onClearMessages={onClearMessages}
+                  onOpenTerminal={onOpenTerminal}
+                  onOpenFile={onOpenFile}
+                  checkpoints={checkpoints}
+                  onRestoreCheckpoint={onRestoreCheckpoint}
+                />
+              </div>
             </Panel>
           )}
         </PanelGroup>
@@ -323,6 +392,7 @@ export default function PanelLayout({
           terminals={ptyTerminals}
           onNewTerminal={onNewTerminal}
           onCloseTerminal={onCloseTerminal}
+          onReorderTerminals={onReorderTerminals}
           theme={theme}
           projectPath={projectPath}
         />

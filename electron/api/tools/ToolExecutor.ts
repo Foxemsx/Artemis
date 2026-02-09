@@ -268,6 +268,23 @@ async function searchWithRipgrep(pattern: string, searchPath: string, include?: 
 // ─── JS fallback search (original implementation) ─────────────────────────────
 
 async function searchWithJS(args: Record<string, any>, searchPath: string): Promise<string> {
+  // Security: Validate and compile regex upfront to catch invalid/dangerous patterns early
+  const MAX_PATTERN_LENGTH = 500
+  if (!args.pattern || typeof args.pattern !== 'string') {
+    return 'Error: No search pattern provided'
+  }
+  if (args.pattern.length > MAX_PATTERN_LENGTH) {
+    return `Error: Search pattern too long (max ${MAX_PATTERN_LENGTH} characters)`
+  }
+
+  let regex: RegExp
+  try {
+    regex = new RegExp(args.pattern, 'gi')
+  } catch (e: any) {
+    // Security: Fall back to literal string search if regex is invalid
+    return searchWithJSLiteral(args.pattern, args, searchPath)
+  }
+
   const results: string[] = []
 
   async function search(dir: string, depth: number): Promise<void> {
@@ -300,10 +317,11 @@ async function searchWithJS(args: Record<string, any>, searchPath: string): Prom
 
           const content = await fs.promises.readFile(fullPath, 'utf-8')
           const lines = content.split('\n')
-          const regex = new RegExp(args.pattern, 'gi')
 
           for (let i = 0; i < lines.length && results.length < MAX_SEARCH_RESULTS; i++) {
-            if (regex.test(lines[i])) {
+            // Security: Limit line length to prevent catastrophic backtracking
+            const line = lines[i].slice(0, 1000)
+            if (regex.test(line)) {
               results.push(`${fullPath}:${i + 1}: ${lines[i].trim().slice(0, 200)}`)
             }
             regex.lastIndex = 0
@@ -322,6 +340,48 @@ async function searchWithJS(args: Record<string, any>, searchPath: string): Prom
   if (results.length >= MAX_SEARCH_RESULTS) {
     output += `\n... (truncated at ${MAX_SEARCH_RESULTS} results)`
   }
+  return output
+}
+
+/** Security: Safe literal string search fallback when regex compilation fails. */
+async function searchWithJSLiteral(pattern: string, args: Record<string, any>, searchPath: string): Promise<string> {
+  const results: string[] = []
+  const lowerPattern = pattern.toLowerCase()
+
+  async function search(dir: string, depth: number): Promise<void> {
+    if (depth > MAX_SEARCH_DEPTH || results.length >= MAX_SEARCH_RESULTS) return
+    let entries: fs.Dirent[]
+    try { entries = await fs.promises.readdir(dir, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      if (results.length >= MAX_SEARCH_RESULTS) break
+      const fullPath = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (!IGNORE_DIRS.has(entry.name) && !entry.name.startsWith('.')) await search(fullPath, depth + 1)
+      } else if (entry.isFile()) {
+        if (args.include) {
+          const ext = path.extname(entry.name)
+          const p = args.include.replace('*', '')
+          if (!entry.name.endsWith(p) && ext !== p) continue
+        }
+        try {
+          const stat = await fs.promises.stat(fullPath)
+          if (stat.size > MAX_FILE_SIZE_FOR_SEARCH) continue
+          const content = await fs.promises.readFile(fullPath, 'utf-8')
+          const lines = content.split('\n')
+          for (let i = 0; i < lines.length && results.length < MAX_SEARCH_RESULTS; i++) {
+            if (lines[i].toLowerCase().includes(lowerPattern)) {
+              results.push(`${fullPath}:${i + 1}: ${lines[i].trim().slice(0, 200)}`)
+            }
+          }
+        } catch {}
+      }
+    }
+  }
+
+  await search(searchPath, 0)
+  if (results.length === 0) return 'No matches found.'
+  let output = `(Note: used literal string search because pattern is not valid regex)\n${results.join('\n')}`
+  if (results.length >= MAX_SEARCH_RESULTS) output += `\n... (truncated at ${MAX_SEARCH_RESULTS} results)`
   return output
 }
 
@@ -351,6 +411,45 @@ function parseCommandTokens(command: string): { exe: string; args: string[] } {
   return { exe: tokens[0], args: tokens.slice(1) }
 }
 
+// Security: Allowlist of executables the agent may invoke.
+// Only well-known dev tools are permitted; anything else is blocked.
+const ALLOWED_EXECUTABLES = new Set([
+  // Package managers & runners
+  'npm', 'npx', 'yarn', 'pnpm', 'bun', 'bunx', 'deno', 'node', 'tsx', 'ts-node',
+  // Version control
+  'git',
+  // Build tools
+  'tsc', 'vite', 'webpack', 'esbuild', 'rollup', 'turbo', 'nx',
+  // Linters & formatters
+  'eslint', 'prettier', 'biome',
+  // Language runtimes
+  'python', 'python3', 'pip', 'pip3', 'cargo', 'rustc', 'go', 'java', 'javac', 'ruby', 'gem',
+  // Common CLI utilities
+  'cat', 'echo', 'ls', 'dir', 'find', 'grep', 'rg', 'sed', 'awk', 'head', 'tail', 'wc',
+  'mkdir', 'rm', 'cp', 'mv', 'touch', 'chmod', 'curl', 'wget',
+  // Docker & containers
+  'docker', 'docker-compose', 'podman',
+  // Testing
+  'jest', 'vitest', 'mocha', 'pytest',
+])
+
+/** Resolve a bare command name to a full path on Windows, avoiding shell:true.
+ *  Finds .cmd/.bat/.exe variants in PATH so spawn() works without a shell. */
+function resolveWindowsCommand(command: string): string {
+  if (path.isAbsolute(command)) return command
+  const cmdExtensions = ['.cmd', '.bat', '.exe']
+  const pathDirs = (process.env.PATH || '').split(path.delimiter)
+  for (const dir of pathDirs) {
+    for (const ext of cmdExtensions) {
+      const withExt = path.join(dir, command + ext)
+      try { if (fs.existsSync(withExt)) return withExt } catch {}
+    }
+    const exact = path.join(dir, command)
+    try { if (fs.existsSync(exact)) return exact } catch {}
+  }
+  return command // fallback — spawn will throw ENOENT if not found
+}
+
 async function toolExecuteCommand(args: Record<string, any>, projectPath: string): Promise<string> {
   const cwd = args.cwd || projectPath || '.'
   
@@ -374,9 +473,24 @@ async function toolExecuteCommand(args: Record<string, any>, projectPath: string
     return 'Error: Empty command'
   }
 
-  return new Promise<string>((resolve) => {
-    // Spawn directly without a shell — prevents shell injection vectors
-    const child = spawn(exe, cmdArgs, {
+  // Security: Check executable against allowlist
+  const exeBasename = path.basename(exe).replace(/\.(cmd|bat|exe|sh)$/i, '').toLowerCase()
+  if (!ALLOWED_EXECUTABLES.has(exeBasename)) {
+    return `Error: Executable '${exe}' is not in the allowed list. Allowed: ${Array.from(ALLOWED_EXECUTABLES).slice(0, 20).join(', ')}...`
+  }
+
+  // Security: Resolve command to full path on Windows to avoid shell:true.
+  // For .cmd/.bat scripts, route through cmd.exe /c (same approach as mcpClient.ts).
+  let spawnExe = process.platform === 'win32' ? resolveWindowsCommand(exe) : exe
+  let spawnArgs = cmdArgs
+  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(spawnExe)) {
+    spawnArgs = ['/c', spawnExe, ...cmdArgs]
+    spawnExe = process.env.ComSpec || 'cmd.exe'
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    // Security: shell:false — never pass user input through cmd.exe/sh -c
+    const child = spawn(spawnExe, spawnArgs, {
       cwd,
       env: { ...process.env },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -408,7 +522,7 @@ async function toolExecuteCommand(args: Record<string, any>, projectPath: string
 
     child.on('error', (err: Error) => {
       clearTimeout(timeout)
-      resolve(`Command failed: ${err.message}`)
+      reject(new Error(`Command failed: ${err.message}`))
     })
   })
 }
@@ -524,23 +638,17 @@ async function toolFetchUrl(args: Record<string, any>): Promise<string> {
 // ─── Tool Executor Class ─────────────────────────────────────────────────────
 
 export class ToolExecutor {
-  private onPathApproval?: PathApprovalCallback
-
-  /**
-   * Set the path approval callback
-   */
-  setPathApprovalCallback(callback: PathApprovalCallback): void {
-    this.onPathApproval = callback
-  }
-
   /**
    * Execute a tool call safely. Always returns a ToolResult, never throws.
+   * 
+   * @param onPathApproval - Per-call path approval callback to avoid race conditions
+   *   on the singleton. Each agent run passes its own callback.
    */
-  async execute(toolCall: ToolCall, projectPath?: string): Promise<ToolResult> {
+  async execute(toolCall: ToolCall, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<ToolResult> {
     const startTime = Date.now()
 
     try {
-      const output = await this.dispatch(toolCall.name, toolCall.arguments, projectPath)
+      const output = await this.dispatch(toolCall.name, toolCall.arguments, projectPath, onPathApproval)
       return {
         toolCallId: toolCall.id,
         toolName: toolCall.name,
@@ -562,10 +670,10 @@ export class ToolExecutor {
   /**
    * Execute multiple tool calls sequentially.
    */
-  async executeAll(toolCalls: ToolCall[], projectPath?: string): Promise<ToolResult[]> {
+  async executeAll(toolCalls: ToolCall[], projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<ToolResult[]> {
     const results: ToolResult[] = []
     for (const tc of toolCalls) {
-      results.push(await this.execute(tc, projectPath))
+      results.push(await this.execute(tc, projectPath, onPathApproval))
     }
     return results
   }
@@ -573,24 +681,24 @@ export class ToolExecutor {
   /**
    * Dispatch to the correct tool implementation.
    */
-  private async dispatch(name: string, args: Record<string, any>, projectPath?: string): Promise<string> {
+  private async dispatch(name: string, args: Record<string, any>, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
     // Route MCP tools to the MCP client manager
     if (name.startsWith('mcp_')) {
       return mcpClientManager.callTool(name, args)
     }
 
     switch (name) {
-      case 'read_file':             return toolReadFile(args, projectPath, this.onPathApproval)
-      case 'write_file':            return toolWriteFile(args, projectPath, this.onPathApproval)
-      case 'str_replace':           return toolStrReplace(args, projectPath, this.onPathApproval)
-      case 'list_directory':        return toolListDirectory(args, projectPath, this.onPathApproval)
-      case 'search_files':          return toolSearchFiles(args, projectPath, this.onPathApproval)
+      case 'read_file':             return toolReadFile(args, projectPath, onPathApproval)
+      case 'write_file':            return toolWriteFile(args, projectPath, onPathApproval)
+      case 'str_replace':           return toolStrReplace(args, projectPath, onPathApproval)
+      case 'list_directory':        return toolListDirectory(args, projectPath, onPathApproval)
+      case 'search_files':          return toolSearchFiles(args, projectPath, onPathApproval)
       case 'execute_command':       return toolExecuteCommand(args, projectPath || '.')
       case 'get_git_diff':          return toolGetGitDiff(args, projectPath || '.')
-      case 'list_code_definitions': return toolListCodeDefinitions(args, projectPath, this.onPathApproval)
-      case 'create_directory':      return toolCreateDirectory(args, projectPath, this.onPathApproval)
-      case 'delete_file':           return toolDeleteFile(args, projectPath, this.onPathApproval)
-      case 'move_file':             return toolMoveFile(args, projectPath, this.onPathApproval)
+      case 'list_code_definitions': return toolListCodeDefinitions(args, projectPath, onPathApproval)
+      case 'create_directory':      return toolCreateDirectory(args, projectPath, onPathApproval)
+      case 'delete_file':           return toolDeleteFile(args, projectPath, onPathApproval)
+      case 'move_file':             return toolMoveFile(args, projectPath, onPathApproval)
       case 'web_search':            return toolWebSearch(args)
       case 'lint_file':             return toolLintFile(args, projectPath || '.')
       case 'fetch_url':             return toolFetchUrl(args)

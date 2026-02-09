@@ -9,7 +9,7 @@
  * Messages: standard role/content with tool_calls array
  */
 
-import { BaseProvider, type ProviderResponse } from '../BaseProvider'
+import { BaseProvider, capMaxTokens, type ProviderResponse } from '../BaseProvider'
 import type {
   CompletionRequest,
   StreamDelta,
@@ -58,6 +58,12 @@ export class OpenAIChatAdapter extends BaseProvider {
     // Request actual token usage in the final streaming chunk
     if (request.stream) {
       body.stream_options = { include_usage: true }
+    }
+
+    // Cap max_tokens so input + output fits within the context window
+    if (body.max_tokens) {
+      const serialized = JSON.stringify(formattedMsgs) + JSON.stringify(body.tools || [])
+      body.max_tokens = capMaxTokens(body.max_tokens, request.model.contextWindow, serialized)
     }
 
     return body

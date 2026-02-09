@@ -48,6 +48,7 @@ export type ToolApprovalCallback = (toolCall: ToolCall) => Promise<boolean>
 
 const FILE_MODIFYING_TOOLS = new Set([
   'write_file', 'str_replace', 'delete_file', 'move_file', 'create_directory',
+  'execute_command',
 ])
 
 interface HttpResponse {
@@ -140,12 +141,13 @@ export class AgentLoop {
       this.emit(onEvent, 'iteration_start', { iteration, maxIterations })
 
       // Build the completion request (provider-agnostic)
+      const supportsTools = request.model.supportsTools !== false
       const completionRequest: CompletionRequest = {
         model: request.model,
         provider: request.provider,
         messages: conversation.getMessages(),
         systemPrompt: request.systemPrompt,
-        tools: tools.length > 0 ? tools : undefined,
+        tools: supportsTools && tools.length > 0 ? tools : undefined,
         stream: true,
       }
 

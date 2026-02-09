@@ -1,4 +1,4 @@
-import { Files, MessageSquare, Settings, AlertCircle, Search, Package, Heart, Github } from 'lucide-react'
+import { Files, MessageSquare, Settings, AlertCircle, Search, Package, Heart, Github, GitBranch } from 'lucide-react'
 import type { ActivityView } from '../types'
 
 interface Props {
@@ -11,6 +11,7 @@ interface Props {
 const ITEMS: { view: ActivityView; icon: typeof Files; label: string }[] = [
   { view: 'files', icon: Files, label: 'Explorer' },
   { view: 'search', icon: Search, label: 'Search' },
+  { view: 'git', icon: GitBranch, label: 'Source Control' },
   { view: 'chat', icon: MessageSquare, label: 'Chat' },
   { view: 'problems', icon: AlertCircle, label: 'Problems' },
   { view: 'mcp', icon: Package, label: 'MCP Marketplace' },

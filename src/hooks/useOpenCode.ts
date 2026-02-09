@@ -1,7 +1,7 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import type { ChatSession, ChatMessage, MessagePart, Provider, Model, AgentMode, EditApprovalMode, SessionTokenUsage, AgentStep, AIProvider } from '../types'
 import { AGENT_MODES } from '../components/AgentModeSelector'
-import { zenClient, type ZenModel, MODEL_METADATA } from '../lib/zenClient'
+import { zenClient, type ZenModel, MODEL_METADATA, PROVIDER_REGISTRY, getProviderInfo } from '../lib/zenClient'
 import { type SoundSettings, DEFAULT_SOUND_SETTINGS, playSound, showNotification } from '../lib/sounds'
 import { createCheckpoint, getCheckpoints, restoreCheckpoint, extractModifiedFiles, type Checkpoint } from '../lib/checkpoints'
 import { useSessionManager } from './useSessionManager'
@@ -89,9 +89,12 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
   const [isReady, setIsReady] = useState(false)
   const [hasApiKey, setHasApiKey] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [apiKeys, setApiKeys] = useState<Record<AIProvider, { key: string; isConfigured: boolean }>>({
-    zen: { key: '', isConfigured: false },
-    zai: { key: '', isConfigured: false },
+  const [apiKeys, setApiKeys] = useState<Record<AIProvider, { key: string; isConfigured: boolean }>>(() => {
+    const init = {} as Record<AIProvider, { key: string; isConfigured: boolean }>
+    for (const p of PROVIDER_REGISTRY) {
+      init[p.id] = { key: '', isConfigured: false }
+    }
+    return init
   })
 
   // ─── Delegated Sub-Hooks ──────────────────────────────────────────────────
@@ -117,13 +120,47 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
   const [editApprovalMode, setEditApprovalModeState] = useState<EditApprovalMode>('allow-all')
   const [soundSettings, setSoundSettingsState] = useState<SoundSettings>(DEFAULT_SOUND_SETTINGS)
 
-  const abortControllerRef = useRef<AbortController | null>(null)
+  // Concurrency: Per-session state maps to prevent interference between concurrent agent runs
+  const abortControllersRef = useRef<Map<string, AbortController>>(new Map()) // sessionId → AbortController
   const activeRequestsRef = useRef<Map<string, string>>(new Map()) // sessionId → requestId
-  const activeCleanupRef = useRef<(() => void) | null>(null)
+  const activeCleanupFnsRef = useRef<Map<string, () => void>>(new Map()) // sessionId → cleanup fn
   const [projectPath, setProjectPathState] = useState<string | null>(null)
   const projectPathRef = useRef<string | null>(null)
   const [streamingSpeed, setStreamingSpeed] = useState(0) // tokens/sec
   const [projectTokenCount, setProjectTokenCount] = useState(0)
+
+  // Batched streaming updates: coalesce rapid setAllSessionMessages calls into one per animation frame
+  const pendingMessageUpdatesRef = useRef<Map<string, (msgs: ChatMessage[]) => ChatMessage[]>>(new Map())
+  const rafIdRef = useRef<number | null>(null)
+
+  const flushMessageUpdates = useCallback(() => {
+    rafIdRef.current = null
+    const pending = pendingMessageUpdatesRef.current
+    if (pending.size === 0) return
+    const updates = new Map(pending)
+    pending.clear()
+    setAllSessionMessages(prev => {
+      const next = new Map(prev)
+      for (const [sessionId, updater] of updates) {
+        const current = next.get(sessionId) || []
+        next.set(sessionId, updater(current))
+      }
+      return next
+    })
+  }, [])
+
+  const scheduleMessageUpdate = useCallback((sessionId: string, updater: (msgs: ChatMessage[]) => ChatMessage[]) => {
+    // Chain updaters so multiple calls per frame compose correctly
+    const existing = pendingMessageUpdatesRef.current.get(sessionId)
+    if (existing) {
+      pendingMessageUpdatesRef.current.set(sessionId, (msgs) => updater(existing(msgs)))
+    } else {
+      pendingMessageUpdatesRef.current.set(sessionId, updater)
+    }
+    if (rafIdRef.current === null) {
+      rafIdRef.current = requestAnimationFrame(flushMessageUpdates)
+    }
+  }, [flushMessageUpdates])
 
   // Keep ref in sync with state for use in other functions
   useEffect(() => {
@@ -132,9 +169,13 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
 
   useEffect(() => {
     return () => {
-      if (activeCleanupRef.current) {
-        activeCleanupRef.current()
-        activeCleanupRef.current = null
+      // Clean up all active sessions on unmount
+      activeCleanupFnsRef.current.forEach(fn => fn())
+      activeCleanupFnsRef.current.clear()
+      // Cancel any pending rAF to prevent setState on unmounted component
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current)
+        rafIdRef.current = null
       }
     }
   }, [])
@@ -217,16 +258,17 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     }
   }, [projectPath])
 
-  // Derive providers from models - group by aiProvider (OpenCode Zen vs Z.AI)
-  const providers: Provider[] = models.reduce((acc, model) => {
+  // Derive providers from models - group by aiProvider (zen, zai, openrouter, anthropic, etc.)
+  const providers: Provider[] = useMemo(() => models.reduce((acc, model) => {
     // GLM-4.7-Free is only available on OpenCode Zen, not Z.AI
     if (model.aiProvider === 'zai' && model.id === 'glm-4.7-free') {
       return acc
     }
 
-    // Group by which backend API to use
-    const providerName = model.aiProvider === 'zai' ? 'Z.AI' : 'OpenCode Zen'
-    const providerId = model.aiProvider === 'zai' ? 'zai' : 'zen'
+    // Group by the actual AI provider backend
+    const providerId = model.aiProvider || 'zen'
+    const providerInfo = getProviderInfo(providerId as AIProvider)
+    const providerName = providerInfo?.name || providerId
     const existingProvider = acc.find(p => p.id === providerId)
     const meta = MODEL_METADATA[model.id]
     const modelItem: Model = {
@@ -234,12 +276,13 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
       name: model.name,
       providerId: model.provider.toLowerCase().replace(/\s+/g, '-'),
       providerName: model.provider,
-      aiProvider: model.aiProvider,  // Include the AI provider (zen or zai)
+      aiProvider: model.aiProvider,
       maxTokens: model.maxTokens || meta?.maxTokens,
       contextWindow: model.contextWindow || meta?.contextWindow,
       pricing: model.pricing || meta?.pricing,
       free: model.free || false,
       description: model.description || meta?.description,
+      supportsTools: model.supportsTools ?? meta?.supportsTools,
     }
 
     if (existingProvider) {
@@ -252,116 +295,130 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
       })
     }
     return acc
-  }, [] as Provider[])
+  }, [] as Provider[]), [models])
 
   // Load API keys and preferences on mount
   useEffect(() => {
     const initialize = async () => {
       try {
-        // Load API keys for both providers
-        const savedZenKey = await window.artemis.store.get('apiKey:zen')
-        const savedZaiKey = await window.artemis.store.get('apiKey:zai')
-        const pendingApiKeys = await window.artemis.store.get('pendingApiKeys')
-        
-        const zenKey = savedZenKey || pendingApiKeys?.zen
-        const zaiKey = savedZaiKey || pendingApiKeys?.zai
-        
-        const newApiKeys: Record<AIProvider, { key: string; isConfigured: boolean }> = {
-          zen: { key: '', isConfigured: false },
-          zai: { key: '', isConfigured: false },
+        // Parallel batch: load all store keys at once instead of sequential IPC calls
+        const storeKeys = [
+          'pendingApiKeys',
+          ...PROVIDER_REGISTRY.map(p => `apiKey:${p.id}`),
+          'baseUrl:ollama',
+          'agentMode', 'editApprovalMode', 'soundSettings', 'activeModel', 'chatSessions',
+        ]
+        const storeResults = await Promise.all(storeKeys.map(k => window.artemis.store.get(k)))
+
+        // Unpack results by index
+        let idx = 0
+        const pendingApiKeys = storeResults[idx++]
+        const providerKeys: Record<string, any> = {}
+        for (const p of PROVIDER_REGISTRY) {
+          providerKeys[p.id] = storeResults[idx++]
         }
-        
-        if (zenKey && typeof zenKey === 'string') {
-          zenClient.setApiKey('zen', zenKey)
-          newApiKeys.zen = { key: zenKey, isConfigured: true }
+        const ollamaCustomUrl = storeResults[idx++]
+        const savedMode = storeResults[idx++]
+        const savedApproval = storeResults[idx++]
+        const savedSounds = storeResults[idx++]
+        const savedModel = storeResults[idx++]
+        const savedSessions = storeResults[idx++]
+
+        // Process API keys
+        const newApiKeys = {} as Record<AIProvider, { key: string; isConfigured: boolean }>
+        for (const p of PROVIDER_REGISTRY) {
+          newApiKeys[p.id] = { key: '', isConfigured: false }
         }
-        
-        if (zaiKey && typeof zaiKey === 'string') {
-          zenClient.setApiKey('zai', zaiKey)
-          newApiKeys.zai = { key: zaiKey, isConfigured: true }
-        }
-        
-        setApiKeys(newApiKeys)
-        
-        const hasAnyKey = newApiKeys.zen.isConfigured || newApiKeys.zai.isConfigured
-        setHasApiKey(hasAnyKey)
-        
-        if (hasAnyKey) {
-          // Validate keys from configured providers
-          let anyValid = false
-          for (const provider of ['zen', 'zai'] as AIProvider[]) {
-            if (newApiKeys[provider].isConfigured) {
-              const valid = await zenClient.validateApiKey(provider)
-              if (valid) {
-                anyValid = true
-              } else {
-                console.warn(`[useOpenCode] Invalid API key for provider: ${provider}`)
-              }
+
+        for (const p of PROVIDER_REGISTRY) {
+          const savedKey = providerKeys[p.id]
+          const key = savedKey || (pendingApiKeys as any)?.[p.id]
+
+          // Ollama doesn't need a key — load custom base URL instead
+          if (p.id === 'ollama') {
+            if (ollamaCustomUrl && typeof ollamaCustomUrl === 'string') {
+              zenClient.setBaseUrl('ollama', ollamaCustomUrl)
             }
+            const ollamaKey = (typeof key === 'string' && key) ? key : ''
+            if (ollamaKey) {
+              zenClient.setApiKey('ollama', ollamaKey)
+            }
+            continue
           }
-          
+
+          if (key && typeof key === 'string') {
+            zenClient.setApiKey(p.id, key)
+            newApiKeys[p.id] = { key, isConfigured: true }
+          }
+        }
+
+        setApiKeys(newApiKeys)
+
+        const hasAnyKey = Object.values(newApiKeys).some(v => v.isConfigured)
+        setHasApiKey(hasAnyKey)
+
+        if (hasAnyKey) {
+          // Validate configured providers in parallel, resolve on first success
+          const configuredProviders = PROVIDER_REGISTRY.filter(p => newApiKeys[p.id]?.isConfigured)
+          const validationResults = await Promise.allSettled(
+            configuredProviders.map(p => zenClient.validateApiKey(p.id))
+          )
+          const anyValid = validationResults.some(
+            r => r.status === 'fulfilled' && r.value === true
+          )
+
           if (anyValid) {
             setIsReady(true)
             // Clear pending keys if they were used
             if (pendingApiKeys) {
-              await window.artemis.store.set('pendingApiKeys', null)
-              if (zenKey) await window.artemis.store.set('apiKey:zen', zenKey)
-              if (zaiKey) await window.artemis.store.set('apiKey:zai', zaiKey)
+              const pendingSaves = [window.artemis.store.set('pendingApiKeys', null)]
+              for (const p of PROVIDER_REGISTRY) {
+                const key = (pendingApiKeys as any)?.[p.id]
+                if (key) pendingSaves.push(window.artemis.store.set(`apiKey:${p.id}`, key))
+              }
+              await Promise.all(pendingSaves)
             }
           } else {
             setError('Invalid API key(s). Please check your keys in Settings.')
           }
         }
 
-        // Load saved agent mode preference (including 'chat')
-        const savedMode = await window.artemis.store.get('agentMode')
+        // Apply loaded preferences (already fetched in parallel above)
         if (savedMode === 'builder' || savedMode === 'planner' || savedMode === 'chat') {
-          setAgentModeState(savedMode)
+          setAgentModeState(savedMode as AgentMode)
         }
 
-        const savedApproval = await window.artemis.store.get('editApprovalMode')
         if (savedApproval === 'allow-all' || savedApproval === 'session-only' || savedApproval === 'ask') {
-          setEditApprovalModeState(savedApproval)
+          setEditApprovalModeState(savedApproval as EditApprovalMode)
         }
 
-        const savedSounds = await window.artemis.store.get('soundSettings')
         if (savedSounds && typeof savedSounds === 'object') {
           setSoundSettingsState({ ...DEFAULT_SOUND_SETTINGS, ...savedSounds as Partial<SoundSettings> })
         }
         
-        const savedModel = await window.artemis.store.get('activeModel')
         if (savedModel && typeof savedModel === 'object') {
-          // Check if the saved model has the aiProvider field (added to fix Z.AI routing)
-          // If not, clear it to force re-selection with the updated model structure
-          if ('aiProvider' in savedModel) {
+          if ('aiProvider' in (savedModel as object)) {
             setActiveModelState(savedModel as Model)
           } else {
-            // Clear old model format to force re-selection
             await window.artemis.store.set('activeModel', null)
           }
         }
 
-        // Load sessions from storage
-        const savedSessions = await window.artemis.store.get('chatSessions')
+        // Load sessions — only load messages for the ACTIVE session (lazy-load others)
         if (Array.isArray(savedSessions) && savedSessions.length > 0) {
-          setSessions(savedSessions)
-          setActiveSessionId(savedSessions[0].id)
+          setSessions(savedSessions as ChatSession[])
+          const firstSessionId = (savedSessions as ChatSession[])[0].id
+          setActiveSessionId(firstSessionId)
           
-          // Load messages for ALL sessions into memory
-          const messagesMap = new Map<string, ChatMessage[]>()
-          for (const session of savedSessions) {
-            try {
-              const savedMessages = await window.artemis.store.get(`messages-${session.id}`)
-              if (Array.isArray(savedMessages)) {
-                messagesMap.set(session.id, savedMessages)
-              } else {
-                messagesMap.set(session.id, [])
-              }
-            } catch {
-              messagesMap.set(session.id, [])
-            }
+          // Only load messages for the active session, not all sessions
+          try {
+            const activeMessages = await window.artemis.store.get(`messages-${firstSessionId}`)
+            const messagesMap = new Map<string, ChatMessage[]>()
+            messagesMap.set(firstSessionId, Array.isArray(activeMessages) ? activeMessages : [])
+            setAllSessionMessages(messagesMap)
+          } catch {
+            setAllSessionMessages(new Map([[firstSessionId, []]]))
           }
-          setAllSessionMessages(messagesMap)
         }
       } catch (err) {
         console.error('[useOpenCode] Initialization error:', err)
@@ -408,19 +465,19 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
         }))
         
         // Check if we now have any valid keys
-        const hasAnyKey = zenClient.hasApiKey()
+        const hasAnyKey = zenClient.hasApiKey() || provider === 'ollama'
         setHasApiKey(hasAnyKey)
         
         if (hasAnyKey) {
           setIsReady(true)
           setError(null)
-          // Fetch models
           await refreshModels()
         }
         
         return true
       } else {
-        setError(`Invalid API key for ${provider === 'zai' ? 'Z.AI' : 'OpenCode Zen'}`)
+        const info = getProviderInfo(provider)
+        setError(`Invalid API key for ${info?.name || provider}`)
         return false
       }
     } catch (err) {
@@ -506,10 +563,10 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
 
   // Helper: set the assistant message parts directly (preserves interleaved order)
   // Automatically preserves thinking/reasoning blocks that were set separately
+  // Uses batched rAF updates to avoid Map cloning on every streaming delta
   const updateAssistantParts = useCallback((sessionId: string, parts: MessagePart[]) => {
-    setAllSessionMessages(prev => {
-      const msgs = prev.get(sessionId)
-      if (!msgs || msgs.length === 0) return prev
+    scheduleMessageUpdate(sessionId, (msgs) => {
+      if (msgs.length === 0) return msgs
       
       const newMsgs = [...msgs]
       const lastIndex = newMsgs.length - 1
@@ -523,17 +580,15 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
         newMsgs[lastIndex] = { ...newMsgs[lastIndex], parts: finalParts }
       }
       
-      const next = new Map(prev)
-      next.set(sessionId, newMsgs)
-      return next
+      return newMsgs
     })
-  }, [])
+  }, [scheduleMessageUpdate])
 
   // Helper: update thinking block in assistant message
+  // Uses batched rAF updates to avoid Map cloning on every streaming delta
   const updateThinkingBlock = useCallback((sessionId: string, steps: AgentStep[], startTime: number, isComplete: boolean, reasoningContent?: string) => {
-    setAllSessionMessages(prev => {
-      const msgs = prev.get(sessionId)
-      if (!msgs || msgs.length === 0) return prev
+    scheduleMessageUpdate(sessionId, (msgs) => {
+      if (msgs.length === 0) return msgs
       
       const newMsgs = [...msgs]
       const lastIndex = newMsgs.length - 1
@@ -569,11 +624,9 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
         }
       }
       
-      const next = new Map(prev)
-      next.set(sessionId, newMsgs)
-      return next
+      return newMsgs
     })
-  }, [])
+  }, [scheduleMessageUpdate])
 
   // Send message — uses the new provider-agnostic agent system
   // modeOverride: force a specific agent mode for this request (e.g. when switching from planner to builder)
@@ -583,7 +636,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
       return
     }
 
-    if (!zenClient.hasApiKey()) {
+    if (!zenClient.hasApiKey() && activeModel.aiProvider !== 'ollama') {
       setError('Please set your API key first')
       return
     }
@@ -644,16 +697,30 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     setError(null)
 
     // ─── Build Provider Config ─────────────────────────────────
-    const aiProvider = activeModel.aiProvider || 'zen'
+    const aiProvider = (activeModel.aiProvider || 'zen') as AIProvider
     const apiKey = await window.artemis.store.get(`apiKey:${aiProvider}`) as string || ''
+    const providerInfo = getProviderInfo(aiProvider)
     const isZaiGlm = aiProvider === 'zai' && activeModel.id.startsWith('glm-')
+
+    // Resolve base URL (custom for Ollama, registry for others)
+    const baseUrl = zenClient.getBaseUrl(aiProvider)
+
+    // Build provider-specific extra headers
+    const extraHeaders: Record<string, string> = {}
+    if (aiProvider === 'anthropic') {
+      extraHeaders['anthropic-version'] = '2023-06-01'
+    } else if (aiProvider === 'openrouter') {
+      extraHeaders['HTTP-Referer'] = 'https://artemis.ide'
+      extraHeaders['X-Title'] = 'Artemis IDE'
+    }
 
     const providerConfig = {
       id: aiProvider,
-      name: aiProvider === 'zai' ? 'Z.AI' : 'OpenCode Zen',
-      baseUrl: aiProvider === 'zai' ? 'https://api.z.ai/api/paas/v4' : 'https://opencode.ai/zen/v1',
+      name: providerInfo?.name || aiProvider,
+      baseUrl,
       apiKey,
-      defaultFormat: 'openai-chat' as const,
+      defaultFormat: (providerInfo?.defaultFormat || 'openai-chat') as 'openai-chat' | 'openai-responses' | 'anthropic-messages',
+      ...(Object.keys(extraHeaders).length > 0 ? { extraHeaders } : {}),
     }
 
     // ─── Build Model Config ────────────────────────────────────
@@ -663,15 +730,29 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
       'glm-4.6': 'GLM-4.6',
     }
 
+    // Determine if this model needs a special endpoint format override
+    const isAnthropicDirect = aiProvider === 'anthropic'
+
+    // Use the model's supportsTools field if available, otherwise fall back to heuristic
+    const NO_TOOL_PREFIXES = ['gemma-', 'gemma3n', 'gemma-3n', 'gemma-2-', 'gemma-3-']
+    const modelIdLower = activeModel.id.toLowerCase()
+    const supportsTools = activeModel.supportsTools !== undefined
+      ? activeModel.supportsTools
+      : !NO_TOOL_PREFIXES.some(p => modelIdLower.includes(p))
+
     const modelConfig = {
       id: activeModel.id,
       name: activeModel.name,
       maxTokens: activeModel.maxTokens || 4096,
       contextWindow: activeModel.contextWindow,
+      supportsTools,
       ...(isZaiGlm ? {
         baseUrl: 'https://api.z.ai/api/anthropic/v1',
         endpointFormat: 'anthropic-messages' as const,
         apiModelId: ZAI_GLM_NAME_MAP[activeModel.id] || activeModel.id,
+      } : {}),
+      ...(isAnthropicDirect ? {
+        endpointFormat: 'anthropic-messages' as const,
       } : {}),
     }
 
@@ -720,6 +801,11 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     // ─── Agent Tool Hints ─────────────────────────────────────────
     if (effectiveMode !== 'planner') {
       systemPrompt += `\nYou have access to web_search (DuckDuckGo, no API key) and fetch_url (fetch any web page) tools. Use web_search when the user asks you to look something up. Use fetch_url when the user shares a URL or you need to read a web page, docs, or article.`
+
+      // Provider-specific docs search tool: scope fetch_url to the active provider's documentation
+      if (providerInfo?.docsUrl) {
+        systemPrompt += `\n\n## Provider Documentation Search\nThe current AI provider is **${providerInfo.name}**. When the user asks about this provider's API, models, capabilities, rate limits, or configuration, use fetch_url to consult the official documentation at: ${providerInfo.docsUrl}\nAlways prefer fetching from this official source over general web searches for provider-specific questions.`
+      }
     }
 
     // ─── MCP Tool Awareness ──────────────────────────────────────
@@ -916,18 +1002,36 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
 
         case 'tool_call_start':
           if (event.data.name) {
-            addStep('tool-call', `Calling ${event.data.name}...`, {
-              name: event.data.name,
-              args: event.data.arguments || {},
-            })
-            parts.push({
-              type: 'tool-call' as const,
-              toolCall: {
-                id: event.data.id || generateId('tc-'),
+            const tcId = event.data.id || generateId('tc-')
+            // Deduplicate: tool_call_start fires twice per tool (once during
+            // streaming with id+name, once before execution with id+name+args).
+            // If a part with the same id exists, update it instead of pushing a duplicate.
+            const existingIdx = parts.findIndex(
+              p => p.type === 'tool-call' && p.toolCall?.id === tcId
+            )
+            if (existingIdx >= 0) {
+              // Merge in arguments that arrived with the second event
+              parts[existingIdx] = {
+                ...parts[existingIdx],
+                toolCall: {
+                  ...parts[existingIdx].toolCall!,
+                  args: { ...parts[existingIdx].toolCall!.args, ...event.data.arguments },
+                },
+              }
+            } else {
+              addStep('tool-call', `Calling ${event.data.name}...`, {
                 name: event.data.name,
                 args: event.data.arguments || {},
-              },
-            })
+              })
+              parts.push({
+                type: 'tool-call' as const,
+                toolCall: {
+                  id: tcId,
+                  name: event.data.name,
+                  args: event.data.arguments || {},
+                },
+              })
+            }
             updateAssistantParts(sessionId!, parts)
           }
           break
@@ -1010,7 +1114,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
           break
       }
     })
-    activeCleanupRef.current = cleanupEvent
+    activeCleanupFnsRef.current.set(sessionId!, cleanupEvent)
 
     // ─── Run the Agent ─────────────────────────────────────────
     try {
@@ -1037,6 +1141,10 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
         addStep('summary', totalText.slice(0, 150) + (totalText.length > 150 ? '...' : ''))
         updateThinkingBlock(sessionId!, agentSteps, thinkingStartTime, true, reasoningContent)
       }
+
+      // Flush any pending rAF-batched updates before the final save
+      // to ensure the thinking block's isComplete flag is in state
+      flushMessageUpdates()
 
       // ─── Final Message Save ────────────────────────────────────
       setAllSessionMessages(prev => {
@@ -1121,13 +1229,13 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
       }
     } finally {
       cleanupEvent()
-      activeCleanupRef.current = null
+      activeCleanupFnsRef.current.delete(sessionId!)
       activeRequestsRef.current.delete(sessionId!)
+      abortControllersRef.current.delete(sessionId!)
       setStreamingSessionIds(prev => { const next = new Set(prev); next.delete(sessionId!); return next })
       setStreamingSpeed(0)
-      abortControllerRef.current = null
     }
-  }, [activeSessionId, activeModel, allSessionMessages, agentMode, soundSettings, createSession, saveMessages, saveSessions, updateAssistantParts, updateThinkingBlock, trackUsage])
+  }, [activeSessionId, activeModel, allSessionMessages, agentMode, soundSettings, createSession, saveMessages, saveSessions, updateAssistantParts, updateThinkingBlock, flushMessageUpdates, trackUsage])
 
   const abortMessage = useCallback(() => {
     if (!activeSessionId) return
@@ -1136,8 +1244,16 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
       window.artemis.agent.abort(requestId).catch(() => {})
       activeRequestsRef.current.delete(activeSessionId)
     }
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
+    const controller = abortControllersRef.current.get(activeSessionId)
+    if (controller) {
+      controller.abort()
+      abortControllersRef.current.delete(activeSessionId)
+    }
+    // Clean up the event listener for this session
+    const cleanupFn = activeCleanupFnsRef.current.get(activeSessionId)
+    if (cleanupFn) {
+      cleanupFn()
+      activeCleanupFnsRef.current.delete(activeSessionId)
     }
     setStreamingSessionIds(prev => { const next = new Set(prev); next.delete(activeSessionId); return next })
   }, [activeSessionId])

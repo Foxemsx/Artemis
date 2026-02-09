@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useRef } from 'react'
 import type { ChatSession, ChatMessage } from '../types'
 
 function generateId(prefix: string = ''): string {
@@ -26,6 +26,9 @@ export interface SessionManagerReturn {
 export function useSessionManager(activeProjectId: string | null): SessionManagerReturn {
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const activeSessionIdRef = useRef<string | null>(null)
+  // Keep ref in sync so callbacks always read the latest value
+  activeSessionIdRef.current = activeSessionId
   const [allSessionMessages, setAllSessionMessages] = useState<Map<string, ChatMessage[]>>(new Map())
 
   const messages = useMemo(() => {
@@ -108,7 +111,8 @@ export function useSessionManager(activeProjectId: string | null): SessionManage
       const updated = prev.filter(s => s.id !== id)
       saveSessions(updated)
 
-      if (activeSessionId === id) {
+      // Use ref to avoid stale closure over activeSessionId
+      if (activeSessionIdRef.current === id) {
         if (updated.length > 0) {
           setActiveSessionId(updated[0].id)
           selectSession(updated[0].id)
@@ -127,7 +131,7 @@ export function useSessionManager(activeProjectId: string | null): SessionManage
       return next
     })
     window.artemis.store.set(`messages-${id}`, null).catch(() => {})
-  }, [activeSessionId, saveSessions, selectSession])
+  }, [saveSessions, selectSession])
 
   const renameSession = useCallback((id: string, title: string) => {
     setSessions(prev => {
@@ -140,11 +144,12 @@ export function useSessionManager(activeProjectId: string | null): SessionManage
   }, [saveSessions])
 
   const clearMessages = useCallback(() => {
-    if (!activeSessionId) return
+    const currentId = activeSessionIdRef.current
+    if (!currentId) return
 
-    setAllSessionMessages(prev => new Map(prev).set(activeSessionId, []))
-    window.artemis.store.set(`messages-${activeSessionId}`, []).catch(() => {})
-  }, [activeSessionId])
+    setAllSessionMessages(prev => new Map(prev).set(currentId, []))
+    window.artemis.store.set(`messages-${currentId}`, []).catch(() => {})
+  }, [])
 
   return {
     sessions,

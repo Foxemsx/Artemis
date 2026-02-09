@@ -1,17 +1,125 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import MonacoEditor, { loader } from '@monaco-editor/react'
+import * as monaco from 'monaco-editor'
+import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
+import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
+import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker'
+import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker'
+import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
 import { X, Clipboard, Pin } from 'lucide-react'
 
-// Configure Monaco loader to use CDN for language workers (must run at module level)
-loader.config({
-  paths: {
-    vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.55.1/min/vs'
+// Security: Use local Monaco bundle instead of CDN to prevent remote code execution
+self.MonacoEnvironment = {
+  getWorker(_, label) {
+    if (label === 'json') return new jsonWorker()
+    if (label === 'css' || label === 'scss' || label === 'less') return new cssWorker()
+    if (label === 'html' || label === 'handlebars' || label === 'razor') return new htmlWorker()
+    if (label === 'typescript' || label === 'javascript') return new tsWorker()
+    return new editorWorker()
   }
-})
+}
+
+loader.config({ monaco })
 
 import type { EditorTab, Theme } from '../types'
 import ContextMenu, { type MenuItem } from './ContextMenu'
 import ConfirmDialog from './ConfirmDialog'
+
+// ─── Inline Completion Provider ─────────────────────────────────────────────
+
+let inlineCompletionDisposable: monaco.IDisposable | null = null
+let inlineCompletionAbort: AbortController | null = null
+
+function registerInlineCompletionProvider(monacoInstance: typeof monaco) {
+  if (inlineCompletionDisposable) inlineCompletionDisposable.dispose()
+
+  inlineCompletionDisposable = monacoInstance.languages.registerInlineCompletionsProvider(
+    { pattern: '**' },
+    {
+      provideInlineCompletions: async (model, position, _context, token) => {
+        // Always check the backend config for the latest enabled state
+        // so that toggling in Settings takes effect immediately
+        try {
+          const cfg = await window.artemis.inlineCompletion.getConfig()
+          if (!cfg?.enabled) return { items: [] }
+        } catch {
+          return { items: [] }
+        }
+
+        // Cancel previous in-flight request
+        if (inlineCompletionAbort) inlineCompletionAbort.abort()
+        inlineCompletionAbort = new AbortController()
+
+        // Debounce: wait 400ms after last keystroke
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 400)
+          token.onCancellationRequested(() => { clearTimeout(timer); reject(new Error('cancelled')) })
+        }).catch(() => { return { items: [] } as any })
+
+        if (token.isCancellationRequested) return { items: [] }
+
+        const textUntilPosition = model.getValueInRange({
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: position.lineNumber,
+          endColumn: position.column,
+        })
+        const textAfterPosition = model.getValueInRange({
+          startLineNumber: position.lineNumber,
+          startColumn: position.column,
+          endLineNumber: model.getLineCount(),
+          endColumn: model.getLineMaxColumn(model.getLineCount()),
+        })
+
+        // Skip if prefix is too short or only whitespace
+        const trimmedPrefix = textUntilPosition.trim()
+        if (trimmedPrefix.length < 10) return { items: [] }
+
+        try {
+          const result = await window.artemis.inlineCompletion.complete({
+            prefix: textUntilPosition.slice(-3000),
+            suffix: textAfterPosition.slice(0, 1000),
+            language: model.getLanguageId(),
+            filepath: model.uri.path,
+          })
+
+          if (token.isCancellationRequested || !result?.completion) return { items: [] }
+
+          return {
+            items: [{
+              insertText: result.completion,
+              range: new monacoInstance.Range(
+                position.lineNumber,
+                position.column,
+                position.lineNumber,
+                position.column,
+              ),
+            }],
+          }
+        } catch {
+          return { items: [] }
+        }
+      },
+      freeInlineCompletions: () => {},
+    }
+  )
+}
+
+// Sync open tabs into Monaco's TypeScript service for cross-file go-to-definition
+function syncTabsToTypeScript(tabs: EditorTab[], monacoInstance: typeof monaco) {
+  for (const tab of tabs) {
+    const lang = tab.language
+    if (lang === 'typescript' || lang === 'typescriptreact' || lang === 'javascript' || lang === 'javascriptreact') {
+      const uri = monacoInstance.Uri.file(tab.path)
+      const existing = monacoInstance.editor.getModel(uri)
+      if (!existing) {
+        monacoInstance.editor.createModel(tab.content, lang, uri)
+      } else if (existing.getValue() !== tab.content) {
+        existing.setValue(tab.content)
+      }
+    }
+  }
+}
 
 interface Props {
   tabs: EditorTab[]
@@ -27,14 +135,26 @@ interface Props {
   onUnpinTab?: (path: string) => void
   onReorderTabs?: (fromPath: string, toPath: string) => void
   theme: Theme
+  inlineCompletionEnabled?: boolean
 }
 
 export default function Editor({
   tabs, activeTabPath, onSelectTab, onCloseTab, onCloseOtherTabs, onCloseAllTabs, onCloseTabsToRight,
-  onSave, onContentChange, onPinTab, onUnpinTab, onReorderTabs, theme,
+  onSave, onContentChange, onPinTab, onUnpinTab, onReorderTabs, theme, inlineCompletionEnabled: icEnabled = false,
 }: Props) {
   const activeTab = tabs.find((t) => t.path === activeTabPath) || null
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; path: string } | null>(null)
+  const monacoRef = useRef<typeof monaco | null>(null)
+
+  // Note: inline completion enabled state is checked live from backend config
+  // in the provider itself, so no module-level sync is needed.
+
+  // Sync open tabs to TypeScript language service for cross-file navigation
+  useEffect(() => {
+    if (monacoRef.current && tabs.length > 0) {
+      syncTabsToTypeScript(tabs, monacoRef.current)
+    }
+  }, [tabs])
 
   // Sort tabs: pinned tabs first, then unpinned in original order
   const sortedTabs = useMemo(() => {
@@ -285,22 +405,39 @@ export default function Editor({
             language={activeTab.language}
             theme={theme === 'light' ? 'vs' : 'vs-dark'}
             onChange={handleEditorChange}
-            onMount={(editor, monaco) => {
-              // Configure TypeScript compiler options for TS/TSX files
-              if (activeTab.language === 'typescript' || activeTab.language === 'typescriptreact') {
-                monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
-                  target: monaco.languages.typescript.ScriptTarget.Latest,
-                  allowNonTsExtensions: true,
-                  moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
-                  module: monaco.languages.typescript.ModuleKind.CommonJS,
-                  noEmit: true,
-                  esModuleInterop: true,
-                  jsx: monaco.languages.typescript.JsxEmit.React,
-                  reactNamespace: 'React',
-                  allowJs: true,
-                  typeRoots: ['node_modules/@types']
-                })
+            onMount={(editor, monacoInstance) => {
+              monacoRef.current = monacoInstance
+
+              // ─── TypeScript / JavaScript language service configuration ───
+              const tsDefaults = monacoInstance.languages.typescript.typescriptDefaults
+              const jsDefaults = monacoInstance.languages.typescript.javascriptDefaults
+              const compilerOpts = {
+                target: monacoInstance.languages.typescript.ScriptTarget.Latest,
+                allowNonTsExtensions: true,
+                moduleResolution: monacoInstance.languages.typescript.ModuleResolutionKind.NodeJs,
+                module: monacoInstance.languages.typescript.ModuleKind.ESNext,
+                noEmit: true,
+                esModuleInterop: true,
+                jsx: monacoInstance.languages.typescript.JsxEmit.React,
+                reactNamespace: 'React',
+                allowJs: true,
+                checkJs: false,
+                strict: false,
+                typeRoots: ['node_modules/@types'],
               }
+              tsDefaults.setCompilerOptions(compilerOpts)
+              jsDefaults.setCompilerOptions(compilerOpts)
+              tsDefaults.setDiagnosticsOptions({ noSemanticValidation: false, noSyntaxValidation: false })
+              jsDefaults.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: false })
+
+              // Sync all open tabs into the TS service for cross-file go-to-definition
+              syncTabsToTypeScript(tabs, monacoInstance)
+
+              // ─── Register inline completion provider (once globally) ───
+              registerInlineCompletionProvider(monacoInstance)
+
+              // ─── Focus the editor ───
+              editor.focus()
             }}
             options={{
               fontSize: 13,
@@ -323,9 +460,30 @@ export default function Editor({
                 indentation: false,
                 highlightActiveIndentation: false,
               },
-              // Hide whitespace indicators and indent guides
               renderWhitespace: 'none',
               renderControlCharacters: false,
+              // ─── Find & Replace widget (Ctrl+F / Ctrl+H) ───
+              find: {
+                addExtraSpaceOnTop: true,
+                autoFindInSelection: 'multiline',
+                seedSearchStringFromSelection: 'selection',
+              },
+              // ─── Sticky Scroll (pin parent scopes at top) ───
+              stickyScroll: { enabled: true },
+              // ─── Go-to-Definition (Ctrl+Click) ───
+              gotoLocation: {
+                multipleDefinitions: 'goto',
+                multipleTypeDefinitions: 'goto',
+                multipleReferences: 'peek',
+              },
+              // ─── Inline Suggestions (ghost text via AI) ───
+              // Always enabled at Monaco level; the provider checks backend config
+              inlineSuggest: {
+                enabled: true,
+                mode: 'subwordSmart',
+              },
+              quickSuggestions: { other: true, comments: false, strings: true },
+              suggestOnTriggerCharacters: true,
             }}
           />
         </div>

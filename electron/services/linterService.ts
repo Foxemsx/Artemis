@@ -9,6 +9,37 @@ import { spawn } from 'child_process'
 import path from 'path'
 import fs from 'fs'
 
+// Security: Dangerous shell metacharacters that could enable command injection via filePath
+const DANGEROUS_PATH_CHARS = /[;&|`$(){}[\]\<>\n\r]/
+
+/** Security: Resolve a bare command name to a full path on Windows so spawn works with shell:false.
+ *  Finds .cmd/.bat/.exe variants in PATH. */
+function resolveCommand(command: string): string {
+  if (process.platform !== 'win32') return command
+  if (path.isAbsolute(command)) return command
+  const cmdExtensions = ['.cmd', '.bat', '.exe']
+  const pathDirs = (process.env.PATH || '').split(path.delimiter)
+  for (const dir of pathDirs) {
+    for (const ext of cmdExtensions) {
+      const withExt = path.join(dir, command + ext)
+      try { if (fs.existsSync(withExt)) return withExt } catch {}
+    }
+    const exact = path.join(dir, command)
+    try { if (fs.existsSync(exact)) return exact } catch {}
+  }
+  return command
+}
+
+/** Security: Validate that a file path doesn't contain shell metacharacters. */
+function validateLintPath(filePath: string): void {
+  if (DANGEROUS_PATH_CHARS.test(filePath)) {
+    throw new Error(`Lint path contains dangerous characters: ${filePath}`)
+  }
+  if (filePath.includes('\0')) {
+    throw new Error('Lint path contains null bytes')
+  }
+}
+
 export interface LintDiagnostic {
   file: string
   line: number
@@ -32,6 +63,14 @@ const LINT_TIMEOUT_MS = 30_000
  */
 export async function runESLint(filePath: string, projectPath: string): Promise<LintResult> {
   const result: LintResult = { file: filePath, diagnostics: [] }
+
+  // Security: Validate filePath to prevent injection when passed as argument
+  try {
+    validateLintPath(filePath)
+  } catch (err: any) {
+    result.error = err.message
+    return result
+  }
 
   // Try to find eslint in the project's node_modules
   const eslintPaths = [
@@ -100,6 +139,14 @@ export async function runESLint(filePath: string, projectPath: string): Promise<
  */
 export async function runPylint(filePath: string, projectPath: string): Promise<LintResult> {
   const result: LintResult = { file: filePath, diagnostics: [] }
+
+  // Security: Validate filePath to prevent injection when passed as argument
+  try {
+    validateLintPath(filePath)
+  } catch (err: any) {
+    result.error = err.message
+    return result
+  }
 
   try {
     const output = await spawnLinter(
@@ -186,7 +233,16 @@ function spawnLinter(
   cwd: string
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    // Security: Resolve binary path and use shell:false to prevent command injection.
+    // On Windows, route .cmd/.bat through cmd.exe /c explicitly instead of shell:true.
+    let spawnExe = resolveCommand(command)
+    let spawnArgs = args
+    if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(spawnExe)) {
+      spawnArgs = ['/c', spawnExe, ...args]
+      spawnExe = process.env.ComSpec || 'cmd.exe'
+    }
+
+    const child = spawn(spawnExe, spawnArgs, {
       cwd,
       env: { ...process.env },
       stdio: ['ignore', 'pipe', 'pipe'],

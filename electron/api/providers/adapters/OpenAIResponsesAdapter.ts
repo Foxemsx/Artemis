@@ -9,7 +9,7 @@
  * System: uses "instructions" top-level param
  */
 
-import { BaseProvider, type ProviderResponse } from '../BaseProvider'
+import { BaseProvider, capMaxTokens, type ProviderResponse } from '../BaseProvider'
 import type {
   CompletionRequest,
   StreamDelta,
@@ -57,6 +57,13 @@ export class OpenAIResponsesAdapter extends BaseProvider {
 
     if (request.tools && request.tools.length > 0) {
       body.tools = this.formatTools(request.tools)
+    }
+
+    // Cap max_output_tokens so input + output fits within the context window
+    if (body.max_output_tokens) {
+      const serialized = JSON.stringify(input) + JSON.stringify(body.tools || [])
+        + (body.instructions || '')
+      body.max_output_tokens = capMaxTokens(body.max_output_tokens, request.model.contextWindow, serialized)
     }
 
     return body

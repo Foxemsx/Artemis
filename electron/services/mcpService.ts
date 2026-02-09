@@ -90,7 +90,9 @@ export const CURATED_SERVERS: MCPServer[] = [
     repoUrl: 'https://github.com/modelcontextprotocol/servers',
     tools: ['fs_read', 'fs_write', 'fs_glob', 'fs_watch', 'fs_tree'],
     spawnCommand: 'npx',
-    spawnArgs: ['-y', '@modelcontextprotocol/server-filesystem', '/'],
+    // Security: Restricted to user home dir instead of '/' to enforce least-privilege.
+    // The actual project path is injected at install time via installServer().
+    spawnArgs: ['-y', '@modelcontextprotocol/server-filesystem', process.env.HOME || process.env.USERPROFILE || '.'],
   },
   {
     id: 'mcp-context7',
@@ -810,7 +812,11 @@ function getMCPStorePath(): string {
 // ─── Config Encryption Helpers ──────────────────────────────────────────────
 
 function encryptConfigValue(value: string): string {
-  if (!safeStorage.isEncryptionAvailable()) return value
+  if (!safeStorage.isEncryptionAvailable()) {
+    // Security: Refuse to store MCP config secrets in plaintext
+    console.warn('[Artemis MCP] safeStorage unavailable — refusing to store MCP config value')
+    throw new Error('Encryption unavailable: cannot store MCP config secret without OS keychain. Please configure your system credential manager.')
+  }
   return 'enc:' + safeStorage.encryptString(value).toString('base64')
 }
 

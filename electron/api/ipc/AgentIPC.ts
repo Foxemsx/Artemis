@@ -18,6 +18,37 @@ import { toolExecutor } from '../tools/ToolExecutor'
 import type { ToolApprovalCallback } from '../agent/AgentLoop'
 import type { ToolCall } from '../types'
 
+// ─── URL Allowlist for HTTP Proxy (SSRF protection) ───────────────────────
+// Mirrors the ALLOWED_API_DOMAINS list in main.ts to prevent SSRF via agent HTTP proxies.
+const ALLOWED_API_DOMAINS = new Set([
+  'opencode.ai', 'api.z.ai',
+  'api.openai.com', 'api.anthropic.com',
+  'openrouter.ai',
+  'generativelanguage.googleapis.com',
+  'api.deepseek.com',
+  'api.groq.com',
+  'api.mistral.ai',
+  'api.moonshot.cn',
+  'api.perplexity.ai',
+  'localhost',
+  'html.duckduckgo.com',
+])
+
+function isAllowedApiUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false
+    const hostname = parsed.hostname.toLowerCase()
+    const domains = Array.from(ALLOWED_API_DOMAINS)
+    for (let i = 0; i < domains.length; i++) {
+      if (hostname === domains[i] || hostname.endsWith('.' + domains[i])) return true
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
 // ─── Active Agent Runs ───────────────────────────────────────────────────
 
 const activeRuns = new Map<string, AgentLoop>()
@@ -54,16 +85,9 @@ function createApprovalCallback(
       return false
     }
 
-    // Wait for renderer to respond
+    // Wait indefinitely for explicit user approval — never auto-approve
     return new Promise<boolean>((resolve) => {
       pendingApprovals.set(approvalId, { resolve })
-      // Auto-approve after 60s to prevent stuck agent
-      setTimeout(() => {
-        if (pendingApprovals.has(approvalId)) {
-          pendingApprovals.delete(approvalId)
-          resolve(true)
-        }
-      }, 60_000)
     })
   }
 }
@@ -92,14 +116,9 @@ function createPathApprovalCallback(
       return false
     }
 
+    // Wait indefinitely for explicit user approval — never auto-approve
     return new Promise<boolean>((resolve) => {
       pendingPathApprovals.set(approvalId, { resolve })
-      setTimeout(() => {
-        if (pendingPathApprovals.has(approvalId)) {
-          pendingPathApprovals.delete(approvalId)
-          resolve(true)
-        }
-      }, 60_000)
     })
   }
 }
@@ -243,15 +262,28 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
         approvalCallback = createApprovalCallback(requestId, mainWindow, onEvent, seqRef)
       }
 
-      // Build path approval callback - always available for paths outside project
+      // Build path approval callback — scoped to this run, passed per-execute call
+      // to avoid race conditions on the singleton ToolExecutor.
       const pathApprovalCallback = createPathApprovalCallback(requestId, mainWindow, onEvent, seqRef)
-      toolExecutor.setPathApprovalCallback(pathApprovalCallback)
 
-      const response = await agentLoop.run(request, onEvent, approvalCallback)
+      // Wrap the agent's onEvent to intercept tool executions and pass the per-run callback
+      const originalExecute = toolExecutor.execute.bind(toolExecutor)
+      const scopedExecute = (tc: ToolCall, projectPath?: string) =>
+        originalExecute(tc, projectPath, pathApprovalCallback)
 
-      // Send completion
-      mainWindow.webContents.send(`agent:complete:${requestId}`, response)
-      return response
+      // Temporarily patch execute for this run's duration
+      toolExecutor.execute = scopedExecute as any
+
+      try {
+        const response = await agentLoop.run(request, onEvent, approvalCallback)
+
+        // Send completion
+        mainWindow.webContents.send(`agent:complete:${requestId}`, response)
+        return response
+      } finally {
+        // Always restore original execute to prevent leaking scoped callbacks
+        toolExecutor.execute = originalExecute
+      }
     } catch (err: any) {
       const errorResponse = {
         content: '',
@@ -299,6 +331,21 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
     const agentLoop = activeRuns.get(requestId)
     if (agentLoop) {
       agentLoop.abort()
+
+      // Auto-REJECT all pending approvals for this run to prevent hanging promises
+      Array.from(pendingApprovals.entries()).forEach(([approvalId, pending]) => {
+        if (approvalId.startsWith(requestId)) {
+          pending.resolve(false)
+          pendingApprovals.delete(approvalId)
+        }
+      })
+      Array.from(pendingPathApprovals.entries()).forEach(([approvalId, pending]) => {
+        if (approvalId.includes(requestId)) {
+          pending.resolve(false)
+          pendingPathApprovals.delete(approvalId)
+        }
+      })
+
       return { success: true }
     }
     return { success: false, error: 'No active run found' }
@@ -329,6 +376,18 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
     headers?: Record<string, string>
     body?: string
   }) => {
+    // Security: Validate URL against allowlist to prevent SSRF
+    if (!isAllowedApiUrl(options.url)) {
+      return {
+        ok: false,
+        status: 0,
+        statusText: 'Access denied: URL domain is not in the allowed list',
+        data: '',
+        headers: {},
+        error: 'URL domain not allowed. Only configured API provider domains are permitted.',
+      }
+    }
+
     try {
       const response = await fetch(options.url, {
         method: options.method,
@@ -366,6 +425,15 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
     const mainWindow = getMainWindow()
     if (!mainWindow) {
       return { ok: false, status: 0, error: 'Main window not available' }
+    }
+
+    // Security: Validate URL against allowlist to prevent SSRF
+    if (!isAllowedApiUrl(options.url)) {
+      mainWindow.webContents.send(`agent:stream:${options.requestId}`, {
+        type: 'error',
+        data: 'Access denied: URL domain is not in the allowed list',
+      })
+      return { ok: false, status: 0, error: 'URL domain not allowed' }
     }
 
     try {

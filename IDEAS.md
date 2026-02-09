@@ -1,461 +1,223 @@
-# Artemis IDE — Ideas & Improvement Proposals
+# 🧠 Agentic IDE – Feature & QoL Ideas
 
-> Organized by category. Priority tags: 🔴 High, 🟡 Medium, 🟢 Low, 💡 Nice-to-have
-
----
-
-## Table of Contents
-
-1. [Architecture & State Management](#1-architecture--state-management)
-2. [Performance](#2-performance)
-3. [Agent System](#3-agent-system)
-4. [Developer Experience](#4-developer-experience)
-5. [UI/UX](#5-uiux)
-6. [Security Hardening](#6-security-hardening)
-7. [New Features](#7-new-features)
-8. [Testing](#8-testing)
-9. [Infrastructure & Build](#9-infrastructure--build)
+> 50 high-impact ideas for **Artemis IDE** — based on a deep audit of the codebase and comparison against Cursor, Windsurf, and Claude Code.
 
 ---
 
-## 1. Architecture & State Management
+## 🔥 High-Impact Must-Haves
 
-### 🔴 Introduce a State Management Layer
-**Problem:** `App.tsx` is an 810-line god component managing 20+ state variables. All state flows through prop drilling (~40 props through `PanelLayout`).
+### 1. 🧩 Inline Code Completion (Ghost Text)
+- Add TAB-completable AI ghost-text suggestions as the user types in Monaco, similar to Copilot / Cursor Tab.
+- This is the single highest-impact missing feature. **Cursor and Windsurf both ship this as a core pillar.** Artemis currently has zero in-editor AI assistance — all AI interaction is chat-only.
 
-**Proposal:** Adopt a lightweight state manager:
-- **Option A: Zustand** — Minimal boilerplate, TypeScript-first, works well with React. Create stores for each domain: `useProjectStore`, `useEditorStore`, `useAgentStore`, `useSettingsStore`.
-- **Option B: React Context + `useReducer`** — No external dependency. Create domain-specific contexts.
+### 2. 🔀 Git Integration Panel
+- Add a dedicated "Source Control" activity view with staged/unstaged file lists, inline diffs, commit, push/pull, branch switching, and merge conflict resolution.
+- Currently only `get_git_diff` exists as an agent tool. **Cursor, Windsurf, and VS Code all have rich Git UIs.** A visual Git panel would eliminate constant terminal round-trips.
 
-**Impact:** Eliminates prop drilling, makes components independently testable, enables easier feature addition.
+### 3. 🔍 Find & Replace in Editor
+- Implement `Ctrl+F` / `Ctrl+H` find-and-replace inside the Monaco editor with regex support, match highlighting, and replace-all.
+- Monaco supports this natively via `editor.getAction('actions.find')` — it just needs to be wired up. This is a basic editor feature every developer expects.
 
----
+### 4. 🗺️ Go-to-Definition & Symbol Navigation
+- Wire up Monaco's `registerDefinitionProvider` and `registerHoverProvider` for TypeScript/JavaScript using the built-in language service, enabling Ctrl+Click go-to-definition and hover docs.
+- **Cursor and VS Code have this out of the box.** Without it, Artemis feels like a text editor rather than an IDE.
 
-### 🟡 Decompose Large Components
-**Problem:** Several components exceed 500 lines: `EnhancedChatInput` (908), `main.ts` (807), `App.tsx` (810), `Settings.tsx` (657), `MCPMarketplace.tsx` (612).
+### 5. 📂 Multi-Root Workspaces
+- Allow opening multiple project folders simultaneously in the file explorer, each with its own trust context and terminal scope.
+- Currently limited to one project at a time. Developers working on monorepos or frontend+backend splits are blocked.
 
-**Proposal:**
-- `EnhancedChatInput` → Split into `ChatTextarea`, `SlashCommandMenu`, `MentionMenu`, `ImageAttachmentBar`
-- `Settings.tsx` → Each settings category becomes its own component (`AIProviderSettings`, `AppearanceSettings`, `SoundSettings`, etc.)
-- `main.ts` → Extract IPC handlers: `registerFSHandlers()`, `registerSessionHandlers()`, `registerToolHandlers()`, `registerMCPHandlers()`, `registerDiscordHandlers()`
-- `App.tsx` → Extract hooks: `useKeyboardShortcuts()`, `useEditorTabs()`, `useProjectManager()`, `useTerminalManager()`
+### 6. ↩️ Undo Agent Changes (Diff Preview + Revert)
+- Before applying agent file edits, show a side-by-side diff preview in the editor. Add a one-click "Revert this change" button on each tool-result card.
+- Checkpoints exist but are coarse-grained (whole session). **Windsurf has per-edit accept/reject.** Fine-grained undo dramatically increases user trust.
 
----
+### 7. 🖥️ Split Editor Panes
+- Allow horizontal and vertical editor splits so users can view two files side-by-side.
+- `react-resizable-panels` is already a dependency — extend `PanelLayout` to support split editor groups. This is table-stakes for any serious IDE.
 
-### 🟡 Centralize Utility Functions
-**Problem:** `formatTokenCount`, `formatCost`, `truncatePath` are duplicated across `StatusBar`, `Sidebar`, `ThinkingBlock`, and `toolIcons`.
+### 8. 🧵 Conversation Branching (Fork a Chat)
+- Let users fork a conversation at any message to explore an alternative approach without losing the original thread.
+- **No competitor does this well.** This would be a genuine differentiator — AI conversations are inherently branching, but every IDE forces a linear history.
 
-**Proposal:** Create `src/lib/formatters.ts` with all shared formatting functions. Single source of truth.
+### 9. 📌 @-Mention Files in Chat Input
+- Type `@filename` in the chat input to auto-complete and attach file contents as context, with a dropdown picker showing project files.
+- `fileContext` already exists in `sendMessage` but there's no discoverable UI for it. **Cursor's `@` mention system is a core UX pattern** that Artemis should match.
 
----
+### 10. 🧪 Integrated Test Runner Panel
+- Add an activity view that discovers and runs tests (Jest, Vitest, Pytest, etc.), showing pass/fail status per test with re-run and debug links.
+- Currently the agent can `execute_command jest` but there's no visual test runner. **Cursor and VS Code both have Test Explorer UIs.**
 
-### 🟢 Centralize Store Keys
-**Problem:** Store keys (`"sessions"`, `"apiKey:zen"`, `"tokenUsage-${id}"`, `"theme"`, etc.) are magic strings scattered across the codebase.
+### 11. 🌲 Breadcrumb Navigation Bar
+- Add a breadcrumb trail above the editor showing `project > folder > file > symbol`, each segment clickable for quick navigation.
+- Monaco supports `DocumentSymbolProvider` for symbol breadcrumbs. This is a standard VS Code feature that aids orientation in large files.
 
-**Proposal:** Create `src/lib/storeKeys.ts`:
-```typescript
-export const STORE_KEYS = {
-  SESSIONS: 'sessions',
-  THEME: 'theme',
-  API_KEY: (provider: string) => `apiKey:${provider}`,
-  TOKEN_USAGE: (sessionId: string) => `tokenUsage-${sessionId}`,
-  MESSAGES: (sessionId: string) => `messages-${sessionId}`,
-  // ...
-} as const
-```
+### 12. ⚡ Editor Minimap
+- Enable Monaco's built-in minimap (currently likely disabled) for large-file navigation, matching VS Code's default behavior.
+- A single Monaco option toggle — minimal effort, real usability gain.
 
----
+### 13. 💾 Auto-Save with Configurable Delay
+- Add an auto-save setting (off / onFocusChange / afterDelay) so users don't lose work. Show a subtle save indicator in the tab.
+- Currently files only save on explicit `Ctrl+S`. Agent edits go through `writeFile` but manual edits can be lost.
 
-## 2. Performance
+### 14. 🔄 Hot Reload Agent Changes into Editor
+- When the agent writes or edits a file that is currently open in an editor tab, automatically reload the tab content without losing cursor position or scroll state.
+- Currently `fileRefreshTrigger` only fires after streaming ends. Open tabs can show stale content during long agent runs.
 
-### 🔴 Optimize Project Token Counting
-**Problem:** `calculateProjectTokenCount` in `useOpenCode.ts` recursively reads every file in the project directory. For a project with thousands of files, this is an I/O bottleneck.
-
-**Proposal:**
-- **Incremental counting:** Use a file watcher (`chokidar` or Electron's `fs.watch`) to track changes and only re-count modified files.
-- **Worker thread:** Offload counting to a Node.js worker thread in the main process to avoid blocking.
-- **Caching:** Cache file token counts with file modification timestamps as cache keys.
-- **Sampling:** For very large projects, sample a subset of files and extrapolate.
-
----
-
-### 🟡 Use `ripgrep` for File Search
-**Problem:** `toolSearchFiles` reads files one-by-one in JavaScript. For large codebases, this is orders of magnitude slower than native search tools.
-
-**Proposal:** Bundle `ripgrep` (`@vscode/ripgrep` npm package) and shell out to it for search operations. VS Code does this. Falls back to JS implementation if `rg` is not available.
+### 15. 🧱 Extension / Plugin System
+- Define a plugin API (similar to VS Code extensions) allowing community-contributed language support, themes, tools, and UI panels.
+- This is a long-term architectural investment. **Cursor is built on VS Code's extension ecosystem.** Even a minimal plugin system (custom tools + themes) would unlock community growth.
 
 ---
 
-### 🟡 Cache Codebase Index for @mentions
-**Problem:** `indexCodebase` in `EnhancedChatInput.tsx` recursively lists all files every time the user types `@`. No caching.
+## ⚡ Productivity & QoL Boosters
 
-**Proposal:**
-- Cache the file tree with a TTL (e.g., 30 seconds).
-- Invalidate on project change or file system events.
-- Debounce the indexing call.
+### 16. 🗂️ Quick File Switcher (`Ctrl+P`)
+- Add a fuzzy file finder overlay (like VS Code's `Ctrl+P`) that searches all project files by name with instant preview.
+- The Command Palette (`Ctrl+K`) only has ~6 static actions. A fast file picker is the #1 navigation tool for keyboard-driven developers.
 
----
+### 17. 📋 Drag & Drop Files into Chat
+- Allow dragging files from the File Explorer (or OS file manager) directly into the chat input to attach them as context.
+- Images can already be attached, but there's no drag-and-drop for code files. This reduces the friction of providing context to the agent.
 
-### 🟡 Use Better Token Estimation in ConversationManager
-**Problem:** `ConversationManager.ts` uses naive `length / 4` token estimation. The frontend already has a much better `tokenCounter.ts` with GPT BPE heuristics.
+### 18. 💬 Chat History Search
+- Add a search input in the sidebar's session list to find past conversations by keyword, across all sessions.
+- With many sessions accumulating, finding a previous conversation becomes painful. **Cursor has conversation search.**
 
-**Proposal:** Move `tokenCounter.ts` to a shared location (or duplicate the logic in the backend) and use it in `ConversationManager` for more accurate context window management.
+### 19. 📤 Export Conversation as Markdown
+- Add a "Copy as Markdown" or "Export" button on the chat panel that generates a clean markdown document of the entire conversation.
+- Useful for documentation, sharing with teammates, or archiving decisions. No competitor does this cleanly.
 
----
+### 20. 🎯 Sticky Scroll in Editor
+- Enable Monaco's sticky scroll feature that pins parent scopes (function/class headers) at the top of the editor as you scroll.
+- A single Monaco option — dramatically improves orientation in deeply nested code.
 
-### 🟢 Virtual Scrolling for Long Lists
-**Problem:** File explorer, session list, and search results render all items. Large lists cause jank.
+### 21. 🔢 Per-Model Token Budget Warnings
+- Show a visual warning when the conversation is approaching the model's context window limit (e.g., 80% of `contextWindow`), with a suggestion to start a new session.
+- `contextWindow` is already stored per model but never used for user-facing warnings. Context overflow causes silent quality degradation.
 
-**Proposal:** Use `react-window` or `@tanstack/react-virtual` for lists that could exceed ~100 items.
+### 22. ⏱️ Agent Run Timeline
+- Replace the current ThinkingBlock with a visual horizontal timeline showing each agent step (think → tool → result → think → ...) with durations.
+- The current collapsible list works but doesn't convey the agent's workflow intuitively. A timeline gives a clearer mental model.
 
----
+### 23. 🏷️ Auto-Generate Session Titles with AI
+- After the first exchange, ask the model for a 3-5 word title instead of truncating the user's message to 50 chars.
+- Current titles are `text.slice(0, 50)` which produces ugly, unhelpful labels like `"Can you help me fix the bug where the user..."`.
 
-### 🟢 Async Store Writes
-**Problem:** `saveStore` in `main.ts` uses `fs.writeFileSync`, blocking the main process event loop.
+### 24. 🔒 Per-Session Approved Paths Cache
+- When the user approves a path outside the project (via `path_approval_required`), remember it for the rest of the session so they don't get re-prompted.
+- Currently each out-of-project access triggers a new approval. This becomes annoying in monorepo-adjacent workflows.
 
-**Proposal:** Switch to `fs.promises.writeFile` with a debounce/throttle to batch rapid writes (e.g., during token tracking updates).
+### 25. 📊 Cost Dashboard
+- Add a dedicated view (or Settings sub-panel) showing cumulative token usage and estimated cost broken down by model, session, and date.
+- `sessionTokenUsage` and `totalTokenUsage` exist but are only shown in the status bar as a single number. Power users want a spending breakdown.
 
----
+### 26. 🧹 One-Click "Clean Session" 
+- Add a button that clears the conversation history but keeps the session metadata, useful for resetting context without losing the session's identity in the sidebar.
+- `clearMessages` exists but is buried. Making it prominent reduces context pollution from failed experiments.
 
-## 3. Agent System
+### 27. 🖼️ Image Paste from Clipboard
+- Support `Ctrl+V` to paste screenshots or images directly from the clipboard into the chat input.
+- Image attachments already work via file picker, but clipboard paste is the fastest path for sharing screenshots and error dialogs.
 
-### 🔴 Add Retry Logic for LLM API Calls
-**Problem:** If the LLM API returns a transient error (500, 503, 429), the entire agent run fails immediately.
+### 28. 📁 Nested File Search in Explorer
+- Add a filter/search input at the top of the File Explorer that filters the tree in real-time as you type.
+- Currently the file tree shows everything. In large projects, finding a file requires scrolling or switching to the Search panel.
 
-**Proposal:** Implement exponential backoff retry in `AgentLoop.streamCompletion()`:
-- Retry on 429 (rate limit) with `Retry-After` header respect
-- Retry on 500/503 (server errors) up to 3 times with exponential backoff
-- Emit a `'retrying'` event so the UI can show retry status
+### 29. ⌨️ Vim / Emacs Keybinding Modes
+- Add a setting to enable Vim or Emacs keybindings in the Monaco editor via `monaco.editor.EditorOptions.keyBindings`.
+- A highly requested feature by power users. Monaco supports this via the `monaco-vim` and `monaco-emacs` packages.
 
----
-
-### 🟡 Parallel Tool Execution
-**Problem:** The agent executes tool calls sequentially, even when they're independent (e.g., reading multiple files).
-
-**Proposal:** When the LLM returns multiple tool calls in a single response, check for dependencies (e.g., write after read of same file) and execute independent calls in parallel using `Promise.all`.
-
----
-
-### 🟡 Streaming Token Usage from API
-**Problem:** Token usage is estimated client-side. Many APIs return actual token counts in streaming responses (`usage` field in the final chunk).
-
-**Proposal:** Parse the `usage` field from the final stream event (OpenAI includes it with `stream_options: { include_usage: true }`) and use actual counts when available, falling back to estimation.
-
----
-
-### 🟡 Persist Conversation History in Backend
-**Problem:** Conversation history is managed in the renderer (via `useSessionManager`) and passed to the backend on each agent run. If the renderer reloads, history is re-loaded from store.
-
-**Proposal:** Option to maintain conversation state in the main process `ConversationManager` to survive renderer reloads and reduce IPC payload size.
-
----
-
-### 🟢 Tool Output Streaming
-**Problem:** Tool results are sent as a single event after execution completes. For long-running commands, the UI shows no progress.
-
-**Proposal:** Stream `execute_command` stdout/stderr as `tool_output_delta` events, similar to how text content is streamed. The agent loop would still wait for completion, but the UI would show real-time output.
+### 30. 🔔 Smart Notification Grouping
+- When the agent completes multiple tool operations rapidly, batch notifications into a single grouped notification instead of firing one per event.
+- Currently `playSound('action-required')` fires per approval. Multiple rapid approvals create notification spam.
 
 ---
 
-### 🟢 Make `toolListDirectory` Show Dotfiles Optionally
-**Problem:** `toolListDirectory` filters out all dotfiles (`.env`, `.gitignore`, `.eslintrc`, etc.). The agent can't see configuration files.
+## 🤖 Agentic & AI-Native Features
 
-**Proposal:** Add an optional `showHidden` parameter to the `list_directory` tool. Default to `false` but allow the agent to request hidden files when needed.
+### 31. 🧠 Agent Memory (Persistent Context)
+- Allow the agent to persist key facts, decisions, and user preferences across sessions in a `.artemis/memory.json` file in the project root.
+- **Claude Code has "memory" via CLAUDE.md. Windsurf has "memories."** Artemis has `AGENTS.md` (read-only) but no way for the agent to *write* persistent learnings.
 
----
+### 32. 🔄 Parallel Tool Execution
+- When the agent issues multiple independent tool calls in one iteration (e.g., reading 3 files), execute them in parallel instead of sequentially.
+- `ToolExecutor.executeAll` uses a `for` loop. Switching to `Promise.all` for independent read-only tools would cut latency significantly.
 
-### 💡 Agent Memory Across Sessions
-**Proposal:** Implement a lightweight vector store or keyword index that lets the agent recall information from past sessions. Could use the MCP Memory server or a local SQLite-backed solution.
+### 33. 🏗️ Multi-File Apply Preview
+- When the agent generates changes to multiple files, show a "Changes" panel (like a PR diff view) where the user can review and accept/reject each file individually before any writes happen.
+- **Cursor has "Apply All" with per-file review. Windsurf has a similar flow.** Currently Artemis applies changes immediately with no batch review.
 
----
+### 34. 🤖 Agent Personas / System Prompt Presets
+- Let users create and switch between custom agent personas (e.g., "Senior Reviewer", "Junior Pair Programmer", "Documentation Writer") each with a different system prompt prefix.
+- Currently the system prompt is hardcoded per mode. Custom personas would let users tailor the agent's behavior to different tasks.
 
-## 4. Developer Experience
+### 35. 📐 Rules File Support (`.artemisrules`)
+- Support a `.artemisrules` file in the project root with structured YAML/TOML rules that the agent must follow (coding style, forbidden patterns, preferred libraries, etc.).
+- `AGENTS.md` exists but is freeform markdown. A structured rules file enables deterministic enforcement. **Cursor has `.cursorrules`, Windsurf has `.windsurfrules`.**
 
-### 🟡 Extract Shared Dropdown/Positioning Logic
-**Problem:** Several components implement nearly identical dropdown positioning logic: `ModelSelector`, `ContextMenu`, `AgentModeSelector`. Each handles viewport boundary detection independently.
+### 36. 🔁 Agent Retry with Different Strategy
+- When the agent errors or produces a bad result, add a "Retry with different approach" button that re-sends the same prompt with an added instruction to avoid the previous failure.
+- Currently the user must manually rephrase. An automated retry-with-feedback loop improves recovery from flaky model outputs.
 
-**Proposal:** Create a `useDropdownPosition(triggerRef, options)` hook that handles:
-- Viewport boundary detection
-- Preferred placement (above/below/left/right)
-- Resize/scroll handling
-- Returns `{ position, isOpen, toggle, close }`
+### 37. 🧰 Custom Tool Authoring (User-Defined Tools)
+- Allow users to define custom tools via a `.artemis/tools/` directory containing JSON schema + shell script pairs that the agent can invoke.
+- The `ToolRegistry` already supports `register()`. Exposing this to users would unlock project-specific automation (deploy scripts, database migrations, etc.).
 
----
+### 38. 📡 Streaming Tool Output
+- For long-running `execute_command` calls, stream stdout/stderr to the chat UI in real-time instead of waiting for the process to complete.
+- Currently `toolExecuteCommand` buffers all output and returns it at the end. Streaming gives the user (and agent) live feedback.
 
-### 🟡 Create a Shared Component Library
-**Proposal:** Extract reusable primitives:
-- `<Dropdown>` — Positioned overlay with click-outside handling
-- `<ContextMenu>` — Already exists, but could be made more generic
-- `<Tooltip>` — Used ad-hoc in several places with inline styles
-- `<IconButton>` — Consistent icon button with hover states
-- `<Badge>` — For status indicators
-- `<SearchInput>` — Search with clear button and keyboard handling
+### 39. 🔍 Context-Aware File Selection
+- Before sending a message, automatically detect which files are relevant based on the user's query (via embeddings or keyword matching) and include them as context.
+- Currently the agent must manually `read_file` each file. Pre-loading relevant context reduces tool-call round-trips and improves first-response quality.
 
----
-
-### 🟢 Add `console.debug` Guards
-**Problem:** Many `catch {}` blocks silently swallow errors.
-
-**Proposal:** Replace empty catches with `catch (err) { if (import.meta.env.DEV) console.debug(err) }` or a `debugLog` utility that only logs in development.
-
----
-
-## 5. UI/UX
-
-### 🟡 Unified Styling Strategy
-**Problem:** Components mix inline `style={{}}` with Tailwind classes inconsistently. Some use CSS variables (`var(--text-primary)`), some use Tailwind colors, some use hardcoded hex values.
-
-**Proposal:** Standardize on Tailwind + CSS variables. Map all theme CSS variables to Tailwind theme config so they can be used as classes (e.g., `text-primary` instead of `style={{ color: 'var(--text-primary)' }}`).
+### 40. 🧩 MCP Tool Approval Tiers
+- Add per-MCP-server trust levels: "always allow", "ask once per session", "ask every time" — instead of the current binary installed/not-installed model.
+- MCP servers can execute arbitrary code. The current model grants full access once installed. Tiered trust mirrors the workspace trust model already in place.
 
 ---
 
-### 🟡 Toast/Notification System
-**Problem:** Errors and status messages are shown inline in various ways — some in the status bar, some in console, some in dialog boxes.
+## 🧪 Experimental / Differentiators
 
-**Proposal:** Add a toast/notification system (e.g., `react-hot-toast` or custom) for consistent user feedback:
-- Agent errors
-- File save confirmations
-- API key validation results
-- MCP server connection status changes
+### 41. 🌊 "Cascade Mode" — Multi-Agent Orchestration
+- Allow spawning multiple agent instances that collaborate: one plans, one codes, one reviews — coordinated via a supervisor agent.
+- **No competitor ships multi-agent orchestration in the IDE.** This would be a flagship differentiator. The `AgentLoop` is already isolated enough to run multiple instances.
 
----
+### 42. 🔮 Predictive Terminal Commands
+- After the agent finishes code changes, suggest likely next terminal commands (e.g., "Run `npm test`?", "Start dev server?") as clickable chips above the terminal.
+- This bridges the gap between agent edits and the user's next action. No competitor does this.
 
-### 🟢 Keyboard Shortcut Conflict Detection
-**Problem:** Settings allows customizing keyboard shortcuts but doesn't check for conflicts with existing shortcuts or system/browser defaults.
+### 43. 📸 Visual Regression Testing via Screenshots
+- Add a tool that captures a screenshot of a running localhost app (via Electron's `webContents.capturePage` or Puppeteer) and feeds it to a vision model for visual QA.
+- Artemis already supports image attachments in chat. Automating screenshot capture would enable visual debugging workflows that no text-based IDE supports.
 
-**Proposal:** When the user records a new shortcut, check against all registered shortcuts and show a warning if there's a conflict.
+### 44. 🎙️ Voice Input for Chat
+- Add a microphone button in the chat input that uses the Web Speech API (or Whisper) to transcribe voice into text.
+- Hands-free coding assistance during debugging sessions. The Web Speech API is free and works in Electron's Chromium renderer.
 
----
+### 45. 🧬 Diff-Aware Agent Context
+- When the user has uncommitted git changes, automatically include the diff in the agent's context so it understands what was recently changed.
+- `get_git_diff` exists as a tool but the agent must decide to call it. Auto-including recent diffs would make the agent significantly more context-aware.
 
-### 🟢 Responsive Panel Sizes
-**Problem:** Panel sizes in `PanelLayout` use fixed min/default sizes. On small screens, the layout can feel cramped.
+### 46. 📊 Code Complexity Heatmap
+- Add an overlay in the file explorer or editor gutter that shows per-file or per-function complexity scores (cyclomatic complexity, line count), highlighting hotspots.
+- This helps developers and the agent prioritize refactoring targets. No IDE competitor visualizes complexity directly.
 
-**Proposal:** Make panel sizes responsive to window width. Store user's preferred panel sizes in settings and restore on startup.
+### 47. 🔗 Deep Link Sharing (`artemis://open?file=...`)
+- Register a custom protocol handler (`artemis://`) that opens specific files, lines, or even chat sessions — enabling shareable links in docs, PRs, and Slack.
+- Electron supports `protocol.registerSchemesAsPrivileged`. This would make Artemis a first-class citizen in team workflows.
 
----
+### 48. ⏪ Session Replay (Time-Travel Debugging)
+- Record all agent events during a session and allow replaying them step-by-step, like a DVR for agent behavior.
+- Agent events are already structured (`AgentEvent` with seq numbers and timestamps). Persisting and replaying them would enable powerful debugging of agent failures and a unique demo/teaching tool.
 
-### 💡 Command Palette Enhancement
-**Proposal:** Expand the command palette (`CommandPalette.tsx`) to support:
-- File search (fuzzy find by filename)
-- Symbol search (jump to function/class)
-- Recent actions
-- Settings quick-access
-- Model switching
+### 49. 🧮 Inline Token Counter per Message
+- Show a small token count badge on each chat message (user and assistant) so the user can see which messages consume the most context.
+- Token estimation already exists (`estimateTokens` in `tokenCounter.ts`). Surfacing it per-message helps users understand and optimize their context budget.
 
----
-
-### 💡 Split Editor View
-**Proposal:** Support side-by-side editor panels for comparing files or viewing a file while chatting. The `react-resizable-panels` library already supports this.
-
----
-
-### 💡 Diff View for Agent Changes
-**Proposal:** When the agent makes file edits, show a diff view (before/after) in the editor. Allow the user to accept/reject individual hunks. This would integrate with the existing checkpoint system.
-
----
-
-## 6. Security Hardening
-
-### 🟡 Enable Sandbox
-**Problem:** `sandbox: false` in BrowserWindow config gives the preload script more access than necessary.
-
-**Proposal:** Evaluate enabling `sandbox: true`. This requires moving any Node.js API usage in the preload to IPC calls. The current preload only uses `ipcRenderer` and `contextBridge`, so this should be feasible.
+### 50. 🌐 Local Model Auto-Discovery
+- Automatically detect locally running Ollama, LM Studio, or llama.cpp instances and offer them as model options without manual URL configuration.
+- Ollama support exists but requires manual base URL setup. Auto-discovery (ping `localhost:11434/api/tags`) would make local model usage frictionless — a major selling point for the "no cloud lock-in" positioning.
 
 ---
 
-### 🟡 Reduce Auto-Approve Timeout
-**Problem:** Tool approval auto-approves after 60 seconds of silence.
-
-**Proposal:** Options:
-1. Increase timeout to 5 minutes or remove auto-approve entirely.
-2. Add a user setting for auto-approve timeout duration.
-3. Show a persistent notification when approval is pending.
-
----
-
-### 🟢 CSP Nonces Instead of `unsafe-inline`
-**Problem:** CSP allows `unsafe-inline` for scripts and styles, weakening XSS protection.
-
-**Proposal:** Generate a random nonce per page load, inject it into the CSP header and all inline script/style tags. Vite has plugins for this.
-
----
-
-### 🟢 Project-Scoped FS Operations in IPC
-**Problem:** `window.artemis.fs.*` IPC handlers validate paths against system directories but don't enforce project scoping. Any non-system path is accessible.
-
-**Proposal:** Add an optional project path parameter to IPC FS handlers and enforce containment when a project is active. Allow explicit opt-out for cross-project operations.
-
----
-
-## 7. New Features
-
-### 🟡 Git Integration Panel
-**Proposal:** Add a Git activity view showing:
-- Modified/staged/untracked files
-- Inline diffs
-- Commit, push, pull actions
-- Branch management
-- Integration with the agent's `get_git_diff` tool
-
-The agent already has `get_git_diff` and `execute_command` for git operations. A dedicated UI would complement this.
-
----
-
-### 🟡 Extension/Plugin System
-**Proposal:** Allow users to extend Artemis with custom tools, themes, and UI panels:
-- **Custom tools:** Register additional `UniversalToolDefinition` + executor via a plugin API
-- **Custom themes:** Load CSS variable overrides from user-defined files
-- **Custom prompts:** User-defined system prompt templates per project
-
----
-
-### 🟢 Project-Level Settings
-**Proposal:** Support `.artemis/config.json` in project root for project-specific settings:
-- Default agent mode
-- Custom system prompt additions
-- Preferred model
-- Ignored directories for indexing
-- Custom tool configurations
-
----
-
-### 🟢 Multi-File Diff Review
-**Proposal:** After an agent run that modifies multiple files, show a "Review Changes" panel that lists all modified files with diffs. User can accept all, reject all, or cherry-pick individual changes. This builds on the existing checkpoint system.
-
----
-
-### 💡 Collaborative Sessions
-**Proposal:** Allow multiple users to share a chat session in real-time. Useful for pair programming with AI assistance.
-
----
-
-### 💡 Agent Workflows / Macros
-**Proposal:** Let users define reusable multi-step workflows:
-```yaml
-name: "Add Component"
-steps:
-  - prompt: "Create a new React component called {{name}} in src/components/"
-  - prompt: "Add exports for {{name}} to src/components/index.ts"
-  - prompt: "Create a test file for {{name}}"
-```
-Run with `/workflow add-component --name=UserProfile`.
-
----
-
-### 💡 Image/Screenshot Understanding
-**Proposal:** Leverage vision-capable models (GPT-4o, Claude) to:
-- Analyze screenshots dropped into chat
-- Generate UI code from design mockups
-- Debug visual issues from screenshots
-
-The `EnhancedChatInput` already supports image attachments. The backend needs to pass images through to vision-capable models in the correct format.
-
----
-
-### 💡 Local Model Support
-**Proposal:** Add support for local LLMs via Ollama or llama.cpp:
-- New provider adapter: `OllamaAdapter` (uses OpenAI-compatible API at `http://localhost:11434`)
-- Auto-detect running Ollama instance
-- Model management UI (pull, delete, list)
-
----
-
-## 8. Testing
-
-### 🔴 Unit Tests for Agent System
-**Priority target:** The agent system is the core of the product and has zero tests.
-
-**Proposal:**
-- `AgentLoop` — Mock HTTP adapter, verify event sequences, test max iterations, test abort
-- `StreamParser` — Feed known SSE payloads, verify delta parsing, test JSON repair
-- `ToolExecutor` — Test path validation, test each tool with mock FS
-- `ConversationManager` — Test trimming logic, token estimation, message ordering
-- Provider adapters — Test format conversion for each provider
-
-Framework: Vitest (already in the Vite ecosystem).
-
----
-
-### 🟡 Integration Tests for IPC Layer
-**Proposal:** Test the IPC bridge end-to-end:
-- `store:get`/`store:set` round-trip
-- `fs:readFile`/`fs:writeFile` with path validation
-- `agent:run` with a mock LLM response
-
-Framework: Electron's built-in test utilities or Playwright for Electron.
-
----
-
-### 🟢 Component Tests
-**Proposal:** Test critical UI components:
-- `EnhancedChatInput` — Slash commands, mentions, image attachment
-- `ModelSelector` — Search, selection, provider grouping
-- `Settings` — API key save/load, theme switching
-
-Framework: Vitest + React Testing Library.
-
----
-
-## 9. Infrastructure & Build
-
-### 🟡 Auto-Update System
-**Proposal:** Integrate `electron-updater` for automatic updates:
-- Check for updates on startup
-- Show update notification in status bar
-- Download and install in background
-- Release via GitHub Releases
-
----
-
-### 🟢 Error Reporting / Telemetry (Opt-in)
-**Proposal:** Optional crash reporting to catch issues in production:
-- Sentry integration for error tracking
-- Opt-in analytics for feature usage
-- Clear privacy controls in Settings
-
----
-
-### 🟢 Build Optimization
-**Proposal:**
-- Tree-shake unused Lucide icons (currently imports individual icons, which is good)
-- Code-split large components (`Settings`, `MCPMarketplace`) via `React.lazy`
-- Pre-bundle heavy dependencies in Vite config
-
----
-
-### 💡 Cross-Platform Packaging
-**Proposal:** Set up electron-builder configs for:
-- Windows (NSIS installer + portable)
-- macOS (DMG + App Store)
-- Linux (AppImage + deb + rpm)
-- Auto-signing for macOS/Windows
-
----
-
-## Priority Roadmap Suggestion
-
-### Phase 1: Foundation (High Impact, Low Risk)
-1. Centralize utility functions
-2. Add unit tests for agent system
-3. Add LLM API retry logic
-4. Optimize project token counting
-
-### Phase 2: Architecture (High Impact, Medium Risk)
-5. Introduce Zustand for state management
-6. Decompose `App.tsx` and large components
-7. Modularize `main.ts` IPC handlers
-8. Switch store to async writes
-
-### Phase 3: Polish (Medium Impact)
-9. Unified styling strategy
-10. Toast notification system
-11. Ripgrep-based file search
-12. Git integration panel
-13. Diff view for agent changes
-
-### Phase 4: Scale (Future)
-14. Plugin/extension system
-15. Local model support (Ollama)
-16. Agent workflows/macros
-17. Auto-update system
-18. Collaborative sessions
+*Generated from a deep analysis of the Artemis IDE codebase — comparing against Cursor, Windsurf, Claude Code, and VS Code.*

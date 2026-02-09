@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Key, Shield, ExternalLink, Check, X, Loader2, Zap, Server, Sparkles, Palette, Settings2, Info, Volume2, Bell, Play, RotateCcw, Keyboard, ChevronDown, FileText, FolderOpen, Search, Terminal, GitBranch, Code, FolderPlus, Trash2, Move, Edit3, MessageSquare, Layout, Eye, Gamepad2, Circle } from 'lucide-react'
+import { Key, Shield, ExternalLink, Check, X, Loader2, Zap, Server, Sparkles, Palette, Settings2, Info, Volume2, Bell, Play, RotateCcw, Keyboard, ChevronDown, FileText, FolderOpen, Search, Terminal, GitBranch, Code, FolderPlus, Trash2, Move, Edit3, MessageSquare, Layout, Eye, Gamepad2, Circle, Globe } from 'lucide-react'
 import type { Theme, AIProvider } from '../types'
 import { type SoundSettings, DEFAULT_SOUND_SETTINGS, previewSound, type SoundType } from '../lib/sounds'
+import { PROVIDER_REGISTRY, type ProviderInfo } from '../lib/zenClient'
+import { getProviderIcon } from './ProviderIcons'
 
 interface KeyBind {
   id: string
@@ -24,7 +26,7 @@ const DEFAULT_KEYBINDS: KeyBind[] = [
   { id: 'settings', label: 'Settings', description: 'Open settings', defaultKey: 'Ctrl+,', currentKey: 'Ctrl+,' },
 ]
 
-type SettingsCategory = 'providers' | 'appearance' | 'sounds' | 'discord' | 'general' | 'about'
+type SettingsCategory = 'providers' | 'appearance' | 'sounds' | 'discord' | 'general' | 'completion' | 'about'
 
 interface ProviderConfig {
   key: string
@@ -65,6 +67,7 @@ const THEME_OPTIONS: { id: Theme; name: string; description: string; colors: { b
 
 const SIDEBAR_ITEMS: { id: SettingsCategory; label: string; icon: typeof Palette }[] = [
   { id: 'providers', label: 'Providers', icon: Server },
+  { id: 'completion', label: 'Code Completion', icon: Sparkles },
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'sounds', label: 'Sounds & Alerts', icon: Volume2 },
   { id: 'discord', label: 'Discord RPC', icon: Gamepad2 },
@@ -74,14 +77,18 @@ const SIDEBAR_ITEMS: { id: SettingsCategory; label: string; icon: typeof Palette
 
 export default function Settings({ theme, onSetTheme, apiKeys, onSetApiKey, soundSettings, onSetSoundSettings }: Props) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>('providers')
-  const [providers, setProviders] = useState<Record<AIProvider, ProviderConfig>>({
-    zen: { key: '', status: 'idle', errorMessage: '', isConfigured: apiKeys.zen?.isConfigured || false },
-    zai: { key: '', status: 'idle', errorMessage: '', isConfigured: apiKeys.zai?.isConfigured || false },
+  const [providers, setProviders] = useState<Record<string, ProviderConfig>>(() => {
+    const init: Record<string, ProviderConfig> = {}
+    for (const p of PROVIDER_REGISTRY) {
+      init[p.id] = { key: '', status: 'idle', errorMessage: '', isConfigured: (apiKeys as any)[p.id]?.isConfigured || false }
+    }
+    return init
   })
 
   const handleSaveKey = async (provider: AIProvider) => {
     const config = providers[provider]
-    if (!config.key.trim()) return
+    // Ollama doesn't require a key — allow empty key for connectivity test
+    if (provider !== 'ollama' && !config.key.trim()) return
     setProviders(prev => ({ ...prev, [provider]: { ...prev[provider], status: 'saving', errorMessage: '' } }))
     try {
       const success = await onSetApiKey(provider, config.key.trim())
@@ -89,7 +96,10 @@ export default function Settings({ theme, onSetTheme, apiKeys, onSetApiKey, soun
         setProviders(prev => ({ ...prev, [provider]: { ...prev[provider], status: 'saved', key: '', isConfigured: true } }))
         setTimeout(() => { setProviders(prev => ({ ...prev, [provider]: { ...prev[provider], status: 'idle' } })) }, 2000)
       } else {
-        setProviders(prev => ({ ...prev, [provider]: { ...prev[provider], status: 'error', errorMessage: 'Invalid API key. Please check and try again.' } }))
+        const errMsg = provider === 'ollama'
+          ? 'Could not connect to Ollama. Make sure it is running and the base URL is correct.'
+          : 'Invalid API key. Please check and try again.'
+        setProviders(prev => ({ ...prev, [provider]: { ...prev[provider], status: 'error', errorMessage: errMsg } }))
       }
     } catch (err: any) {
       setProviders(prev => ({ ...prev, [provider]: { ...prev[provider], status: 'error', errorMessage: err.message || 'Failed to save API key' } }))
@@ -145,6 +155,9 @@ export default function Settings({ theme, onSetTheme, apiKeys, onSetApiKey, soun
               onSave={handleSaveKey}
             />
           )}
+          {activeCategory === 'completion' && (
+            <InlineCompletionSection />
+          )}
           {activeCategory === 'appearance' && (
             <AppearanceSection theme={theme} onSetTheme={onSetTheme} />
           )}
@@ -197,50 +210,172 @@ function KeySecurityInfo() {
   )
 }
 
+// ─── Ollama Base URL Input ───────────────────────────────────────────────────
+
+function OllamaBaseUrlInput() {
+  const [baseUrl, setBaseUrl] = useState('http://localhost:11434/v1')
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    window.artemis.store.get('baseUrl:ollama').then((val: any) => {
+      if (val && typeof val === 'string') setBaseUrl(val)
+    }).catch(() => {})
+  }, [])
+
+  const handleSave = async () => {
+    const url = baseUrl.trim().replace(/\/+$/, '')
+    await window.artemis.store.set('baseUrl:ollama', url)
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2000)
+  }
+
+  return (
+    <div className="mb-3">
+      <label className="text-[10px] font-semibold mb-1 block" style={{ color: 'var(--text-muted)' }}>
+        Base URL
+      </label>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={baseUrl}
+          onChange={e => setBaseUrl(e.target.value)}
+          placeholder="http://localhost:11434/v1"
+          className="flex-1 px-3 py-1.5 rounded-lg text-[11px] outline-none transition-all"
+          style={{
+            backgroundColor: 'var(--bg-elevated)',
+            border: '1px solid var(--border-subtle)',
+            color: 'var(--text-primary)',
+          }}
+          onFocus={e => { e.target.style.borderColor = 'var(--accent)' }}
+          onBlur={e => { e.target.style.borderColor = 'var(--border-subtle)' }}
+        />
+        <button
+          onClick={handleSave}
+          className="px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-all"
+          style={{
+            backgroundColor: saved ? 'rgba(74, 222, 128, 0.12)' : 'var(--accent-glow)',
+            color: saved ? '#4ade80' : 'var(--accent)',
+            border: saved ? '1px solid rgba(74, 222, 128, 0.25)' : '1px solid rgba(var(--accent-rgb), 0.12)',
+          }}
+        >
+          {saved ? 'Saved' : 'Save'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ─── Providers Section ──────────────────────────────────────────────────────
 
 function ProvidersSection({ providers, onKeyChange, onSave }: {
-  providers: Record<AIProvider, ProviderConfig>
+  providers: Record<string, ProviderConfig>
   onKeyChange: (provider: AIProvider, key: string) => void
   onSave: (provider: AIProvider) => void
 }) {
-  const hasAny = providers.zen.isConfigured || providers.zai.isConfigured
+  const hasAny = Object.values(providers).some(p => p.isConfigured)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+
   return (
     <>
-      <SectionHeader title="AI Providers" subtitle="Connect your AI provider API keys to start using Artemis." />
-
-      <ProviderKeyInput
-        name="OpenCode Zen"
-        description="GPT, Claude, Gemini, DeepSeek, and 20+ models via OpenCode"
-        icon={<Server size={18} style={{ color: 'var(--accent)' }} />}
-        placeholder="zen-... or sk-..."
-        helpUrl="https://opencode.ai"
-        config={providers.zen}
-        onKeyChange={k => onKeyChange('zen', k)}
-        onSave={() => onSave('zen')}
-      />
-
-      <div className="mt-4">
-        <ProviderKeyInput
-          name="Z.AI (Coding Plan)"
-          description="GLM 4.7 via Z.AI Coding Plan (Lite/Pro/Max). Uses Anthropic-compatible endpoint."
-          icon={<Sparkles size={18} style={{ color: 'var(--accent)' }} />}
-          placeholder="your Z.AI API key"
-          helpUrl="https://z.ai/manage-apikey/apikey-list"
-          config={providers.zai}
-          onKeyChange={k => onKeyChange('zai', k)}
-          onSave={() => onSave('zai')}
-        />
-      </div>
+      <SectionHeader title="AI Providers" subtitle="Connect one or more AI providers to start using Artemis. Each provider gives access to different models." />
 
       {!hasAny && (
-        <div className="mt-4 flex items-center gap-3 p-3.5 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
-          <Zap size={14} className="shrink-0" style={{ color: 'var(--accent)' }} />
-          <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-            Add at least one API key to start using AI features. Both providers offer free models.
-          </p>
+        <div className="mb-5 flex items-center gap-3 p-4 rounded-xl" style={{ backgroundColor: 'rgba(var(--accent-rgb), 0.06)', border: '1px solid rgba(var(--accent-rgb), 0.15)' }}>
+          <Zap size={16} className="shrink-0" style={{ color: 'var(--accent)' }} />
+          <div>
+            <p className="text-[12px] font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>Get started</p>
+            <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              Add at least one API key below. <strong style={{ color: 'var(--text-secondary)' }}>OpenCode Zen</strong> and <strong style={{ color: 'var(--text-secondary)' }}>Groq</strong> offer free models. <strong style={{ color: 'var(--text-secondary)' }}>Ollama</strong> runs locally with no key needed.
+            </p>
+          </div>
         </div>
       )}
+
+      <div className="space-y-3">
+        {PROVIDER_REGISTRY.map(info => {
+          const config = providers[info.id] || { key: '', status: 'idle' as const, errorMessage: '', isConfigured: false }
+          const isExpanded = expandedId === info.id
+          const ProvIcon = getProviderIcon(info.id)
+
+          return (
+            <div
+              key={info.id}
+              className="rounded-xl overflow-hidden transition-all duration-200"
+              style={{ backgroundColor: 'var(--bg-card)', border: config.isConfigured ? '1px solid rgba(74, 222, 128, 0.2)' : '1px solid var(--border-subtle)' }}
+            >
+              {/* Header */}
+              <button
+                onClick={() => setExpandedId(isExpanded ? null : info.id)}
+                className="w-full flex items-center justify-between p-4 text-left transition-colors duration-150"
+                onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)' }}
+                onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent' }}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: 'var(--accent-glow)', border: '1px solid rgba(var(--accent-rgb), 0.12)' }}>
+                    <ProvIcon size={18} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{info.name}</p>
+                      {config.isConfigured && (
+                        <div className="w-4 h-4 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: 'rgba(74, 222, 128, 0.15)' }}>
+                          <Check size={9} style={{ color: '#4ade80' }} />
+                        </div>
+                      )}
+                    </div>
+                    <p className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>{info.description}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0 ml-3">
+                  <a
+                    href="#"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.artemis.shell.openExternal(info.docsUrl) }}
+                    className="p-1.5 rounded-md transition-colors"
+                    style={{ color: 'var(--text-muted)' }}
+                    onMouseEnter={e => { e.currentTarget.style.color = 'var(--accent)'; e.currentTarget.style.backgroundColor = 'var(--bg-elevated)' }}
+                    onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.backgroundColor = 'transparent' }}
+                    title={`Open ${info.name} docs`}
+                  >
+                    <Globe size={13} />
+                  </a>
+                  <ChevronDown
+                    size={14}
+                    style={{
+                      color: 'var(--text-muted)',
+                      transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                      transition: 'transform 0.2s ease',
+                    }}
+                  />
+                </div>
+              </button>
+
+              {/* Expanded form */}
+              {isExpanded && (
+                <div className="px-4 pb-4">
+                  <div style={{ borderTop: '1px solid var(--border-subtle)' }} className="mb-3" />
+
+                  {/* Custom Base URL (Ollama) */}
+                  {info.customBaseUrl && (
+                    <OllamaBaseUrlInput />
+                  )}
+
+                  <ProviderKeyInput
+                    name={info.name}
+                    description={info.description}
+                    icon={<ProvIcon size={18} />}
+                    placeholder={info.placeholder}
+                    helpUrl={info.helpUrl}
+                    config={config}
+                    onKeyChange={k => onKeyChange(info.id, k)}
+                    onSave={() => onSave(info.id)}
+                    noKeyRequired={info.id === 'ollama'}
+                  />
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
 
       <KeySecurityInfo />
     </>
@@ -787,7 +922,256 @@ function AgentToolsSection() {
   )
 }
 
-// ─── Discord RPC Section ────────────────────────────────────────────────────
+// ─── Inline Completion Section ───────────────────────────────────────────
+
+function InlineCompletionSection() {
+  const [enabled, setEnabled] = useState(false)
+  const [provider, setProvider] = useState('')
+  const [model, setModel] = useState('')
+  const [maxTokens, setMaxTokens] = useState(128)
+  const [loading, setLoading] = useState(true)
+  const [saved, setSaved] = useState(false)
+
+  // Load current config on mount
+  useEffect(() => {
+    window.artemis.inlineCompletion.getConfig().then((config) => {
+      setEnabled(config.enabled)
+      setProvider(config.provider)
+      setModel(config.model)
+      setMaxTokens(config.maxTokens)
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }, [])
+
+  const saveConfig = async (updates: { enabled?: boolean; provider?: string; model?: string; maxTokens?: number }) => {
+    const newEnabled = updates.enabled ?? enabled
+    const newProvider = updates.provider ?? provider
+    const newModel = updates.model ?? model
+    const newMaxTokens = updates.maxTokens ?? maxTokens
+    if (updates.enabled !== undefined) setEnabled(newEnabled)
+    if (updates.provider !== undefined) setProvider(newProvider)
+    if (updates.model !== undefined) setModel(newModel)
+    if (updates.maxTokens !== undefined) setMaxTokens(newMaxTokens)
+    await window.artemis.inlineCompletion.setConfig({
+      enabled: newEnabled, provider: newProvider, model: newModel, maxTokens: newMaxTokens,
+    })
+    setSaved(true)
+    setTimeout(() => setSaved(false), 1500)
+  }
+
+  const COMPLETION_PROVIDERS = PROVIDER_REGISTRY.map(p => ({ id: p.id, name: p.name }))
+
+  // Recommended fast models for completion per provider
+  const RECOMMENDED_MODELS: Record<string, { id: string; name: string }[]> = {
+    zen: [
+      { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
+      { id: 'claude-3-5-haiku-latest', name: 'Claude 3.5 Haiku' },
+    ],
+    openai: [
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
+      { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' },
+    ],
+    anthropic: [
+      { id: 'claude-3-5-haiku-latest', name: 'Claude 3.5 Haiku' },
+    ],
+    deepseek: [
+      { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+    ],
+    groq: [
+      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B (Instant)' },
+      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B' },
+    ],
+    mistral: [
+      { id: 'codestral-latest', name: 'Codestral' },
+      { id: 'mistral-small-latest', name: 'Mistral Small' },
+    ],
+    openrouter: [
+      { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat' },
+      { id: 'anthropic/claude-3.5-haiku', name: 'Claude 3.5 Haiku' },
+    ],
+    google: [
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
+    ],
+    ollama: [
+      { id: 'qwen2.5-coder:1.5b', name: 'Qwen 2.5 Coder 1.5B' },
+      { id: 'deepseek-coder-v2:latest', name: 'DeepSeek Coder V2' },
+      { id: 'codellama:7b', name: 'Code Llama 7B' },
+    ],
+  }
+
+  if (loading) return null
+
+  const providerModels = RECOMMENDED_MODELS[provider] || []
+
+  return (
+    <>
+      <SectionHeader title="Inline Code Completion" subtitle="AI-powered ghost text suggestions as you type. Uses a fast model to suggest completions — press Tab to accept." />
+
+      {/* Master toggle */}
+      <div className="rounded-xl p-5 mb-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'var(--accent-glow)', border: '1px solid rgba(var(--accent-rgb), 0.12)' }}>
+              <Sparkles size={18} style={{ color: 'var(--accent)' }} />
+            </div>
+            <div>
+              <p className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>Enable Code Completion</p>
+              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Show AI suggestions as ghost text while typing</p>
+            </div>
+          </div>
+          <button
+            onClick={() => saveConfig({ enabled: !enabled })}
+            className="w-10 rounded-full relative transition-all duration-200 shrink-0"
+            style={{
+              backgroundColor: enabled ? 'var(--accent)' : 'var(--bg-elevated)',
+              border: `1px solid ${enabled ? 'var(--accent)' : 'var(--border-default)'}`,
+              width: 40, height: 22,
+            }}
+          >
+            <div
+              className="absolute top-0.5 w-4 h-4 rounded-full transition-all duration-200"
+              style={{
+                backgroundColor: enabled ? '#000' : 'var(--text-muted)',
+                left: enabled ? 20 : 2,
+              }}
+            />
+          </button>
+        </div>
+      </div>
+
+      {enabled && (
+        <>
+          {/* Provider selection */}
+          <div className="rounded-xl p-5 mb-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <p className="text-[12px] font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Provider</p>
+            <p className="text-[11px] mb-3" style={{ color: 'var(--text-muted)' }}>
+              Choose which AI provider to use for completions. Uses your existing API key from the Providers tab.
+            </p>
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+              {COMPLETION_PROVIDERS.map(p => {
+                const isActive = provider === p.id
+                const ProvIcon = getProviderIcon(p.id)
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => {
+                      const models = RECOMMENDED_MODELS[p.id]
+                      saveConfig({ provider: p.id, model: models?.[0]?.id || '' })
+                    }}
+                    className="flex items-center gap-2.5 p-3 rounded-lg text-left transition-all"
+                    style={{
+                      backgroundColor: isActive ? 'var(--accent-glow)' : 'var(--bg-secondary)',
+                      border: isActive ? '1.5px solid var(--accent)' : '1px solid var(--border-subtle)',
+                    }}
+                  >
+                    <ProvIcon size={15} />
+                    <span className="text-[11px] font-medium" style={{ color: isActive ? 'var(--accent)' : 'var(--text-secondary)' }}>
+                      {p.name}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Model selection */}
+          {provider && (
+            <div className="rounded-xl p-5 mb-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+              <p className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Model</p>
+              <p className="text-[11px] mb-3" style={{ color: 'var(--text-muted)' }}>
+                Fast, small models are recommended for low latency. You can also type a custom model ID.
+              </p>
+              {providerModels.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {providerModels.map(m => (
+                    <button
+                      key={m.id}
+                      onClick={() => saveConfig({ model: m.id })}
+                      className="px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all"
+                      style={{
+                        backgroundColor: model === m.id ? 'var(--accent-glow)' : 'var(--bg-elevated)',
+                        color: model === m.id ? 'var(--accent)' : 'var(--text-secondary)',
+                        border: model === m.id ? '1px solid rgba(var(--accent-rgb), 0.3)' : '1px solid var(--border-subtle)',
+                      }}
+                    >
+                      {m.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <input
+                type="text"
+                value={model}
+                onChange={e => setModel(e.target.value)}
+                onBlur={() => saveConfig({ model })}
+                placeholder="Model ID (e.g. gpt-4o-mini)"
+                className="w-full px-3 py-2 rounded-lg text-[11px] outline-none transition-all font-mono"
+                style={{
+                  backgroundColor: 'var(--bg-elevated)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
+                }}
+                onFocus={e => { e.target.style.borderColor = 'var(--accent)' }}
+                onKeyDown={e => { if (e.key === 'Enter') saveConfig({ model }) }}
+              />
+            </div>
+          )}
+
+          {/* Max Tokens */}
+          <div className="rounded-xl p-5 mb-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <p className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>Max Completion Length</p>
+                <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Maximum tokens per completion (lower = faster + cheaper)</p>
+              </div>
+              <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>{maxTokens} tokens</span>
+            </div>
+            <input
+              type="range"
+              min="32"
+              max="512"
+              step="32"
+              value={maxTokens}
+              onChange={e => setMaxTokens(Number(e.target.value))}
+              onMouseUp={() => saveConfig({ maxTokens })}
+              className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+              style={{ backgroundColor: 'var(--bg-elevated)', accentColor: 'var(--accent)' }}
+            />
+            <div className="flex justify-between mt-1">
+              <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>Faster</span>
+              <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>Longer</span>
+            </div>
+          </div>
+
+          {/* How it works info */}
+          <div className="rounded-xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: 'rgba(96, 165, 250, 0.06)', border: '1px solid rgba(96, 165, 250, 0.1)' }}>
+                <Info size={18} style={{ color: 'rgb(96, 165, 250)' }} />
+              </div>
+              <div>
+                <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>How it works</p>
+                <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                  After you pause typing for 400ms, Artemis sends the surrounding code to your chosen AI model and displays the suggestion as ghost text. Press <strong style={{ color: 'var(--text-secondary)' }}>Tab</strong> to accept, or keep typing to dismiss. Requests are debounced and cancelled on new keystrokes to minimize API usage. A typical coding session uses only a few hundred requests.
+                </p>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {saved && (
+        <div className="mt-3 flex items-center gap-2 px-4 py-2 rounded-lg" style={{ backgroundColor: 'rgba(74, 222, 128, 0.06)', border: '1px solid rgba(74, 222, 128, 0.12)' }}>
+          <Check size={12} style={{ color: '#4ade80' }} />
+          <span className="text-[11px] font-medium" style={{ color: '#4ade80' }}>Settings saved</span>
+        </div>
+      )}
+    </>
+  )
+}
+
+// ─── Discord RPC Section ────────────────────────────────────────────────
 
 function DiscordRPCSection() {
   const [enabled, setEnabled] = useState(false)
@@ -968,7 +1352,7 @@ function DiscordRPCSection() {
 function AboutSection() {
   return (
     <>
-      <SectionHeader title="About" subtitle="About Artemis and its providers." />
+      <SectionHeader title="About" subtitle="About Artemis and its integrated AI providers." />
 
       <div className="rounded-xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
         <div className="flex items-center gap-3 mb-4">
@@ -977,20 +1361,25 @@ function AboutSection() {
           </div>
           <div>
             <p className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>
-              Artemis <span className="font-normal text-[11px]" style={{ color: 'var(--text-muted)' }}>v0.1.0</span>
+              Artemis <span className="font-normal text-[11px]" style={{ color: 'var(--text-muted)' }}>v0.2.0</span>
             </p>
             <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>AI-powered development environment</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2 mb-5">
-          {[{ url: 'https://opencode.ai', label: 'opencode.ai' }, { url: 'https://z.ai', label: 'z.ai' }].map(link => (
+        <div className="flex items-center gap-2 flex-wrap mb-5">
+          {[
+            { url: 'https://opencode.ai', label: 'OpenCode' },
+            { url: 'https://z.ai', label: 'Z.AI' },
+            { url: 'https://docs.anthropic.com', label: 'Anthropic' },
+            { url: 'https://platform.openai.com', label: 'OpenAI' },
+            { url: 'https://openrouter.ai', label: 'OpenRouter' },
+          ].map(link => (
             <a
               key={link.url}
-              href={link.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg transition-all duration-100"
+              href="#"
+              onClick={(e) => { e.preventDefault(); window.artemis.shell.openExternal(link.url) }}
+              className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg transition-all duration-100 cursor-pointer"
               style={{ color: 'var(--accent)', backgroundColor: 'var(--accent-glow)' }}
               onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(var(--accent-rgb), 0.15)'}
               onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--accent-glow)'}
@@ -1000,13 +1389,19 @@ function AboutSection() {
           ))}
         </div>
 
-        <div style={{ borderTop: '1px solid var(--border-subtle)' }} className="pt-4 space-y-3">
-          <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-            <strong style={{ color: 'var(--text-secondary)' }}>OpenCode Zen</strong> &mdash; Curated AI models from OpenAI, Anthropic, Google, DeepSeek, Meta, and more. Pay-as-you-go with free models available.
-          </p>
-          <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-            <strong style={{ color: 'var(--text-secondary)' }}>Z.AI Coding Plan</strong> &mdash; GLM 4.7 access via Lite/Pro/Max plans. Uses Anthropic-compatible endpoint. ~120 prompts per 5 hours on Lite.
-          </p>
+        <div style={{ borderTop: '1px solid var(--border-subtle)' }} className="pt-4 space-y-2.5">
+          <p className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>Integrated Providers</p>
+          {PROVIDER_REGISTRY.map(p => {
+            const ProvIcon = getProviderIcon(p.id)
+            return (
+              <div key={p.id} className="flex items-center gap-2.5">
+                <ProvIcon size={14} />
+                <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                  <strong style={{ color: 'var(--text-secondary)' }}>{p.name}</strong> &mdash; {p.description}
+                </p>
+              </div>
+            )
+          })}
         </div>
       </div>
     </>
@@ -1024,11 +1419,13 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle: string })
   )
 }
 
-function ProviderKeyInput({ name, description, icon, placeholder, helpUrl, config, onKeyChange, onSave }: {
+function ProviderKeyInput({ name, description, icon, placeholder, helpUrl, config, onKeyChange, onSave, noKeyRequired }: {
   name: string; description: string; icon: React.ReactNode; placeholder: string
   helpUrl: string; config: ProviderConfig; onKeyChange: (key: string) => void; onSave: () => void
+  noKeyRequired?: boolean
 }) {
   const [inputFocused, setInputFocused] = useState(false)
+  const canSubmit = noKeyRequired || config.key.trim()
 
   return (
     <div className="rounded-xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
@@ -1047,38 +1444,40 @@ function ProviderKeyInput({ name, description, icon, placeholder, helpUrl, confi
           <div className="w-5 h-5 rounded-md flex items-center justify-center" style={{ backgroundColor: 'rgba(74, 222, 128, 0.15)' }}>
             <Check size={11} style={{ color: 'var(--success)' }} />
           </div>
-          <span className="text-[11px] font-medium" style={{ color: 'var(--success)' }}>API key configured</span>
+          <span className="text-[11px] font-medium" style={{ color: 'var(--success)' }}>{noKeyRequired ? 'Connected' : 'API key configured'}</span>
         </div>
       )}
 
       <div className="flex gap-2.5 mb-4">
-        <div className="flex-1 rounded-lg transition-all duration-200" style={{ border: `1.5px solid ${inputFocused ? 'rgba(var(--accent-rgb), 0.4)' : 'var(--border-default)'}`, boxShadow: inputFocused ? '0 0 0 3px rgba(var(--accent-rgb), 0.06)' : 'none' }}>
-          <input
-            type="password"
-            value={config.key}
-            onChange={e => onKeyChange(e.target.value)}
-            onFocus={() => setInputFocused(true)}
-            onBlur={() => setInputFocused(false)}
-            placeholder={config.isConfigured ? 'Enter new key to update...' : placeholder}
-            className="w-full px-4 py-2.5 rounded-lg text-[12px] outline-none bg-transparent"
-            style={{ color: 'var(--text-primary)' }}
-            onKeyDown={e => { if (e.key === 'Enter' && config.key.trim()) onSave() }}
-          />
-        </div>
+        {!noKeyRequired && (
+          <div className="flex-1 rounded-lg transition-all duration-200" style={{ border: `1.5px solid ${inputFocused ? 'rgba(var(--accent-rgb), 0.4)' : 'var(--border-default)'}`, boxShadow: inputFocused ? '0 0 0 3px rgba(var(--accent-rgb), 0.06)' : 'none' }}>
+            <input
+              type="password"
+              value={config.key}
+              onChange={e => onKeyChange(e.target.value)}
+              onFocus={() => setInputFocused(true)}
+              onBlur={() => setInputFocused(false)}
+              placeholder={config.isConfigured ? 'Enter new key to update...' : placeholder}
+              className="w-full px-4 py-2.5 rounded-lg text-[12px] outline-none bg-transparent"
+              style={{ color: 'var(--text-primary)' }}
+              onKeyDown={e => { if (e.key === 'Enter' && canSubmit) onSave() }}
+            />
+          </div>
+        )}
         <button
           onClick={onSave}
-          disabled={!config.key.trim() || config.status === 'saving'}
-          className="px-5 py-2.5 rounded-lg text-[12px] font-semibold transition-all duration-150 flex items-center gap-2 shrink-0"
+          disabled={!canSubmit || config.status === 'saving'}
+          className={`${noKeyRequired ? 'flex-1' : ''} px-5 py-2.5 rounded-lg text-[12px] font-semibold transition-all duration-150 flex items-center justify-center gap-2 shrink-0`}
           style={{
-            backgroundColor: config.status === 'saved' ? 'var(--success)' : config.status === 'error' ? 'var(--error)' : config.key.trim() ? 'var(--accent)' : 'var(--bg-elevated)',
-            color: config.status === 'saved' || config.status === 'error' ? '#fff' : config.key.trim() ? '#000' : 'var(--text-muted)',
-            opacity: !config.key.trim() && config.status === 'idle' ? 0.5 : 1,
+            backgroundColor: config.status === 'saved' ? 'var(--success)' : config.status === 'error' ? 'var(--error)' : canSubmit ? 'var(--accent)' : 'var(--bg-elevated)',
+            color: config.status === 'saved' || config.status === 'error' ? '#fff' : canSubmit ? '#000' : 'var(--text-muted)',
+            opacity: !canSubmit && config.status === 'idle' ? 0.5 : 1,
           }}
         >
-          {config.status === 'saving' ? (<><Loader2 size={13} className="animate-spin" /> Validating...</>)
-            : config.status === 'saved' ? (<><Check size={13} /> Saved</>)
+          {config.status === 'saving' ? (<><Loader2 size={13} className="animate-spin" /> {noKeyRequired ? 'Connecting...' : 'Validating...'}</>)
+            : config.status === 'saved' ? (<><Check size={13} /> {noKeyRequired ? 'Connected' : 'Saved'}</>)
             : config.status === 'error' ? (<><X size={13} /> Failed</>)
-            : 'Save Key'}
+            : noKeyRequired ? 'Test Connection' : 'Save Key'}
         </button>
       </div>
 
@@ -1092,11 +1491,20 @@ function ProviderKeyInput({ name, description, icon, placeholder, helpUrl, confi
       <div className="flex items-center gap-3 p-3.5 rounded-lg" style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}>
         <Key size={14} className="shrink-0" style={{ color: 'var(--accent)' }} />
         <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-          Get your API key from{' '}
-          <a href={helpUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1" style={{ color: 'var(--accent)' }}>
-            {helpUrl.replace('https://', '').split('/')[0]} <ExternalLink size={10} />
-          </a>
-          {' '}&mdash; free models available.
+          {noKeyRequired ? (
+            <>Make sure Ollama is running locally. Download from{' '}
+              <a href="#" onClick={(e) => { e.preventDefault(); window.artemis.shell.openExternal(helpUrl) }} className="inline-flex items-center gap-1 cursor-pointer" style={{ color: 'var(--accent)' }}>
+                ollama.com <ExternalLink size={10} />
+              </a>
+            </>
+          ) : (
+            <>Get your API key from{' '}
+              <a href="#" onClick={(e) => { e.preventDefault(); window.artemis.shell.openExternal(helpUrl) }} className="inline-flex items-center gap-1 cursor-pointer" style={{ color: 'var(--accent)' }}>
+                {helpUrl.replace('https://', '').split('/')[0]} <ExternalLink size={10} />
+              </a>
+              {' '}&mdash; free models available.
+            </>
+          )}
         </p>
       </div>
     </div>

@@ -251,6 +251,8 @@ export default function FileExplorer({ projectPath, onOpenFile, onDeletePath, on
   }, [projectPath, loadDirectory])
 
   useEffect(() => {
+    setExpandedPaths(new Set())
+    setTree([])
     loadRoot()
   }, [loadRoot])
 

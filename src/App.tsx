@@ -9,6 +9,7 @@ import Sidebar from './components/Sidebar'
 import PanelLayout from './components/PanelLayout'
 import StatusBar from './components/StatusBar'
 import CommandPalette from './components/CommandPalette'
+import WorkspaceTrustDialog, { RestrictedModeBanner } from './components/WorkspaceTrustDialog'
 import type { ActivityView, Project, EditorTab, PtySession } from './types'
 import { detectLanguage } from './types'
 
@@ -101,6 +102,12 @@ export default function App() {
   const [sidebarVisible, setSidebarVisible] = useState(true)
   const [chatVisible, setChatVisible] = useState(true)
   const [recentProjects, setRecentProjects] = useState<Project[]>([])
+  const [inlineCompletionEnabled, setInlineCompletionEnabled] = useState(false)
+
+  // Workspace Trust: restricted mode disables editing, terminal, agent/chat
+  const [isRestrictedMode, setIsRestrictedMode] = useState(false)
+  const [showTrustDialog, setShowTrustDialog] = useState(false)
+  const [trustDialogFolder, setTrustDialogFolder] = useState<{ path: string; name: string } | null>(null)
 
   const [editorTabs, setEditorTabs] = useState<EditorTab[]>([])
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null)
@@ -112,6 +119,9 @@ export default function App() {
 
   useEffect(() => {
     opencode.setProjectPath(project?.path || null)
+    if (project?.path) {
+      window.artemis.project.setPath(project.path)
+    }
   }, [project?.path, opencode.setProjectPath])
 
   useEffect(() => {
@@ -137,12 +147,19 @@ export default function App() {
       window.artemis.store.get('setupComplete'),
       window.artemis.store.get('lastProject'),
       window.artemis.store.get('recentProjects'),
+      window.artemis.inlineCompletion.getConfig().catch(() => null),
     ])
-      .then(([setup, savedProject, savedRecentProjects]) => {
+      .then(async ([setup, savedProject, savedRecentProjects, icConfig]) => {
         console.log('[Artemis] Store loaded:', { setup, project: savedProject?.name || null })
         setSetupComplete(!!setup)
+        if (icConfig && typeof icConfig === 'object') {
+          setInlineCompletionEnabled(!!(icConfig as any).enabled)
+        }
         if (savedProject && typeof savedProject === 'object' && savedProject.path) {
           setProject(savedProject as Project)
+          // Check workspace trust for restored project
+          const trusted = await window.artemis.trust.check(savedProject.path)
+          setIsRestrictedMode(!trusted)
         }
         if (Array.isArray(savedRecentProjects)) {
           setRecentProjects(savedRecentProjects as Project[])
@@ -163,13 +180,13 @@ export default function App() {
   }, [hasApiKey, projectSessions.length, project?.id, createSession])
 
   useEffect(() => {
-    if (setupComplete && ptyTerminals.length === 0) {
+    if (setupComplete && project && ptyTerminals.length === 0 && !isRestrictedMode) {
       const timer = setTimeout(() => {
         createTerminal()
       }, 500)
       return () => clearTimeout(timer)
     }
-  }, [setupComplete])
+  }, [setupComplete, project?.id, ptyTerminals.length])
 
   useEffect(() => {
     window.artemis.store.get('keybinds').then((saved: any) => {
@@ -180,7 +197,7 @@ export default function App() {
   }, [])
 
   const handleSetupComplete = useCallback(
-    async (selectedTheme: string, apiKeys?: { provider: 'zen' | 'zai'; key: string }[]) => {
+    async (selectedTheme: string, apiKeys?: { provider: string; key: string }[]) => {
       console.log('[Artemis] Setup complete, theme:', selectedTheme)
       setTheme(selectedTheme as 'dark' | 'light')
       setSetupComplete(true)
@@ -196,6 +213,23 @@ export default function App() {
     },
     [setTheme]
   )
+
+  // Internal helper: finalize project open after trust decision
+  const finalizeProjectOpen = useCallback(async (newProject: Project, trusted: boolean) => {
+    await window.artemis.project.setPath(newProject.path)
+    opencode.setProjectPath(newProject.path)
+    setProject(newProject)
+    setIsRestrictedMode(!trusted)
+    window.artemis.store.set('lastProject', newProject)
+    setFileRefreshTrigger(prev => prev + 1)
+
+    setRecentProjects((prev) => {
+      const filtered = prev.filter((p) => p.path !== newProject.path)
+      const updated = [newProject, ...filtered].slice(0, 10)
+      window.artemis.store.set('recentProjects', updated)
+      return updated
+    })
+  }, [opencode.setProjectPath])
 
   const addProject = useCallback(async () => {
     const result = await window.artemis.dialog.openFolder()
@@ -218,16 +252,28 @@ export default function App() {
       lastOpened: Date.now(),
     }
 
-    setProject(newProject)
-    window.artemis.store.set('lastProject', newProject)
-
-    setRecentProjects((prev) => {
-      const filtered = prev.filter((p) => p.path !== newProject.path)
-      const updated = [newProject, ...filtered].slice(0, 10)
-      window.artemis.store.set('recentProjects', updated)
-      return updated
-    })
-  }, [project, ptyTerminals])
+    // Check workspace trust
+    const trusted = await window.artemis.trust.check(newProject.path)
+    if (trusted) {
+      await finalizeProjectOpen(newProject, true)
+    } else {
+      // Show trust dialog — defer project open until user decides
+      setTrustDialogFolder({ path: newProject.path, name: newProject.name })
+      setShowTrustDialog(true)
+      // Still set the project for browsing, but in restricted mode
+      await window.artemis.project.setPath(newProject.path)
+      opencode.setProjectPath(newProject.path)
+      setProject(newProject)
+      setIsRestrictedMode(true)
+      window.artemis.store.set('lastProject', newProject)
+      setRecentProjects((prev) => {
+        const filtered = prev.filter((p) => p.path !== newProject.path)
+        const updated = [newProject, ...filtered].slice(0, 10)
+        window.artemis.store.set('recentProjects', updated)
+        return updated
+      })
+    }
+  }, [project, ptyTerminals, opencode.setProjectPath, finalizeProjectOpen])
 
   const selectProject = useCallback(async (selectedProject: Project) => {
     if (project && project.path !== selectedProject.path) {
@@ -240,16 +286,27 @@ export default function App() {
     }
 
     const updated = { ...selectedProject, lastOpened: Date.now() }
-    setProject(updated)
-    window.artemis.store.set('lastProject', updated)
 
-    setRecentProjects((prev) => {
-      const filtered = prev.filter((p) => p.path !== updated.path)
-      const next = [updated, ...filtered].slice(0, 10)
-      window.artemis.store.set('recentProjects', next)
-      return next
-    })
-  }, [project, ptyTerminals])
+    // Check workspace trust
+    const trusted = await window.artemis.trust.check(updated.path)
+    if (trusted) {
+      await finalizeProjectOpen(updated, true)
+    } else {
+      setTrustDialogFolder({ path: updated.path, name: updated.name })
+      setShowTrustDialog(true)
+      await window.artemis.project.setPath(updated.path)
+      opencode.setProjectPath(updated.path)
+      setProject(updated)
+      setIsRestrictedMode(true)
+      window.artemis.store.set('lastProject', updated)
+      setRecentProjects((prev) => {
+        const filtered = prev.filter((p) => p.path !== updated.path)
+        const next = [updated, ...filtered].slice(0, 10)
+        window.artemis.store.set('recentProjects', next)
+        return next
+      })
+    }
+  }, [project, ptyTerminals, opencode.setProjectPath, finalizeProjectOpen])
 
   const removeProject = useCallback((projectId: string) => {
     setRecentProjects((prev) => {
@@ -257,7 +314,14 @@ export default function App() {
       window.artemis.store.set('recentProjects', filtered)
       return filtered
     })
-  }, [])
+    // If the removed project is the active one, clear it
+    if (project?.id === projectId) {
+      setProject(null)
+      setEditorTabs([])
+      setActiveTabPath(null)
+      window.artemis.store.set('lastProject', null)
+    }
+  }, [project])
 
   const handleOpenProjectDirectory = useCallback(async (projectPath: string) => {
     try {
@@ -312,10 +376,8 @@ export default function App() {
   const closeAllTabs = useCallback(() => {
     setEditorTabs((prev) => {
       const pinned = prev.filter(t => t.isPinned)
+      setActiveTabPath(pinned.length > 0 ? pinned[pinned.length - 1].path : null)
       return pinned
-    })
-    setActiveTabPath((prev) => {
-      return prev
     })
   }, [])
 
@@ -422,7 +484,12 @@ export default function App() {
   }, [])
 
   const createTerminal = useCallback(async () => {
-    const cwd = project?.path || '.'
+    const cwd = project?.path
+    if (!cwd) return
+
+    const allowed = await window.artemis.security.requestCapability('terminal')
+    if (!allowed) return
+
     const id = `terminal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const termNumber = ptyTerminals.length + 1
 
@@ -458,6 +525,18 @@ export default function App() {
     setPtyTerminals((prev) => prev.filter((t) => t.id !== id))
   }, [])
 
+  const reorderTerminals = useCallback((fromId: string, toId: string) => {
+    setPtyTerminals((prev) => {
+      const terminals = [...prev]
+      const fromIndex = terminals.findIndex(t => t.id === fromId)
+      const toIndex = terminals.findIndex(t => t.id === toId)
+      if (fromIndex === -1 || toIndex === -1) return prev
+      const [moved] = terminals.splice(fromIndex, 1)
+      terminals.splice(toIndex, 0, moved)
+      return terminals
+    })
+  }, [])
+
   const switchView = useCallback((view: ActivityView) => {
     setActiveView(view)
     setShowCommandPalette(false)
@@ -470,6 +549,22 @@ export default function App() {
   const handleSendMessage = useCallback(async (text: string, fileContext?: string, modeOverride?: import('./types').AgentMode, planText?: string, images?: Array<{ id: string; url: string; name: string }>) => {
     await opencode.sendMessage(text, fileContext, modeOverride, planText, images)
   }, [opencode])
+
+  // Workspace Trust: handlers for the trust dialog
+  const handleTrustWorkspace = useCallback(async () => {
+    if (project?.path) {
+      await window.artemis.trust.grant(project.path)
+      setIsRestrictedMode(false)
+    }
+    setShowTrustDialog(false)
+    setTrustDialogFolder(null)
+  }, [project?.path])
+
+  const handleRestrictedMode = useCallback(() => {
+    setIsRestrictedMode(true)
+    setShowTrustDialog(false)
+    setTrustDialogFolder(null)
+  }, [])
 
   const resetSetup = useCallback(async () => {
     await window.artemis.store.set('setupComplete', false)
@@ -642,9 +737,6 @@ export default function App() {
             onViewChange={switchView}
             isReady={opencode.isReady}
             hasApiKey={opencode.hasApiKey}
-            activeModel={opencode.activeModel}
-            sessionTokenUsage={opencode.sessionTokenUsage}
-            totalTokenUsage={opencode.totalTokenUsage}
           />
 
           {sidebarVisible && (
@@ -683,15 +775,15 @@ export default function App() {
             onCloseAllTabs={closeAllTabs}
             onCloseTabsToRight={closeTabsToRight}
             onSelectTab={selectTab}
-            onSaveFile={saveFile}
-            onTabContentChange={handleTabContentChange}
+            onSaveFile={isRestrictedMode ? (() => {}) as any : saveFile}
+            onTabContentChange={isRestrictedMode ? (() => {}) : handleTabContentChange}
             onPinTab={pinTab}
             onUnpinTab={unpinTab}
             onReorderTabs={reorderTabs}
-            onDeletePath={deletePath}
-            onRenamePath={renamePath}
-            onCreateFile={createFileInDir}
-            onCreateFolder={createFolderInDir}
+            onDeletePath={isRestrictedMode ? (async () => {}) : deletePath}
+            onRenamePath={isRestrictedMode ? (async () => {}) : renamePath}
+            onCreateFile={isRestrictedMode ? (async () => {}) : createFileInDir}
+            onCreateFolder={isRestrictedMode ? (async () => {}) : createFolderInDir}
             sessions={opencode.projectSessions}
             activeSessionId={opencode.activeSessionId}
             messages={opencode.messages}
@@ -705,7 +797,7 @@ export default function App() {
             onCreateSession={handleCreateSession}
             onSelectSession={opencode.selectSession}
             onDeleteSession={opencode.deleteSession}
-            onSendMessage={handleSendMessage}
+            onSendMessage={isRestrictedMode ? (async () => {}) : handleSendMessage}
             onAbortMessage={opencode.abortMessage}
             onSelectModel={opencode.setActiveModel}
             onAgentModeChange={opencode.setAgentMode}
@@ -714,13 +806,14 @@ export default function App() {
             onClearMessages={opencode.clearMessages}
             checkpoints={opencode.checkpoints}
             onRestoreCheckpoint={opencode.restoreToCheckpoint}
-            onOpenTerminal={() => {
+            onOpenTerminal={isRestrictedMode ? (() => {}) : () => {
               setActiveView('terminal')
               createTerminal()
             }}
             ptyTerminals={ptyTerminals}
-            onNewTerminal={createTerminal}
+            onNewTerminal={isRestrictedMode ? (async () => {}) : createTerminal}
             onCloseTerminal={closeTerminal}
+            onReorderTerminals={reorderTerminals}
             onToggleTheme={toggleTheme}
             onSetTheme={setTheme}
             apiKeys={opencode.apiKeys}
@@ -729,6 +822,9 @@ export default function App() {
             onSetSoundSettings={opencode.setSoundSettings}
             fileRefreshTrigger={fileRefreshTrigger}
             chatVisible={chatVisible}
+            isRestrictedMode={isRestrictedMode}
+            restrictedModeBanner={isRestrictedMode ? <RestrictedModeBanner onTrust={handleTrustWorkspace} /> : undefined}
+            inlineCompletionEnabled={inlineCompletionEnabled}
           />
         </div>
 
@@ -742,6 +838,38 @@ export default function App() {
           streamingSpeed={opencode.streamingSpeed}
           projectTokenCount={opencode.projectTokenCount}
         />
+
+        {/* Restricted mode indicator bar */}
+        {isRestrictedMode && (
+          <div
+            className="flex items-center justify-center gap-2 px-3 py-1"
+            style={{
+              backgroundColor: 'rgba(var(--accent-secondary-rgb), 0.08)',
+              borderTop: '1px solid rgba(var(--accent-secondary-rgb), 0.15)',
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--error)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+            <span className="text-[10px] font-medium" style={{ color: 'var(--error)' }}>
+              Restricted Mode
+            </span>
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              — editing, terminal, and AI agent are disabled
+            </span>
+            <button
+              onClick={handleTrustWorkspace}
+              className="ml-2 px-2 py-0.5 rounded text-[9.5px] font-medium cursor-pointer transition-all hover:brightness-110"
+              style={{
+                backgroundColor: 'var(--accent-glow)',
+                color: 'var(--accent)',
+                border: '1px solid rgba(var(--accent-rgb), 0.25)',
+              }}
+            >
+              Trust Workspace
+            </button>
+          </div>
+        )}
 
         <AnimatePresence>
           {showCommandPalette && (
@@ -757,6 +885,16 @@ export default function App() {
             />
           )}
         </AnimatePresence>
+
+        {/* Workspace Trust Dialog */}
+        {showTrustDialog && trustDialogFolder && (
+          <WorkspaceTrustDialog
+            folderPath={trustDialogFolder.path}
+            folderName={trustDialogFolder.name}
+            onTrust={handleTrustWorkspace}
+            onRestricted={handleRestrictedMode}
+          />
+        )}
       </div>
     </ErrorBoundary>
   )

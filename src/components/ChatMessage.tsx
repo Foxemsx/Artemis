@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { motion } from 'framer-motion'
@@ -138,6 +138,22 @@ function HighlightedMarkdown({ text, onOpenFile }: { text: string; onOpenFile?: 
         li: ({ children, ...props }) => <li {...props}>{processChildren(children, onOpenFile)}</li>,
         td: ({ children, ...props }) => <td {...props}>{processChildren(children, onOpenFile)}</td>,
         th: ({ children, ...props }) => <th {...props}>{processChildren(children, onOpenFile)}</th>,
+        // Route markdown links through shell.openExternal instead of navigating the window
+        a: ({ href, children, ...props }) => (
+          <a
+            {...props}
+            href="#"
+            onClick={(e) => {
+              e.preventDefault()
+              if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+                window.artemis.shell.openExternal(href)
+              }
+            }}
+            style={{ color: 'var(--accent)', textDecoration: 'underline', cursor: 'pointer' }}
+          >
+            {children}
+          </a>
+        ),
         // Also make inline code file paths clickable
         code: ({ children, className, ...props }) => {
           const text = typeof children === 'string' ? children : ''
@@ -191,8 +207,12 @@ function InlineDiff({ oldStr, newStr }: { oldStr: string; newStr: string }) {
   )
 }
 
-/** Tool Call — compact inline Windsurf-style */
-function ToolCallCard({ toolCall }: { toolCall: NonNullable<MessagePart['toolCall']> }) {
+/** Collapsed Tool Card — merges tool-call + tool-result into a single expandable row.
+ *  Shows: icon + label + path/preview + status badge. Expand to see args/diff/output. */
+function CollapsedToolCard({ toolCall, toolResult }: {
+  toolCall: NonNullable<MessagePart['toolCall']>
+  toolResult?: NonNullable<MessagePart['toolResult']>
+}) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [approvalState, setApprovalState] = useState<'pending' | 'approved' | 'rejected' | null>(
     toolCall.args?.__pendingApproval ? 'pending' : null
@@ -218,7 +238,7 @@ function ToolCallCard({ toolCall }: { toolCall: NonNullable<MessagePart['toolCal
         await window.artemis.agent.respondToolApproval(approvalId, approved)
       }
     } catch (err) {
-      console.error('[ToolCallCard] Failed to respond to approval:', err)
+      console.error('[CollapsedToolCard] Failed to respond to approval:', err)
     }
   }
 
@@ -226,11 +246,18 @@ function ToolCallCard({ toolCall }: { toolCall: NonNullable<MessagePart['toolCal
   const isStrReplace = toolCall.name === 'str_replace' && typeof toolCall.args?.old_str === 'string' && typeof toolCall.args?.new_str === 'string'
   const isWriteFile = toolCall.name === 'write_file' && typeof toolCall.args?.content === 'string'
 
+  // Status from paired tool-result
+  const hasResult = !!toolResult
+  const resultSuccess = toolResult?.success ?? true
+  const resultFirstLine = toolResult?.output ? toolResult.output.split('\n')[0]?.slice(0, 60) : ''
+  const hasResultOutput = toolResult?.output && toolResult.output.length > 0
+  const canExpand = hasArgs || hasResultOutput
+
   return (
     <div className="my-0.5">
       <div
-        className={`inline-flex items-center gap-1.5 py-0.5 px-1 rounded transition-colors ${hasArgs ? 'cursor-pointer hover:opacity-80' : ''}`}
-        onClick={() => hasArgs && setIsExpanded(!isExpanded)}
+        className={`inline-flex items-center gap-1.5 py-0.5 px-1 rounded transition-colors ${canExpand ? 'cursor-pointer hover:opacity-80' : ''}`}
+        onClick={() => canExpand && setIsExpanded(!isExpanded)}
       >
         <config.icon size={12} style={{ color: config.color, flexShrink: 0 }} />
         <span className="text-[11px] font-semibold" style={{ color: config.color }}>
@@ -241,34 +268,68 @@ function ToolCallCard({ toolCall }: { toolCall: NonNullable<MessagePart['toolCal
             {preview}
           </span>
         )}
-        {hasArgs && (
+        {/* Inline status badge — collapsed view of tool-result */}
+        {hasResult && (
+          <span className="inline-flex items-center gap-1 ml-0.5">
+            <span
+              className="w-1.5 h-1.5 rounded-full shrink-0"
+              style={{ backgroundColor: resultSuccess ? '#4ade80' : '#f87171' }}
+            />
+            <span className="text-[10px] font-medium" style={{ color: resultSuccess ? '#4ade80' : '#f87171' }}>
+              {resultSuccess ? 'Done' : 'Failed'}
+            </span>
+          </span>
+        )}
+        {!hasResult && (
+          <span className="text-[9px] animate-pulse ml-0.5" style={{ color: config.color }}>Running…</span>
+        )}
+        {canExpand && (
           <span style={{ color: 'var(--text-muted)' }}>
             {isExpanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
           </span>
         )}
       </div>
-      {/* Approval buttons */}
+      {/* Approval buttons — agent waits indefinitely for user decision */}
       {approvalState === 'pending' && (
-        <div className="flex items-center gap-2 ml-4 mt-1 mb-1">
-          <button
-            onClick={() => handleApproval(true)}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all duration-100"
-            style={{ backgroundColor: 'rgba(74, 222, 128, 0.12)', color: '#4ade80', border: '1px solid rgba(74, 222, 128, 0.25)' }}
-            onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(74, 222, 128, 0.25)' }}
-            onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(74, 222, 128, 0.12)' }}
-          >
-            <Check size={10} /> Approve
-          </button>
-          <button
-            onClick={() => handleApproval(false)}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all duration-100"
-            style={{ backgroundColor: 'rgba(248, 113, 113, 0.12)', color: '#f87171', border: '1px solid rgba(248, 113, 113, 0.25)' }}
-            onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(248, 113, 113, 0.25)' }}
-            onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(248, 113, 113, 0.12)' }}
-          >
-            <X size={10} /> Reject
-          </button>
-          <span className="text-[10px] animate-pulse" style={{ color: 'var(--warning, #f59e0b)' }}>Waiting for approval...</span>
+        <div
+          className="ml-4 mt-1.5 mb-1 rounded-lg p-2.5"
+          style={{
+            backgroundColor: 'rgba(245, 158, 11, 0.06)',
+            border: '1px solid rgba(245, 158, 11, 0.18)',
+          }}
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-5 h-5 rounded-md flex items-center justify-center animate-pulse" style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)' }}>
+              <AlertTriangle size={11} style={{ color: '#f59e0b' }} />
+            </div>
+            <span className="text-[10px] font-semibold" style={{ color: '#f59e0b' }}>
+              Waiting for User Approval
+            </span>
+            <span className="relative flex h-2 w-2 ml-auto">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: '#f59e0b' }} />
+              <span className="relative inline-flex rounded-full h-2 w-2" style={{ backgroundColor: '#f59e0b' }} />
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleApproval(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[10px] font-semibold transition-all duration-100"
+              style={{ backgroundColor: 'rgba(74, 222, 128, 0.12)', color: '#4ade80', border: '1px solid rgba(74, 222, 128, 0.25)' }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(74, 222, 128, 0.25)' }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(74, 222, 128, 0.12)' }}
+            >
+              <Check size={10} /> Approve
+            </button>
+            <button
+              onClick={() => handleApproval(false)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[10px] font-semibold transition-all duration-100"
+              style={{ backgroundColor: 'rgba(248, 113, 113, 0.12)', color: '#f87171', border: '1px solid rgba(248, 113, 113, 0.25)' }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(248, 113, 113, 0.25)' }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(248, 113, 113, 0.12)' }}
+            >
+              <X size={10} /> Reject
+            </button>
+          </div>
         </div>
       )}
       {approvalState === 'approved' && (
@@ -277,6 +338,7 @@ function ToolCallCard({ toolCall }: { toolCall: NonNullable<MessagePart['toolCal
       {approvalState === 'rejected' && (
         <span className="ml-4 text-[10px] font-medium" style={{ color: '#f87171' }}>✗ Rejected</span>
       )}
+      {/* Expanded: tool args (str_replace diff, write_file content, or JSON args) */}
       {isExpanded && isStrReplace && (
         <InlineDiff oldStr={String(cleanArgs.old_str)} newStr={String(cleanArgs.new_str)} />
       )}
@@ -293,6 +355,35 @@ function ToolCallCard({ toolCall }: { toolCall: NonNullable<MessagePart['toolCal
             ? `// ${pathArg || 'file'}\n${String(cleanArgs.content).slice(0, 3000)}`
             : formatToolArgs(cleanArgs)}
         </pre>
+      )}
+      {/* Expanded: tool-result output (lazy-rendered only when expanded) */}
+      {isExpanded && hasResultOutput && (
+        <div className="ml-4 mt-0.5">
+          <div className="inline-flex items-center gap-1.5 mb-0.5">
+            <div
+              className="w-2 h-2 rounded-full shrink-0"
+              style={{ backgroundColor: resultSuccess ? '#4ade80' : '#f87171' }}
+            />
+            <span className="text-[10px] font-medium" style={{ color: resultSuccess ? '#4ade80' : '#f87171' }}>
+              {resultSuccess ? 'Done' : 'Failed'}
+            </span>
+            {resultFirstLine && (
+              <span className="text-[10px] truncate max-w-[280px]" style={{ color: 'var(--text-muted)' }}>
+                — {resultFirstLine}
+              </span>
+            )}
+          </div>
+          <pre
+            className="text-[10px] overflow-x-auto p-1.5 mt-0.5 rounded font-mono max-h-[150px] overflow-y-auto"
+            style={{
+              backgroundColor: 'rgba(0,0,0,0.08)',
+              color: 'var(--text-secondary)',
+              border: `1px solid ${resultSuccess ? 'rgba(74,222,128,0.1)' : 'rgba(248,113,113,0.1)'}`,
+            }}
+          >
+            {toolResult!.output}
+          </pre>
+        </div>
       )}
     </div>
   )
@@ -367,8 +458,9 @@ function InlineTerminalCard({ command, result }: { command: string; result?: Non
   )
 }
 
-/** Tool Result — compact inline status */
-function ToolResultCard({ toolResult }: { toolResult: NonNullable<MessagePart['toolResult']> }) {
+/** Standalone Tool Result — only rendered for orphan tool-results with no paired tool-call.
+ *  Normally hidden because CollapsedToolCard absorbs the result. */
+function OrphanToolResultCard({ toolResult }: { toolResult: NonNullable<MessagePart['toolResult']> }) {
   const [isExpanded, setIsExpanded] = useState(false)
   const hasOutput = toolResult.output && toolResult.output.length > 0
   const firstLine = hasOutput ? toolResult.output.split('\n')[0]?.slice(0, 60) : ''
@@ -600,7 +692,11 @@ function ImagePart({ image }: { image: NonNullable<MessagePart['image']> }) {
               alt="Attached image"
               className="max-w-full rounded-md cursor-pointer"
               style={{ maxHeight: '400px', objectFit: 'contain' }}
-              onClick={() => window.open(image.url, '_blank')}
+              onClick={() => {
+                if (image.url.startsWith('http://') || image.url.startsWith('https://')) {
+                  window.artemis.shell.openExternal(image.url)
+                }
+              }}
             />
           </div>
         )}
@@ -609,7 +705,7 @@ function ImagePart({ image }: { image: NonNullable<MessagePart['image']> }) {
   )
 }
 
-export default function ChatMessage({ message, onOpenFile }: Props) {
+function ChatMessage({ message, onOpenFile }: Props) {
   const isUser = message.role === 'user'
   const [copied, setCopied] = useState(false)
 
@@ -712,77 +808,120 @@ export default function ChatMessage({ message, onOpenFile }: Props) {
           )}
         </div>
 
-        {/* Parts */}
-        {message.parts.map((part, i) => {
-          if (part.type === 'text') {
-            // Handle empty responses
-            if (!part.text || part.text.trim() === '') {
+        {/* Parts — tool-call + tool-result are paired into single collapsed rows */}
+        {(() => {
+          // Pre-compute which tool-result indices are consumed by a preceding tool-call
+          // so we skip rendering them as standalone rows.
+          const pairedResultIndices = new Set<number>()
+          for (let idx = 0; idx < message.parts.length; idx++) {
+            const p = message.parts[idx]
+            if (p.type === 'tool-call' && p.toolCall) {
+              // Find the next matching tool-result by name (looking ahead)
+              for (let j = idx + 1; j < message.parts.length; j++) {
+                const r = message.parts[j]
+                if (r.type === 'tool-result' && r.toolResult?.name === p.toolCall.name && !pairedResultIndices.has(j)) {
+                  pairedResultIndices.add(j)
+                  break
+                }
+              }
+            }
+          }
+
+          return message.parts.map((part, i) => {
+            if (part.type === 'text') {
+              // Skip empty text parts silently — only show "no response" if the
+              // ENTIRE message has no text content (not just this one part).
+              if (!part.text || part.text.trim() === '') {
+                const hasAnyText = message.parts.some(
+                  p => p.type === 'text' && p.text && p.text.trim() !== ''
+                )
+                const hasToolParts = message.parts.some(
+                  p => p.type === 'tool-call' || p.type === 'tool-result'
+                )
+                // Only show the empty-response notice if nothing else has content
+                if (hasAnyText || hasToolParts) return null
+                return (
+                  <div
+                    key={i}
+                    className="text-[13px] italic"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    No response content received from the model.
+                  </div>
+                )
+              }
+
+              // Detect raw JSON error responses
+              const isRawError = part.text.includes('"error"') && part.text.includes('"message"')
+
+              if (isRawError || (part.text.startsWith('**Error:') && !isUser)) {
+                return <ErrorDisplay key={i} text={part.text} />
+              }
+
               return (
                 <div
                   key={i}
-                  className="text-[13px] italic"
-                  style={{ color: 'var(--text-muted)' }}
+                  className="markdown-content text-[13px] leading-relaxed"
+                  style={{ color: 'var(--text-primary)' }}
                 >
-                  No response content received from the model.
+                  <HighlightedMarkdown text={part.text} onOpenFile={onOpenFile} />
                 </div>
               )
             }
 
-            // Detect raw JSON error responses
-            const isRawError = part.text.includes('"error"') && part.text.includes('"message"')
-
-            if (isRawError || (part.text.startsWith('**Error:') && !isUser)) {
-              return <ErrorDisplay key={i} text={part.text} />
+            if (part.type === 'image' && part.image) {
+              return <ImagePart key={i} image={part.image} />
             }
 
-            return (
-              <div
-                key={i}
-                className="markdown-content text-[13px] leading-relaxed"
-                style={{ color: 'var(--text-primary)' }}
-              >
-                <HighlightedMarkdown text={part.text} onOpenFile={onOpenFile} />
-              </div>
-            )
-          }
+            if (part.type === 'tool-call' && part.toolCall) {
+              // Find the paired tool-result for this call
+              const pairedResultIndex = (() => {
+                for (let j = i + 1; j < message.parts.length; j++) {
+                  if (pairedResultIndices.has(j)) {
+                    const r = message.parts[j]
+                    if (r.type === 'tool-result' && r.toolResult?.name === part.toolCall!.name) {
+                      return j
+                    }
+                  }
+                }
+                return -1
+              })()
+              const pairedResult = pairedResultIndex >= 0 ? message.parts[pairedResultIndex].toolResult : undefined
 
-          if (part.type === 'image' && part.image) {
-            return <ImagePart key={i} image={part.image} />
-          }
+              // Render execute_command as inline terminal (already collapsed)
+              if (part.toolCall.name === 'execute_command') {
+                const cmdArg = (part.toolCall.args?.command || part.toolCall.args?.__command) as string || ''
+                return <InlineTerminalCard key={i} command={cmdArg} result={pairedResult || undefined} />
+              }
 
-          if (part.type === 'tool-call' && part.toolCall) {
-            // Render execute_command as inline terminal
-            if (part.toolCall.name === 'execute_command') {
-              const cmdArg = (part.toolCall.args?.command || part.toolCall.args?.__command) as string || ''
-              // Find matching tool-result by looking ahead
-              const matchingResult = message.parts.find(
-                (p, j) => j > i && p.type === 'tool-result' && p.toolResult?.name === 'execute_command'
+              // All other tools: collapsed card with inline status
+              return <CollapsedToolCard key={i} toolCall={part.toolCall} toolResult={pairedResult || undefined} />
+            }
+
+            if (part.type === 'tool-result' && part.toolResult) {
+              // Skip if already paired with a tool-call above
+              if (pairedResultIndices.has(i)) return null
+              // Orphan result (no matching tool-call) — render standalone
+              return <OrphanToolResultCard key={i} toolResult={part.toolResult} />
+            }
+
+            if (part.type === 'thinking' && part.thinking) {
+              // Find associated reasoning part
+              const reasoningPart = message.parts.find(p => p.type === 'reasoning' && p.reasoning)
+              return (
+                <ThinkingBlock
+                  key={i}
+                  steps={part.thinking.steps}
+                  duration={part.thinking.duration ?? 0}
+                  isComplete={part.thinking.isComplete}
+                  reasoningContent={reasoningPart?.reasoning?.content}
+                />
               )
-              return <InlineTerminalCard key={i} command={cmdArg} result={matchingResult?.toolResult || undefined} />
             }
-            return <ToolCallCard key={i} toolCall={part.toolCall} />
-          }
 
-          if (part.type === 'tool-result' && part.toolResult) {
-            return <ToolResultCard key={i} toolResult={part.toolResult} />
-          }
-
-          if (part.type === 'thinking' && part.thinking) {
-            // Find associated reasoning part
-            const reasoningPart = message.parts.find(p => p.type === 'reasoning' && p.reasoning)
-            return (
-              <ThinkingBlock
-                key={i}
-                steps={part.thinking.steps}
-                duration={part.thinking.duration}
-                isComplete={part.thinking.isComplete}
-                reasoningContent={reasoningPart?.reasoning?.content}
-              />
-            )
-          }
-
-          return null
-        })}
+            return null
+          })
+        })()}
 
         {/* Collapsible plan block for "Implementing plan..." messages */}
         {message.planText && <PlanBlock planText={message.planText} />}
@@ -790,3 +929,5 @@ export default function ChatMessage({ message, onOpenFile }: Props) {
     </motion.div>
   )
 }
+
+export default memo(ChatMessage, (prev, next) => prev.message === next.message)

@@ -1,15 +1,16 @@
 import { useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowRight, ArrowLeft, Key, Shield, SkipForward, ExternalLink, Zap, Code2, Users, Sparkles, Server, Check, Volume2, VolumeX, Bell, BellOff, Play, Terminal, Palette, Minus, X, Github, Heart } from 'lucide-react'
-import type { Theme } from '../types'
+import { ArrowRight, ArrowLeft, Key, Shield, SkipForward, ExternalLink, Zap, Code2, Users, Sparkles, Server, Check, Volume2, VolumeX, Bell, BellOff, Play, Terminal, Palette, Minus, X, Github, Heart, ChevronDown } from 'lucide-react'
+import type { Theme, AIProvider } from '../types'
 import { previewSound, type SoundSettings, DEFAULT_SOUND_SETTINGS } from '../lib/sounds'
+import { PROVIDER_REGISTRY } from '../lib/zenClient'
+import { getProviderIcon } from './ProviderIcons'
 import logoUrl from '../../resources/icon.png'
 
-type Provider = 'zen' | 'zai'
 type SetupStep = 'welcome' | 'theme' | 'sounds' | 'apikey'
 
 interface Props {
-  onComplete: (theme: string, apiKeys?: { provider: Provider; key: string }[]) => void
+  onComplete: (theme: string, apiKeys?: { provider: string; key: string }[]) => void
 }
 
 const SETUP_THEMES: { id: Theme; name: string; accent: string; bg: string; card: string; text: string; desc: string }[] = [
@@ -96,9 +97,8 @@ function OnboardingWindowControls() {
 export default function ThemeSetup({ onComplete }: Props) {
   const [selected, setSelected] = useState<Theme>('dark')
   const [step, setStep] = useState<SetupStep>('welcome')
-  const [selectedProvider, setSelectedProvider] = useState<Provider>('zen')
-  const [zenApiKey, setZenApiKey] = useState('')
-  const [zaiApiKey, setZaiApiKey] = useState('')
+  const [selectedProvider, setSelectedProvider] = useState<AIProvider>('zen')
+  const [providerKeys, setProviderKeys] = useState<Record<string, string>>({})
   const [soundSettings, setSoundSettings] = useState<SoundSettings>({ ...DEFAULT_SOUND_SETTINGS })
 
   const goNext = useCallback(() => {
@@ -112,13 +112,14 @@ export default function ThemeSetup({ onComplete }: Props) {
   }, [step])
 
   const handleFinish = useCallback(() => {
-    const apiKeys: { provider: Provider; key: string }[] = []
-    if (zenApiKey.trim()) apiKeys.push({ provider: 'zen', key: zenApiKey.trim() })
-    if (zaiApiKey.trim()) apiKeys.push({ provider: 'zai', key: zaiApiKey.trim() })
+    const apiKeys: { provider: string; key: string }[] = []
+    for (const [providerId, key] of Object.entries(providerKeys)) {
+      if (key.trim()) apiKeys.push({ provider: providerId, key: key.trim() })
+    }
     // Save sound settings
     window.artemis.store.set('soundSettings', soundSettings).catch(() => {})
     onComplete(selected || 'dark', apiKeys.length > 0 ? apiKeys : undefined)
-  }, [zenApiKey, zaiApiKey, selected, soundSettings, onComplete])
+  }, [providerKeys, selected, soundSettings, onComplete])
 
   return (
     <div
@@ -257,11 +258,11 @@ export default function ThemeSetup({ onComplete }: Props) {
               style={{ color: ONBOARD.textDim }}
             >
               Powered by{' '}
-              <a href="https://opencode.ai" target="_blank" rel="noopener noreferrer" style={{ color: ONBOARD.accent }}
+              <a href="#" onClick={(e) => { e.preventDefault(); window.artemis.shell.openExternal('https://opencode.ai') }} style={{ color: ONBOARD.accent, cursor: 'pointer' }}
                 onMouseEnter={(e) => e.currentTarget.style.textDecoration = 'underline'}
                 onMouseLeave={(e) => e.currentTarget.style.textDecoration = 'none'}
               >OpenCode Zen</a>{' '}and{' '}
-              <a href="https://z.ai" target="_blank" rel="noopener noreferrer" style={{ color: ONBOARD.accent }}
+              <a href="#" onClick={(e) => { e.preventDefault(); window.artemis.shell.openExternal('https://z.ai') }} style={{ color: ONBOARD.accent, cursor: 'pointer' }}
                 onMouseEnter={(e) => e.currentTarget.style.textDecoration = 'underline'}
                 onMouseLeave={(e) => e.currentTarget.style.textDecoration = 'none'}
               >Z.AI</a>
@@ -694,7 +695,7 @@ export default function ThemeSetup({ onComplete }: Props) {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -30 }}
             transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-            className="relative z-10 text-center max-w-lg w-full px-8"
+            className="relative z-10 text-center max-w-xl w-full px-8"
           >
             <StepIndicator current={2} total={3} />
 
@@ -732,135 +733,106 @@ export default function ThemeSetup({ onComplete }: Props) {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.25 }}
-              className="text-sm mb-6 leading-relaxed"
+              className="text-sm mb-5 leading-relaxed"
               style={{ color: ONBOARD.textMuted }}
             >
-              Choose your AI provider and enter your API key.
+              Pick a provider and enter your API key. You can add more later in Settings.
             </motion.p>
 
-            {/* Provider Selection */}
+            {/* Provider Selection — scrollable grid of all providers */}
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.3 }}
-              className="grid grid-cols-2 gap-3 mb-5"
+              className="grid grid-cols-3 gap-2 mb-4 max-h-[180px] overflow-y-auto pr-1"
             >
-              <button
-                onClick={() => setSelectedProvider('zen')}
-                className="flex items-center gap-3 p-4 rounded-xl text-left transition-all duration-200"
-                style={{
-                  backgroundColor: selectedProvider === 'zen' ? 'rgba(232,196,160,0.12)' : ONBOARD.card,
-                  border: `2px solid ${selectedProvider === 'zen' ? ONBOARD.accent : ONBOARD.border}`,
-                }}
-              >
-                <div
-                  className="w-10 h-10 rounded-lg flex items-center justify-center"
-                  style={{ backgroundColor: selectedProvider === 'zen' ? 'rgba(232,196,160,0.2)' : 'rgba(255,255,255,0.05)' }}
-                >
-                  <Server size={20} style={{ color: selectedProvider === 'zen' ? ONBOARD.accent : ONBOARD.textDim }} />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold" style={{ color: ONBOARD.text }}>OpenCode Zen</p>
-                  <p className="text-[11px]" style={{ color: ONBOARD.textMuted }}>Multiple AI models</p>
-                </div>
-              </button>
-
-              <button
-                onClick={() => setSelectedProvider('zai')}
-                className="flex items-center gap-3 p-4 rounded-xl text-left transition-all duration-200"
-                style={{
-                  backgroundColor: selectedProvider === 'zai' ? 'rgba(232,196,160,0.12)' : ONBOARD.card,
-                  border: `2px solid ${selectedProvider === 'zai' ? ONBOARD.accent : ONBOARD.border}`,
-                }}
-              >
-                <div
-                  className="w-10 h-10 rounded-lg flex items-center justify-center"
-                  style={{ backgroundColor: selectedProvider === 'zai' ? 'rgba(232,196,160,0.2)' : 'rgba(255,255,255,0.05)' }}
-                >
-                  <Sparkles size={20} style={{ color: selectedProvider === 'zai' ? ONBOARD.accent : ONBOARD.textDim }} />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold" style={{ color: ONBOARD.text }}>Z.AI</p>
-                  <p className="text-[11px]" style={{ color: ONBOARD.textMuted }}>GLM models</p>
-                </div>
-              </button>
+              {PROVIDER_REGISTRY.map(info => {
+                const isActive = selectedProvider === info.id
+                const ProvIcon = getProviderIcon(info.id)
+                return (
+                  <button
+                    key={info.id}
+                    onClick={() => setSelectedProvider(info.id)}
+                    className="flex items-center gap-2.5 p-3 rounded-xl text-left transition-all duration-200"
+                    style={{
+                      backgroundColor: isActive ? 'rgba(232,196,160,0.12)' : ONBOARD.card,
+                      border: `2px solid ${isActive ? ONBOARD.accent : ONBOARD.border}`,
+                    }}
+                  >
+                    <div
+                      className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                      style={{ backgroundColor: isActive ? 'rgba(232,196,160,0.2)' : 'rgba(255,255,255,0.05)' }}
+                    >
+                      <ProvIcon size={16} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-semibold truncate" style={{ color: ONBOARD.text }}>{info.name}</p>
+                      <p className="text-[9px] truncate" style={{ color: ONBOARD.textMuted }}>{info.description.split('—')[0].trim()}</p>
+                    </div>
+                  </button>
+                )
+              })}
             </motion.div>
 
-            {/* API Key Input */}
+            {/* API Key Input for selected provider */}
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
-              className="mb-5"
+              className="mb-4"
             >
-              {selectedProvider === 'zen' ? (
-                <>
-                  <input
-                    type="password"
-                    value={zenApiKey}
-                    onChange={(e) => setZenApiKey(e.target.value)}
-                    placeholder="zen-... or sk-..."
-                    className="w-full px-5 py-4 rounded-xl text-base outline-none transition-all duration-150"
-                    style={{ backgroundColor: ONBOARD.card, color: ONBOARD.text, border: `2px solid ${ONBOARD.border}` }}
-                    onFocus={(e) => { e.currentTarget.style.borderColor = ONBOARD.accent; e.currentTarget.style.boxShadow = '0 0 0 4px rgba(232,196,160,0.1)' }}
-                    onBlur={(e) => { e.currentTarget.style.borderColor = ONBOARD.border; e.currentTarget.style.boxShadow = 'none' }}
-                  />
-                  <p className="text-[11px] mt-2" style={{ color: ONBOARD.textDim }}>
-                    Get your key from{' '}
-                    <a href="https://opencode.ai" target="_blank" rel="noopener noreferrer" style={{ color: ONBOARD.accent }}>opencode.ai</a>
-                  </p>
-                </>
-              ) : (
-                <>
-                  <input
-                    type="password"
-                    value={zaiApiKey}
-                    onChange={(e) => setZaiApiKey(e.target.value)}
-                    placeholder="zai-..."
-                    className="w-full px-5 py-4 rounded-xl text-base outline-none transition-all duration-150"
-                    style={{ backgroundColor: ONBOARD.card, color: ONBOARD.text, border: `2px solid ${ONBOARD.border}` }}
-                    onFocus={(e) => { e.currentTarget.style.borderColor = ONBOARD.accent; e.currentTarget.style.boxShadow = '0 0 0 4px rgba(232,196,160,0.1)' }}
-                    onBlur={(e) => { e.currentTarget.style.borderColor = ONBOARD.border; e.currentTarget.style.boxShadow = 'none' }}
-                  />
-                  <p className="text-[11px] mt-2" style={{ color: ONBOARD.textDim }}>
-                    Get your key from{' '}
-                    <a href="https://z.ai/manage-apikey/apikey-list" target="_blank" rel="noopener noreferrer" style={{ color: ONBOARD.accent }}>z.ai</a>
-                  </p>
-                </>
-              )}
+              {(() => {
+                const info = PROVIDER_REGISTRY.find(p => p.id === selectedProvider)
+                if (!info) return null
+                const isOllama = info.id === 'ollama'
+                return (
+                  <>
+                    <input
+                      type="password"
+                      value={providerKeys[selectedProvider] || ''}
+                      onChange={(e) => setProviderKeys(prev => ({ ...prev, [selectedProvider]: e.target.value }))}
+                      placeholder={isOllama ? 'No key needed (leave empty)' : info.placeholder}
+                      disabled={isOllama}
+                      className="w-full px-5 py-3.5 rounded-xl text-sm outline-none transition-all duration-150"
+                      style={{ backgroundColor: ONBOARD.card, color: ONBOARD.text, border: `2px solid ${ONBOARD.border}`, opacity: isOllama ? 0.5 : 1 }}
+                      onFocus={(e) => { e.currentTarget.style.borderColor = ONBOARD.accent; e.currentTarget.style.boxShadow = '0 0 0 4px rgba(232,196,160,0.1)' }}
+                      onBlur={(e) => { e.currentTarget.style.borderColor = ONBOARD.border; e.currentTarget.style.boxShadow = 'none' }}
+                    />
+                    <p className="text-[11px] mt-2" style={{ color: ONBOARD.textDim }}>
+                      {isOllama ? 'Ollama runs locally — no API key required.' : (
+                        <>Get your key from{' '}
+                        <a href="#" onClick={(e) => { e.preventDefault(); window.artemis.shell.openExternal(info.helpUrl) }} style={{ color: ONBOARD.accent, cursor: 'pointer' }}>{info.name}</a></>
+                      )}
+                    </p>
+                  </>
+                )
+              })()}
             </motion.div>
 
-            {/* Security notices */}
+            {/* Security & feature notices */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.45 }}
-              className="mb-7 space-y-2.5"
+              className="mb-6 space-y-2"
             >
               <div
-                className="flex items-start gap-3 text-left p-3.5 rounded-xl"
+                className="flex items-start gap-3 text-left p-3 rounded-xl"
                 style={{ backgroundColor: 'rgba(232,196,160,0.03)', border: `1px solid ${ONBOARD.border}` }}
               >
-                <Shield size={16} className="shrink-0 mt-0.5" style={{ color: '#4ade80' }} />
-                <div>
-                  <p className="text-[12px] font-medium mb-0.5" style={{ color: ONBOARD.text }}>Your key stays local</p>
-                  <p className="text-[11px] leading-relaxed" style={{ color: ONBOARD.textMuted }}>
-                    Stored securely on your machine. All API calls go directly from your computer.
-                  </p>
-                </div>
+                <Shield size={14} className="shrink-0 mt-0.5" style={{ color: '#4ade80' }} />
+                <p className="text-[11px] leading-relaxed" style={{ color: ONBOARD.textMuted }}>
+                  <strong style={{ color: ONBOARD.text }}>Keys stay local.</strong> Encrypted on your machine; API calls go direct.
+                </p>
               </div>
-
               <div
-                className="flex items-start gap-3 text-left p-3.5 rounded-xl"
+                className="flex items-start gap-3 text-left p-3 rounded-xl"
                 style={{ backgroundColor: 'rgba(232,196,160,0.03)', border: `1px solid ${ONBOARD.border}` }}
               >
-                <Zap size={16} className="shrink-0 mt-0.5" style={{ color: ONBOARD.accent }} />
-                <div>
-                  <p className="text-[12px] font-medium mb-0.5" style={{ color: ONBOARD.text }}>Free models available</p>
-                  <p className="text-[11px] leading-relaxed" style={{ color: ONBOARD.textMuted }}>
-                    Both providers offer free tiers. Check their pricing pages before you start.
-                  </p>
-                </div>
+                <Sparkles size={14} className="shrink-0 mt-0.5" style={{ color: ONBOARD.accent }} />
+                <p className="text-[11px] leading-relaxed" style={{ color: ONBOARD.textMuted }}>
+                  <strong style={{ color: ONBOARD.text }}>Inline Code Completion</strong> — AI ghost-text as you type. Configure in Settings &gt; Code Completion after setup.
+                </p>
               </div>
             </motion.div>
 
@@ -898,12 +870,12 @@ export default function ThemeSetup({ onComplete }: Props) {
                 whileHover={{ scale: 1.04, y: -2 }}
                 whileTap={{ scale: 0.97 }}
                 onClick={handleFinish}
-                disabled={!zenApiKey.trim() && !zaiApiKey.trim()}
+                disabled={Object.values(providerKeys).every(k => !k.trim())}
                 className="h-11 px-8 rounded-xl text-sm font-bold flex items-center gap-2 transition-all duration-150"
                 style={{
-                  background: (zenApiKey.trim() || zaiApiKey.trim()) ? `linear-gradient(135deg, ${ONBOARD.accent}, #f0d8c0)` : ONBOARD.card,
-                  color: (zenApiKey.trim() || zaiApiKey.trim()) ? '#000' : ONBOARD.textDim,
-                  boxShadow: (zenApiKey.trim() || zaiApiKey.trim()) ? `0 8px 30px ${ONBOARD.accentGlow}` : 'none',
+                  background: Object.values(providerKeys).some(k => k.trim()) ? `linear-gradient(135deg, ${ONBOARD.accent}, #f0d8c0)` : ONBOARD.card,
+                  color: Object.values(providerKeys).some(k => k.trim()) ? '#000' : ONBOARD.textDim,
+                  boxShadow: Object.values(providerKeys).some(k => k.trim()) ? `0 8px 30px ${ONBOARD.accentGlow}` : 'none',
                 }}
               >
                 Launch Artemis

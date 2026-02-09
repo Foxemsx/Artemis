@@ -9,7 +9,7 @@
  *           with content: [{ type: "tool_result", ... }]
  */
 
-import { BaseProvider, type ProviderResponse } from '../BaseProvider'
+import { BaseProvider, capMaxTokens, type ProviderResponse } from '../BaseProvider'
 import type {
   CompletionRequest,
   StreamDelta,
@@ -52,6 +52,13 @@ export class AnthropicAdapter extends BaseProvider {
 
     if (request.tools && request.tools.length > 0) {
       body.tools = this.formatTools(request.tools)
+    }
+
+    // Cap max_tokens so input + output fits within the context window
+    if (body.max_tokens) {
+      const serialized = JSON.stringify(formattedMsgs) + JSON.stringify(body.tools || [])
+        + (body.system || '')
+      body.max_tokens = capMaxTokens(body.max_tokens, request.model.contextWindow, serialized)
     }
 
     return body

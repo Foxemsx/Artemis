@@ -120,6 +120,8 @@ export interface ModelConfig {
   maxTokens?: number
   /** Context window size */
   contextWindow?: number
+  /** Whether this model supports tool/function calling (default true) */
+  supportsTools?: boolean
 }
 
 // ─── Request Options ─────────────────────────────────────────────────────────

@@ -340,8 +340,22 @@ export class MCPClient extends EventEmitter {
     this.process.stdin.write(JSON.stringify(notification) + '\n')
   }
 
+  // Security: Maximum buffer size (1MB) to prevent unbounded memory growth
+  // if a server streams data without newlines.
+  private static MAX_BUFFER_SIZE = 1_048_576
+
   private handleData(data: string): void {
     this.buffer += data
+
+    // Security: Cap buffer size to prevent OOM from malicious/broken servers
+    if (this.buffer.length > MCPClient.MAX_BUFFER_SIZE) {
+      console.error(`[MCP:${this._serverId}] Buffer overflow (>${MCPClient.MAX_BUFFER_SIZE} bytes) — disconnecting`)
+      this.addLog('stderr', `Buffer overflow: server sent >1MB without newline delimiter. Disconnecting.`)
+      this.buffer = ''
+      this.rejectAllPending(new Error('MCP server buffer overflow — possible malformed output'))
+      this.disconnect()
+      return
+    }
 
     // Process complete lines (newline-delimited JSON)
     const lines = this.buffer.split('\n')

@@ -56,8 +56,13 @@ export default function ChatPanel({
   const [attachedImages, setAttachedImages] = useState<Array<{ id: string; url: string; name: string }>>([])
   const attachImageRef = useRef<(() => void) | null>(null)
 
+  const scrollRafRef = useRef<number>(0)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    cancelAnimationFrame(scrollRafRef.current)
+    scrollRafRef.current = requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
+    })
+    return () => cancelAnimationFrame(scrollRafRef.current)
   }, [messages])
 
   useEffect(() => {
@@ -144,9 +149,12 @@ export default function ChatPanel({
     }
   }, [handleSend])
 
-  const sessionMessages = activeSessionId
-    ? messages.filter((m) => m.sessionId === activeSessionId || !m.sessionId)
-    : []
+  const sessionMessages = useMemo(() =>
+    activeSessionId
+      ? messages.filter((m) => m.sessionId === activeSessionId || !m.sessionId)
+      : [],
+    [messages, activeSessionId]
+  )
 
   // Extract latest TODO plan from assistant messages
   const latestPlan = useMemo(() => {

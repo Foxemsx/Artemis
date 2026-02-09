@@ -60,13 +60,19 @@ export default function ProblemsPanel({ projectPath, onOpenFile }: Props) {
   const [loading, setLoading] = useState(false)
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set())
   const [lastRun, setLastRun] = useState<string | null>(null)
+  const [commandsEnabled, setCommandsEnabled] = useState(false)
 
   const runCheck = useCallback(async () => {
     if (!projectPath) return
+
+    const allowed = await window.artemis.security.requestCapability('commands')
+    if (!allowed) return
+    setCommandsEnabled(true)
+
     setLoading(true)
     try {
       const result = await window.artemis.tools.runCommand(
-        'npx tsc --noEmit --pretty false 2>&1',
+        'npx tsc --noEmit --pretty false',
         projectPath
       )
       const output = result.stdout || result.stderr || ''
@@ -82,8 +88,17 @@ export default function ProblemsPanel({ projectPath, onOpenFile }: Props) {
   }, [projectPath])
 
   useEffect(() => {
-    if (projectPath) runCheck()
-  }, [projectPath]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (!projectPath) return
+    let cancelled = false
+    window.artemis.security.getCapabilities()
+      .then((caps) => {
+        if (cancelled) return
+        setCommandsEnabled(!!caps.commands)
+        if (caps.commands) runCheck()
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [projectPath, runCheck])
 
   const grouped = groupByFile(problems)
   const errorCount = problems.filter(p => p.severity === 'error').length
@@ -130,6 +145,17 @@ export default function ProblemsPanel({ projectPath, onOpenFile }: Props) {
         </div>
         <div className="flex items-center gap-2">
           {lastRun && <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>{lastRun}</span>}
+          {!commandsEnabled && (
+            <button
+              onClick={runCheck}
+              disabled={!projectPath}
+              className="px-2 py-1 rounded text-[10px] font-medium transition-colors"
+              style={{ color: 'var(--accent)', backgroundColor: 'rgba(212,168,83,0.10)', border: '1px solid rgba(212,168,83,0.25)' }}
+              title="Enable command execution to run TypeScript checks"
+            >
+              Enable
+            </button>
+          )}
           <button
             onClick={runCheck}
             disabled={loading}

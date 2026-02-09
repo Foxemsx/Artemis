@@ -1,10 +1,3 @@
-/**
- * BaseProvider — Abstract interface that ALL providers must implement.
- * 
- * The agent loop only ever talks to this interface. It never sees
- * provider-specific request/response formats. Adapters handle all conversion.
- */
-
 import type {
   CompletionRequest,
   StreamDelta,
@@ -12,8 +5,6 @@ import type {
   UniversalToolDefinition,
   ApiError,
 } from '../types'
-
-// ─── Provider Response Types ─────────────────────────────────────────────────
 
 export interface ProviderStreamChunk {
   delta: StreamDelta
@@ -35,50 +26,35 @@ export interface ProviderResponse {
   }
 }
 
-// ─── Abstract Base Provider ──────────────────────────────────────────────────
+const SAFETY_BUFFER = 2000
+const MIN_OUTPUT_TOKENS = 1000
+
+export function capMaxTokens(
+  maxTokens: number,
+  contextWindow: number | undefined,
+  serializedInput: string,
+): number {
+  if (!contextWindow) return maxTokens
+  const estimatedInputTokens = Math.ceil(serializedInput.length / 3.5)
+  const available = contextWindow - estimatedInputTokens - SAFETY_BUFFER
+  return Math.max(MIN_OUTPUT_TOKENS, Math.min(maxTokens, available))
+}
 
 export abstract class BaseProvider {
-  /**
-   * Convert universal tool definitions to this provider's format.
-   */
   abstract formatTools(tools: UniversalToolDefinition[]): any[]
 
-  /**
-   * Build the complete request body for this provider's API.
-   * Converts universal messages + tools into provider-specific format.
-   */
   abstract buildRequestBody(request: CompletionRequest): any
 
-  /**
-   * Build HTTP headers for this provider's API.
-   */
   abstract buildHeaders(request: CompletionRequest): Record<string, string>
 
-  /**
-   * Build the full URL for this provider's API endpoint.
-   */
   abstract buildUrl(request: CompletionRequest): string
 
-  /**
-   * Parse a single SSE data line into a normalized StreamDelta.
-   * Returns null for non-content events (pings, metadata, etc).
-   */
   abstract parseStreamEvent(json: any): StreamDelta | null
 
-  /**
-   * Parse a non-streaming response into universal format.
-   */
   abstract parseResponse(json: any): ProviderResponse
 
-  /**
-   * Parse an API error response into a structured ApiError.
-   */
   abstract parseError(status: number, body: string): ApiError
 
-  /**
-   * Convert universal messages to this provider's message format.
-   * Called internally by buildRequestBody.
-   */
   abstract formatMessages(
     messages: UniversalMessage[],
     systemPrompt?: string

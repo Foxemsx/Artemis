@@ -437,6 +437,25 @@ export default function Terminal({ sessionId, theme, isActive }: Props) {
       try { fitAddon.fit() } catch {}
     })
 
+    // Right-click: copy selection or paste (VSCode-style)
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const selection = term.getSelection()
+      if (selection) {
+        navigator.clipboard.writeText(selection).then(() => {
+          term.clearSelection()
+        }).catch(() => {})
+      } else {
+        navigator.clipboard.readText().then((text) => {
+          if (text) {
+            window.artemis.session.write(sessionId, text)
+          }
+        }).catch(() => {})
+      }
+    }
+    containerRef.current.addEventListener('contextmenu', handleContextMenu)
+
     // Forward user input to the PTY
     const dataDisposable = term.onData((data) => {
       window.artemis.session.write(sessionId, data)
@@ -476,6 +495,7 @@ export default function Terminal({ sessionId, theme, isActive }: Props) {
     observer.observe(containerRef.current)
 
     return () => {
+      containerRef.current?.removeEventListener('contextmenu', handleContextMenu)
       window.removeEventListener('resize', handleResize)
       observer.disconnect()
       dataDisposable.dispose()
