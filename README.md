@@ -13,10 +13,10 @@
 [![React](https://img.shields.io/badge/React-18-61dafb.svg)](https://reactjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-3178c6.svg)](https://typescriptlang.org/)
 
-**Artemis is a free, open-source AI IDE that brings autonomous agent capabilities directly into your editor.**
-No subscriptions. No cloud lock-in. Just pure developer power.
+**Artemis is a free, open-source agentic IDE that can plan, code, run commands, and manage your project — while you stay in control of every action.**
+No subscriptions. No cloud lock-in. Fully open-source.
 
-[🚀 Getting Started](#-getting-started) · [✨ Features](#-features) · [📸 Screenshots](#-screenshots) · [🤝 Support](#-support--community)
+[🚀 Getting Started](#-getting-started) · [✨ Features](#-features) · [� Security](#-security) · [�📸 Screenshots](#-screenshots) · [🤝 Support](#-support--community)
 
 </div>
 
@@ -24,18 +24,29 @@ No subscriptions. No cloud lock-in. Just pure developer power.
 
 ## ✨ Features
 
-### 🤖 AI Agent System
-- **Autonomous Builder Mode** — Let the agent plan, code, and execute multi-step tasks end-to-end
-- **Planner Mode** — Get structured plans before any code is written
-- **Chat Mode** — Quick conversational help without tool execution
-- **Multi-Provider Support** — Works with OpenCode Zen, Z.AI, OpenAI, Anthropic, and more
+### 🤖 Autonomous AI Agent
+- **Builder Mode** — The agent plans, writes code, runs commands, and iterates until the task is done
+- **Planner Mode** — Get a structured plan first, review it, then one-click implement it in Builder
+- **Chat Mode** — Fast conversational help without tool execution
+- **13 Providers** — OpenAI, Anthropic, Google Gemini, DeepSeek, Groq, Mistral, OpenRouter, Moonshot, Perplexity, Synthetic, Z.AI, OpenCode Zen, and **Ollama** for fully local, private inference
+- **@-Mentions** — Type `@filename` to attach file context or `@codebase` to index your entire project into the conversation
+- **Image Attachments** — Drop images into chat for vision-capable models
+- **Web Browsing** — The agent can fetch and read web pages with built-in SSRF protection
+- **Tool Approval** — Every file write, delete, and command requires your explicit approval before execution
+
+### 🧠 AI Inline Completion
+- **Ghost-text suggestions** as you type — press TAB to accept
+- Works with all supported providers, with smart caching, rate limiting, and context trimming
 
 ### 🛠️ Full IDE Experience
-- **Monaco Editor** — The same editor engine that powers VS Code, with syntax highlighting for 40+ languages
-- **Integrated Terminal** — Real PTY terminal with full shell access (cmd, PowerShell, bash)
-- **File Explorer** — Browse, create, rename, and delete files and folders
+- **Monaco Editor** — Same engine as VS Code, with syntax highlighting for 40+ languages
+- **Integrated Terminal** — Real PTY-backed shell (cmd, PowerShell, bash) with full I/O
+- **Source Control** — Built-in Git panel with staging, unstaging, commits, inline diffs, push, pull, and branch management
+- **File Explorer** — Create, rename, delete, and browse files and folders
 - **Multi-Tab Editing** — Pin tabs, reorder them, and work across multiple files
 - **Project Search** — Regex-powered search across your entire codebase
+- **Problems Panel** — Live TypeScript diagnostics with click-to-navigate
+- **Customizable Keybindings** — Remap every shortcut to your preference
 
 ### 🔌 MCP Marketplace
 - **One-Click Install** — Browse and install Model Context Protocol servers instantly
@@ -45,19 +56,25 @@ No subscriptions. No cloud lock-in. Just pure developer power.
 ### 🎨 16 Beautiful Themes
 Dark · Light · Cyberpunk · Nord · Monokai · Solarized · Dracula · Rosé Pine · Pine · Catppuccin · Gruvbox · Material Ocean · Everforest · Sakura · Beach · Space
 
-### 🔒 Security First
-- **Encrypted API Keys** — Stored with OS-level `safeStorage` encryption
-- **Path Validation** — Blocks access to system directories
-- **Shell Injection Prevention** — Commands are parsed and spawned without a shell
-- **URL Allowlist** — API proxy only connects to approved domains
-- **Tool Approval System** — Review and approve agent actions before execution
+### 🔒 Security
+Artemis treats the AI agent as **untrusted code**. Every action is validated, contained, and gated.
 
-### 🎵 Extra Features
-- **Sound Effects & Notifications** — Know when tasks complete even while tabbed out
+- **OS-Level Key Encryption** — API keys and MCP secrets encrypted via `safeStorage` (DPAPI / Keychain / Secret Service). Plaintext storage is refused — keys are never saved unencrypted
+- **Renderer Sandbox** — `sandbox: true`, `contextIsolation: true`, `nodeIntegration: false` — even if the renderer is compromised, it can't touch Node.js
+- **Content Security Policy** — No `unsafe-inline` scripts in production, whitelisted `connect-src`, `object-src 'none'`, `frame-ancestors 'none'`
+- **Workspace Trust** — Untrusted folders run in Restricted Mode: no terminal, no commands, no agent. Trust is per-folder and persisted
+- **Filesystem Containment** — All destructive ops restricted to the active project. System paths, UNC paths, null bytes, and path traversal blocked
+- **Command Injection Prevention** — `shell: false` everywhere, shell metacharacter blocking, executable allowlist (only dev tools like npm, git, python, docker)
+- **SSRF Protection** — Blocks private IPs, loopback, link-local, and cloud metadata endpoints. DNS rebinding checks resolve hostnames and verify the IP isn't private
+- **HTTP Domain Allowlist** — Agent HTTP proxy only connects to whitelisted API domains
+- **Output Bounds** — Command output capped at 50KB, file reads at 2MB, agent limited to 50 iterations per run
+
+### 🎵 And More
+- **Sound Effects & Notifications** — Audio cues when tasks complete, even while tabbed out
 - **Discord Rich Presence** — Show what you're working on
 - **Token Tracking** — Real-time cost estimation and context window visualization
 - **Checkpoints** — Snapshot and restore your project state at any point
-- **Auto-Linting** — Built-in linter integration for cleaner code
+- **Auto-Linting** — ESLint, Biome, and more — integrated and automatic
 - **Web Search** — DuckDuckGo-powered search available to the AI agent
 - **Command Palette** — Quick access to every action with `Ctrl+Shift+P`
 
