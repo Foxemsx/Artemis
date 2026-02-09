@@ -276,6 +276,11 @@ ipcMain.handle('store:set', (_e, key: string, value: any) => {
   // Encrypt sensitive keys on write
   if (isSensitiveKey(key) && typeof value === 'string' && value) {
     store[key] = encryptValue(value)
+    // Sync API key to inline completion service so it's available immediately
+    const providerMatch = key.match(/^apiKey:(.+)$/)
+    if (providerMatch) {
+      inlineCompletionService.setApiKey(providerMatch[1], value)
+    }
   } else {
     store[key] = value
   }
@@ -1078,11 +1083,19 @@ ipcMain.handle('discord:setDebug', (_e, enabled: boolean) => discordRPC.setDebug
 
 // ─── Inline Code Completion (AI Ghost Text) ──────────────────────────────
 
-// Restore inline completion config from store
-;(async () => {
+// Restore inline completion config (non-sensitive) immediately so IPC handlers work.
+// API key sync is deferred to app.whenReady() where safeStorage is available on Windows.
+;(() => {
   try {
     const saved = store['inlineCompletionConfig'] as any
-    if (saved) inlineCompletionService.setConfig(saved)
+    if (saved) {
+      inlineCompletionService.setConfig(saved)
+      // Sync non-sensitive settings immediately
+      if (saved.provider === 'ollama') {
+        const baseUrl = store['baseUrl:ollama'] as string
+        if (baseUrl) inlineCompletionService.setBaseUrl('ollama', baseUrl)
+      }
+    }
   } catch {}
 })()
 
@@ -1109,17 +1122,12 @@ ipcMain.handle('inlineCompletion:setConfig', async (_e, config) => {
   if (config.provider) {
     const keyStoreKey = `apiKey:${config.provider}`
     const encryptedKey = store[keyStoreKey]
-    if (encryptedKey) {
+    if (encryptedKey && typeof encryptedKey === 'string') {
       try {
-        const { safeStorage } = require('electron')
-        if (safeStorage.isEncryptionAvailable()) {
-          const decrypted = safeStorage.decryptString(Buffer.from(encryptedKey, 'base64'))
-          inlineCompletionService.setApiKey(config.provider, decrypted)
-        } else {
-          inlineCompletionService.setApiKey(config.provider, encryptedKey)
-        }
-      } catch {
-        inlineCompletionService.setApiKey(config.provider, encryptedKey)
+        const decrypted = decryptValue(encryptedKey)
+        if (decrypted) inlineCompletionService.setApiKey(config.provider, decrypted)
+      } catch (err) {
+        console.error('[InlineCompletion] Failed to decrypt API key on config change:', err)
       }
     }
     // Sync custom base URL for Ollama
@@ -1127,6 +1135,86 @@ ipcMain.handle('inlineCompletion:setConfig', async (_e, config) => {
       const baseUrl = store['baseUrl:ollama'] as string
       if (baseUrl) inlineCompletionService.setBaseUrl('ollama', baseUrl)
     }
+  }
+})
+
+// ─── IPC: Fetch Models for a Provider ──────────────────────────────────────
+// Used by Settings to populate model dropdowns (e.g. OpenRouter, Z.AI).
+// Decrypts the API key from the store and hits the provider's /models endpoint.
+ipcMain.handle('inlineCompletion:fetchModels', async (_e, providerId: string) => {
+  const PROVIDER_BASE_URLS: Record<string, string> = {
+    zen: 'https://opencode.ai/zen/v1',
+    zai: 'https://api.z.ai/api/paas/v4',
+    anthropic: 'https://api.anthropic.com/v1',
+    openai: 'https://api.openai.com/v1',
+    openrouter: 'https://openrouter.ai/api/v1',
+    moonshot: 'https://api.moonshot.cn/v1',
+    google: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    deepseek: 'https://api.deepseek.com',
+    groq: 'https://api.groq.com/openai/v1',
+    mistral: 'https://api.mistral.ai/v1',
+    perplexity: 'https://api.perplexity.ai',
+    synthetic: 'https://api.synthetic.new/openai/v1',
+    ollama: 'http://localhost:11434/v1',
+  }
+
+  try {
+    const customUrl = store[`baseUrl:${providerId}`] as string | undefined
+    const baseUrl = customUrl || PROVIDER_BASE_URLS[providerId] || ''
+    if (!baseUrl) return { models: [], error: 'Unknown provider' }
+
+    // Decrypt the API key
+    let apiKey = ''
+    const encKey = store[`apiKey:${providerId}`]
+    if (encKey) {
+      try {
+        if (safeStorage.isEncryptionAvailable()) {
+          apiKey = safeStorage.decryptString(Buffer.from(encKey as string, 'base64'))
+        } else {
+          apiKey = encKey as string
+        }
+      } catch {
+        apiKey = encKey as string
+      }
+    }
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (apiKey && providerId !== 'ollama') {
+      headers['Authorization'] = `Bearer ${apiKey}`
+    }
+    if (providerId === 'openrouter') {
+      headers['HTTP-Referer'] = 'https://artemis.ide'
+      headers['X-Title'] = 'Artemis IDE'
+    }
+
+    const { net } = require('electron')
+    const result = await new Promise<{ ok: boolean; data: any }>((resolve) => {
+      const req = net.request({ method: 'GET', url: `${baseUrl}/models` })
+      for (const [k, v] of Object.entries(headers)) req.setHeader(k, v)
+      let body = ''
+      req.on('response', (res: any) => {
+        res.on('data', (chunk: Buffer) => { body += chunk.toString() })
+        res.on('end', () => {
+          try {
+            resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, data: JSON.parse(body) })
+          } catch { resolve({ ok: false, data: null }) }
+        })
+      })
+      req.on('error', () => resolve({ ok: false, data: null }))
+      setTimeout(() => { req.abort(); resolve({ ok: false, data: null }) }, 15000)
+      req.end()
+    })
+
+    if (!result.ok || !result.data) return { models: [], error: 'Failed to fetch models' }
+
+    const raw = Array.isArray(result.data) ? result.data : (result.data?.data && Array.isArray(result.data.data) ? result.data.data : [])
+    const models = raw
+      .filter((m: any) => m.id)
+      .map((m: any) => ({ id: m.id, name: m.name || m.id }))
+
+    return { models }
+  } catch (err: any) {
+    return { models: [], error: err.message }
   }
 })
 
@@ -1139,6 +1227,20 @@ registerAgentIPC(() => mainWindow)
 // ─── App Lifecycle ─────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
   createWindow()
+
+  // Sync inline completion API key now that safeStorage is available (Windows requires app ready)
+  try {
+    const inlineConfig = store['inlineCompletionConfig'] as any
+    if (inlineConfig?.provider && inlineConfig.provider !== 'ollama') {
+      const encryptedKey = store[`apiKey:${inlineConfig.provider}`]
+      if (encryptedKey && typeof encryptedKey === 'string') {
+        const decrypted = decryptValue(encryptedKey)
+        if (decrypted) inlineCompletionService.setApiKey(inlineConfig.provider, decrypted)
+      }
+    }
+  } catch (err) {
+    console.error('[InlineCompletion] Failed to sync API key on ready:', err)
+  }
 
   // Restore Discord RPC if it was enabled before restart
   if (store['discordRpcEnabled'] === true) {

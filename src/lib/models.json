@@ -1445,5 +1445,41 @@
       "maxTokens": 8000,
       "description": "Text embedding model — no extra charge, no rate limit impact."
     }
+  ],
+  "zai": [
+    {
+      "id": "glm-4.7",
+      "name": "GLM-4.7",
+      "provider": "Z.AI",
+      "contextWindow": 198000,
+      "maxTokens": 16384,
+      "description": "Most capable GLM model. Strong at code and reasoning.",
+      "supports_tools": true
+    },
+    {
+      "id": "glm-4.6",
+      "name": "GLM-4.6",
+      "provider": "Z.AI",
+      "contextWindow": 198000,
+      "maxTokens": 16384,
+      "description": "Powerful GLM model with great code generation.",
+      "supports_tools": true
+    },
+    {
+      "id": "glm-4.5",
+      "name": "GLM-4.5",
+      "provider": "Z.AI",
+      "contextWindow": 198000,
+      "maxTokens": 16384,
+      "description": "Fast and affordable GLM model."
+    },
+    {
+      "id": "glm-4.5-air",
+      "name": "GLM-4.5 Air",
+      "provider": "Z.AI",
+      "contextWindow": 198000,
+      "maxTokens": 16384,
+      "description": "Fast and affordable GLM model."
+    }
   ]
 }

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
-import { Command, FileText, Folder, Trash2, HelpCircle, Sparkles, AtSign, X, Terminal, Search, Globe, BookOpen, Image as ImageIcon, Plus } from 'lucide-react'
+import { Command, FileText, Folder, Trash2, HelpCircle, Sparkles, AtSign, X, Terminal, Search, Globe, BookOpen, Image as ImageIcon, Plus, Paperclip } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 interface FileNode {
@@ -180,6 +180,13 @@ interface AttachedImage {
   name: string
 }
 
+export interface AttachedFile {
+  id: string
+  name: string
+  path: string
+  content: string
+}
+
 interface Props {
   value: string
   onChange: (value: string) => void
@@ -190,10 +197,16 @@ interface Props {
   projectPath: string | null
   /** Ref to expose mention resolution function */
   mentionResolverRef?: React.MutableRefObject<(() => Promise<{ text: string; mentions: { name: string; path: string; content: string }[] }>) | null>
+  /** Controlled attached images from parent */
+  attachedImages: AttachedImage[]
   /** Callback when attached images change */
-  onImagesChange?: (images: AttachedImage[]) => void
+  onImagesChange: (images: AttachedImage[]) => void
   /** Ref to expose attach image trigger to parent */
   attachImageRef?: React.MutableRefObject<(() => void) | null>
+  /** Controlled attached code files from parent */
+  attachedFiles: AttachedFile[]
+  /** Callback when attached code files change */
+  onFilesChange: (files: AttachedFile[]) => void
 }
 
 const SLASH_COMMANDS: SlashCommand[] = [
@@ -231,6 +244,17 @@ const SLASH_COMMANDS: SlashCommand[] = [
   },
 ]
 
+// Binary/large file extensions to reject from drag-and-drop
+const BINARY_EXTENSIONS = new Set([
+  'png', 'jpg', 'jpeg', 'gif', 'bmp', 'ico', 'svg', 'webp', 'tiff', 'heic',
+  'woff', 'woff2', 'ttf', 'eot', 'otf',
+  'mp3', 'mp4', 'avi', 'mov', 'mkv', 'wav', 'flac', 'ogg',
+  'zip', 'tar', 'gz', 'rar', '7z', 'bz2', 'xz',
+  'exe', 'dll', 'so', 'dylib', 'bin',
+  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
+  'lock', 'map',
+])
+
 export default function EnhancedChatInput({
   value,
   onChange,
@@ -240,8 +264,11 @@ export default function EnhancedChatInput({
   disabled = false,
   projectPath,
   mentionResolverRef,
+  attachedImages,
   onImagesChange,
   attachImageRef,
+  attachedFiles,
+  onFilesChange,
 }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -254,7 +281,7 @@ export default function EnhancedChatInput({
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([])
   const [cursorPosition, setCursorPosition] = useState(0)
-  const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([])
+  // attachedImages and attachedFiles are controlled by the parent
 
   // Filter slash commands
   const filteredSlashCommands = useMemo(() => {
@@ -573,11 +600,7 @@ export default function EnhancedChatInput({
           url: imageDataUrl,
           name: file.name
         }
-        setAttachedImages(prev => {
-          const updated = [...prev, newImage]
-          onImagesChange?.(updated)
-          return updated
-        })
+        onImagesChange([...attachedImages, newImage])
       }
       reader.readAsDataURL(file)
     })
@@ -586,16 +609,12 @@ export default function EnhancedChatInput({
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
-  }, [onImagesChange])
+  }, [onImagesChange, attachedImages])
 
   // Handle image removal
   const handleImageRemove = useCallback((imageId: string) => {
-    setAttachedImages(prev => {
-      const updated = prev.filter(img => img.id !== imageId)
-      onImagesChange?.(updated)
-      return updated
-    })
-  }, [onImagesChange])
+    onImagesChange(attachedImages.filter(img => img.id !== imageId))
+  }, [onImagesChange, attachedImages])
 
   // Trigger file input
   const handleAttachImage = useCallback(() => {
@@ -633,18 +652,14 @@ export default function EnhancedChatInput({
               url: imageDataUrl,
               name: file.name || 'pasted-image.png'
             }
-            setAttachedImages(prev => {
-              const updated = [...prev, newImage]
-              onImagesChange?.(updated)
-              return updated
-            })
+            onImagesChange([...attachedImages, newImage])
           }
           reader.readAsDataURL(file)
         }
         break
       }
     }
-  }, [onImagesChange])
+  }, [onImagesChange, attachedImages])
 
   // Handle drag events — use counter pattern to prevent flicker from child elements
   const [isDragging, setIsDragging] = useState(false)
@@ -678,6 +693,11 @@ export default function EnhancedChatInput({
     }
   }, [])
 
+  // Handle file removal (code files)
+  const handleFileRemove = useCallback((fileId: string) => {
+    onFilesChange(attachedFiles.filter(f => f.id !== fileId))
+  }, [onFilesChange, attachedFiles])
+
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     e.stopPropagation()
@@ -688,25 +708,43 @@ export default function EnhancedChatInput({
     if (!files || files.length === 0) return
 
     Array.from(files).forEach(file => {
-      if (!file.type.startsWith('image/')) return
+      // Handle images
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader()
+        reader.onload = () => {
+          const imageDataUrl = reader.result as string
+          const newImage: AttachedImage = {
+            id: `${Date.now()}-${Math.random()}`,
+            url: imageDataUrl,
+            name: file.name
+          }
+          onImagesChange([...attachedImages, newImage])
+        }
+        reader.readAsDataURL(file)
+        return
+      }
+
+      // Handle code/text files
+      const ext = file.name.split('.').pop()?.toLowerCase() || ''
+      if (BINARY_EXTENSIONS.has(ext)) return
+      if (file.size > 500_000) return // Skip files > 500KB
 
       const reader = new FileReader()
       reader.onload = () => {
-        const imageDataUrl = reader.result as string
-        const newImage: AttachedImage = {
+        const content = reader.result as string
+        // Skip binary-looking content
+        if (content.includes('\0')) return
+        const newFile: AttachedFile = {
           id: `${Date.now()}-${Math.random()}`,
-          url: imageDataUrl,
-          name: file.name
+          name: file.name,
+          path: (file as any).path || file.name,
+          content,
         }
-        setAttachedImages(prev => {
-          const updated = [...prev, newImage]
-          onImagesChange?.(updated)
-          return updated
-        })
+        onFilesChange([...attachedFiles, newFile])
       }
-      reader.readAsDataURL(file)
+      reader.readAsText(file)
     })
-  }, [onImagesChange])
+  }, [onImagesChange, onFilesChange, attachedImages, attachedFiles])
 
   return (
     <div
@@ -742,9 +780,44 @@ export default function EnhancedChatInput({
             className="flex flex-col items-center gap-2"
             style={{ color: 'var(--accent)' }}
           >
-            <ImageIcon size={32} />
-            <span className="text-[12px] font-medium">Drop images here</span>
+            <Paperclip size={32} />
+            <span className="text-[12px] font-medium">Drop files or images here</span>
+            <span className="text-[10px]" style={{ opacity: 0.6 }}>Code files will be attached as context</span>
           </div>
+        </div>
+      )}
+
+      {/* Attached file chips (code files) */}
+      {attachedFiles.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 px-4 pt-3 pb-1">
+          {attachedFiles.map(file => (
+            <div
+              key={file.id}
+              className="relative group inline-flex items-center gap-1.5 px-2 py-1 rounded-md"
+              style={{
+                backgroundColor: 'rgba(96, 165, 250, 0.08)',
+                border: '1px solid rgba(96, 165, 250, 0.2)',
+              }}
+            >
+              <FileText size={11} style={{ color: 'rgb(96, 165, 250)', flexShrink: 0 }} />
+              <span className="text-[10px] font-mono font-medium max-w-[140px] truncate" style={{ color: 'rgb(96, 165, 250)' }}>
+                {file.name}
+              </span>
+              <span className="text-[9px]" style={{ color: 'var(--text-muted)', opacity: 0.5 }}>
+                {file.content.length > 1000 ? `${(file.content.length / 1024).toFixed(1)}KB` : `${file.content.split('\n').length} lines`}
+              </span>
+              <button
+                onClick={() => handleFileRemove(file.id)}
+                className="ml-0.5 p-0.5 rounded transition-all duration-100 opacity-0 group-hover:opacity-100"
+                style={{ color: 'var(--text-muted)' }}
+                onMouseEnter={e => { e.currentTarget.style.color = 'var(--error)' }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)' }}
+                title="Remove file"
+              >
+                <X size={10} />
+              </button>
+            </div>
+          ))}
         </div>
       )}
 

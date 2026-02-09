@@ -202,7 +202,8 @@ interface ArtemisAPI {
   inlineCompletion: {
     complete: (request: { prefix: string; suffix: string; language: string; filepath: string }) => Promise<{ completion: string } | null>
     getConfig: () => Promise<{ enabled: boolean; provider: string; model: string; maxTokens: number }>
-    setConfig: (config: { enabled?: boolean; provider?: string; model?: string; maxTokens?: number }) => Promise<void>
+    setConfig: (config: { enabled: boolean; provider: string; model: string; maxTokens: number }) => Promise<void>
+    fetchModels: (providerId: string) => Promise<{ models: { id: string; name: string }[]; error?: string }>
   }
 
   agent: {

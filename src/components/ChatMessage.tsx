@@ -16,6 +16,8 @@ import {
   CheckCheck,
   Image as ImageIcon,
   Download,
+  Undo2,
+  FileText,
 } from 'lucide-react'
 import type { ChatMessage as ChatMessageType, MessagePart } from '../types'
 import { 
@@ -209,6 +211,8 @@ function InlineDiff({ oldStr, newStr }: { oldStr: string; newStr: string }) {
 
 /** Collapsed Tool Card — merges tool-call + tool-result into a single expandable row.
  *  Shows: icon + label + path/preview + status badge. Expand to see args/diff/output. */
+const FILE_MODIFYING_TOOL_NAMES = new Set(['write_file', 'str_replace', 'delete_file', 'move_file'])
+
 function CollapsedToolCard({ toolCall, toolResult }: {
   toolCall: NonNullable<MessagePart['toolCall']>
   toolResult?: NonNullable<MessagePart['toolResult']>
@@ -217,6 +221,7 @@ function CollapsedToolCard({ toolCall, toolResult }: {
   const [approvalState, setApprovalState] = useState<'pending' | 'approved' | 'rejected' | null>(
     toolCall.args?.__pendingApproval ? 'pending' : null
   )
+  const [revertState, setRevertState] = useState<'idle' | 'reverting' | 'reverted' | 'error'>('idle')
   const config = getToolConfig(toolCall.name)
   // Filter out internal approval keys from args
   const cleanArgs = toolCall.args ? Object.fromEntries(
@@ -245,6 +250,43 @@ function CollapsedToolCard({ toolCall, toolResult }: {
   // Detect str_replace for inline diff
   const isStrReplace = toolCall.name === 'str_replace' && typeof toolCall.args?.old_str === 'string' && typeof toolCall.args?.new_str === 'string'
   const isWriteFile = toolCall.name === 'write_file' && typeof toolCall.args?.content === 'string'
+  const isFileModifying = FILE_MODIFYING_TOOL_NAMES.has(toolCall.name)
+
+  // Revert handler for file-modifying tools
+  const handleRevert = async () => {
+    if (!pathArg) return
+    setRevertState('reverting')
+    try {
+      if (isStrReplace) {
+        // Inverse replacement: swap new_str back to old_str
+        const content = await window.artemis.fs.readFile(pathArg)
+        const newStr = String(toolCall.args?.new_str)
+        const oldStr = String(toolCall.args?.old_str)
+        if (!content.includes(newStr)) {
+          throw new Error('File has been modified since this edit — cannot revert.')
+        }
+        const reverted = content.replace(newStr, oldStr)
+        await window.artemis.fs.writeFile(pathArg, reverted)
+      } else if (toolCall.name === 'write_file') {
+        // Delete the written file
+        await window.artemis.fs.delete(pathArg)
+      } else if (toolCall.name === 'delete_file') {
+        // Can't restore deleted files
+        throw new Error('Cannot restore deleted files.')
+      } else if (toolCall.name === 'move_file') {
+        // Reverse the move
+        const dest = (cleanArgs.destination || cleanArgs.new_path) as string | undefined
+        if (dest) {
+          await window.artemis.fs.rename(dest, pathArg)
+        }
+      }
+      setRevertState('reverted')
+    } catch (err: any) {
+      console.error('[CollapsedToolCard] Revert failed:', err)
+      setRevertState('error')
+      setTimeout(() => setRevertState('idle'), 3000)
+    }
+  }
 
   // Status from paired tool-result
   const hasResult = !!toolResult
@@ -289,7 +331,7 @@ function CollapsedToolCard({ toolCall, toolResult }: {
           </span>
         )}
       </div>
-      {/* Approval buttons — agent waits indefinitely for user decision */}
+      {/* Approval card — diff preview + accept/reject buttons */}
       {approvalState === 'pending' && (
         <div
           className="ml-4 mt-1.5 mb-1 rounded-lg p-2.5"
@@ -303,13 +345,42 @@ function CollapsedToolCard({ toolCall, toolResult }: {
               <AlertTriangle size={11} style={{ color: '#f59e0b' }} />
             </div>
             <span className="text-[10px] font-semibold" style={{ color: '#f59e0b' }}>
-              Waiting for User Approval
+              Review Changes Before Applying
             </span>
             <span className="relative flex h-2 w-2 ml-auto">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75" style={{ backgroundColor: '#f59e0b' }} />
               <span className="relative inline-flex rounded-full h-2 w-2" style={{ backgroundColor: '#f59e0b' }} />
             </span>
           </div>
+          {/* Diff preview for str_replace */}
+          {isStrReplace && (
+            <div className="mb-2">
+              <div className="text-[9px] font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text-muted)' }}>Changes Preview</div>
+              <InlineDiff oldStr={String(cleanArgs.old_str)} newStr={String(cleanArgs.new_str)} />
+            </div>
+          )}
+          {/* Content preview for write_file */}
+          {isWriteFile && (
+            <div className="mb-2">
+              <div className="flex items-center gap-1.5 mb-1">
+                <FileText size={9} style={{ color: 'var(--text-muted)' }} />
+                <span className="text-[9px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+                  {pathArg ? `Writing to ${truncatePath(pathArg, 50)}` : 'New File Content'}
+                </span>
+              </div>
+              <pre
+                className="text-[10px] overflow-x-auto p-2 rounded font-mono max-h-[180px] overflow-y-auto"
+                style={{
+                  backgroundColor: 'rgba(0,0,0,0.12)',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid var(--border-subtle)',
+                }}
+              >
+                {String(cleanArgs.content).slice(0, 3000)}
+                {String(cleanArgs.content).length > 3000 && '\n... (truncated)'}
+              </pre>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <button
               onClick={() => handleApproval(true)}
@@ -318,7 +389,7 @@ function CollapsedToolCard({ toolCall, toolResult }: {
               onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(74, 222, 128, 0.25)' }}
               onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(74, 222, 128, 0.12)' }}
             >
-              <Check size={10} /> Approve
+              <Check size={10} /> Accept
             </button>
             <button
               onClick={() => handleApproval(false)}
@@ -383,6 +454,43 @@ function CollapsedToolCard({ toolCall, toolResult }: {
           >
             {toolResult!.output}
           </pre>
+        </div>
+      )}
+      {/* Revert button — shown on completed file-modifying tools */}
+      {hasResult && resultSuccess && isFileModifying && pathArg && toolCall.name !== 'delete_file' && (
+        <div className="ml-4 mt-1">
+          {revertState === 'idle' && (
+            <button
+              onClick={handleRevert}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium transition-all duration-100"
+              style={{
+                backgroundColor: 'rgba(167, 139, 250, 0.08)',
+                color: '#a78bfa',
+                border: '1px solid rgba(167, 139, 250, 0.2)',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(167, 139, 250, 0.18)' }}
+              onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(167, 139, 250, 0.08)' }}
+              title={isStrReplace ? 'Revert this edit (swap old/new)' : 'Revert this change'}
+            >
+              <Undo2 size={10} />
+              Revert
+            </button>
+          )}
+          {revertState === 'reverting' && (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-medium animate-pulse" style={{ color: '#a78bfa' }}>
+              <Undo2 size={10} /> Reverting...
+            </span>
+          )}
+          {revertState === 'reverted' && (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-medium" style={{ color: '#4ade80' }}>
+              <Check size={10} /> Reverted successfully
+            </span>
+          )}
+          {revertState === 'error' && (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-medium" style={{ color: '#f87171' }}>
+              <AlertTriangle size={10} /> Revert failed
+            </span>
+          )}
         </div>
       )}
     </div>

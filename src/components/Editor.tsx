@@ -28,7 +28,32 @@ import ConfirmDialog from './ConfirmDialog'
 // ─── Inline Completion Provider ─────────────────────────────────────────────
 
 let inlineCompletionDisposable: monaco.IDisposable | null = null
-let inlineCompletionAbort: AbortController | null = null
+
+// Cache the backend config locally to avoid an IPC round-trip on every keystroke.
+// Refreshed every 2 seconds so toggling in Settings still takes effect quickly.
+let _cachedInlineConfig: { enabled: boolean; provider: string; model: string; maxTokens: number } | null = null
+let _configLastFetched = 0
+const CONFIG_CACHE_TTL = 2_000
+
+async function isInlineCompletionEnabled(): Promise<boolean> {
+  const now = Date.now()
+  if (_cachedInlineConfig && now - _configLastFetched < CONFIG_CACHE_TTL) {
+    return _cachedInlineConfig.enabled
+  }
+  try {
+    _cachedInlineConfig = await window.artemis.inlineCompletion.getConfig()
+    _configLastFetched = now
+    return _cachedInlineConfig?.enabled ?? false
+  } catch {
+    return false
+  }
+}
+
+// Invalidate cached config when settings change (called from Settings component)
+export function invalidateInlineCompletionConfigCache() {
+  _cachedInlineConfig = null
+  _configLastFetched = 0
+}
 
 function registerInlineCompletionProvider(monacoInstance: typeof monaco) {
   if (inlineCompletionDisposable) inlineCompletionDisposable.dispose()
@@ -37,26 +62,27 @@ function registerInlineCompletionProvider(monacoInstance: typeof monaco) {
     { pattern: '**' },
     {
       provideInlineCompletions: async (model, position, _context, token) => {
-        // Always check the backend config for the latest enabled state
-        // so that toggling in Settings takes effect immediately
+        // Fast local check — no IPC unless cache is stale
+        if (!(await isInlineCompletionEnabled())) return { items: [] }
+
+        // Debounce: wait 400ms after last keystroke
         try {
-          const cfg = await window.artemis.inlineCompletion.getConfig()
-          if (!cfg?.enabled) return { items: [] }
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(resolve, 400)
+            token.onCancellationRequested(() => { clearTimeout(timer); reject(new Error('cancelled')) })
+          })
         } catch {
           return { items: [] }
         }
 
-        // Cancel previous in-flight request
-        if (inlineCompletionAbort) inlineCompletionAbort.abort()
-        inlineCompletionAbort = new AbortController()
-
-        // Debounce: wait 400ms after last keystroke
-        await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(resolve, 400)
-          token.onCancellationRequested(() => { clearTimeout(timer); reject(new Error('cancelled')) })
-        }).catch(() => { return { items: [] } as any })
-
         if (token.isCancellationRequested) return { items: [] }
+
+        // Quick check: skip trivial current lines before extracting full text
+        const currentLineText = model.getLineContent(position.lineNumber)
+        const trimmedLine = currentLineText.trim()
+        if (trimmedLine.length === 0 || /^[}\])\;]+$/.test(trimmedLine)) {
+          return { items: [] }
+        }
 
         const textUntilPosition = model.getValueInRange({
           startLineNumber: 1,
@@ -76,9 +102,11 @@ function registerInlineCompletionProvider(monacoInstance: typeof monaco) {
         if (trimmedPrefix.length < 10) return { items: [] }
 
         try {
+          // Trim context before sending over IPC to reduce serialization cost.
+          // Backend trims further (1500/500) but we avoid sending megabytes over the bridge.
           const result = await window.artemis.inlineCompletion.complete({
-            prefix: textUntilPosition.slice(-3000),
-            suffix: textAfterPosition.slice(0, 1000),
+            prefix: textUntilPosition.slice(-1500),
+            suffix: textAfterPosition.slice(0, 500),
             language: model.getLanguageId(),
             filepath: model.uri.path,
           })

@@ -3,6 +3,8 @@ import { Key, Shield, ExternalLink, Check, X, Loader2, Zap, Server, Sparkles, Pa
 import type { Theme, AIProvider } from '../types'
 import { type SoundSettings, DEFAULT_SOUND_SETTINGS, previewSound, type SoundType } from '../lib/sounds'
 import { PROVIDER_REGISTRY, type ProviderInfo } from '../lib/zenClient'
+import { invalidateInlineCompletionConfigCache } from './Editor'
+import modelsConfig from '../lib/models.json'
 import { getProviderIcon } from './ProviderIcons'
 
 interface KeyBind {
@@ -156,7 +158,10 @@ export default function Settings({ theme, onSetTheme, apiKeys, onSetApiKey, soun
             />
           )}
           {activeCategory === 'completion' && (
-            <InlineCompletionSection />
+            <InlineCompletionSection
+              apiKeys={apiKeys}
+              onGoToProviders={() => setActiveCategory('providers')}
+            />
           )}
           {activeCategory === 'appearance' && (
             <AppearanceSection theme={theme} onSetTheme={onSetTheme} />
@@ -924,13 +929,22 @@ function AgentToolsSection() {
 
 // ─── Inline Completion Section ───────────────────────────────────────────
 
-function InlineCompletionSection() {
+function InlineCompletionSection({ apiKeys, onGoToProviders }: {
+  apiKeys: Record<AIProvider, { key: string; isConfigured: boolean }>
+  onGoToProviders: () => void
+}) {
   const [enabled, setEnabled] = useState(false)
   const [provider, setProvider] = useState('')
   const [model, setModel] = useState('')
   const [maxTokens, setMaxTokens] = useState(128)
   const [loading, setLoading] = useState(true)
   const [saved, setSaved] = useState(false)
+
+  // Model search / dropdown state
+  const [modelSearch, setModelSearch] = useState('')
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false)
+  const [providerModels, setProviderModels] = useState<{ id: string; name: string }[]>([])
+  const [fetchingModels, setFetchingModels] = useState(false)
 
   // Load current config on mount
   useEffect(() => {
@@ -955,54 +969,65 @@ function InlineCompletionSection() {
     await window.artemis.inlineCompletion.setConfig({
       enabled: newEnabled, provider: newProvider, model: newModel, maxTokens: newMaxTokens,
     })
+    invalidateInlineCompletionConfigCache()
     setSaved(true)
     setTimeout(() => setSaved(false), 1500)
   }
 
   const COMPLETION_PROVIDERS = PROVIDER_REGISTRY.map(p => ({ id: p.id, name: p.name }))
 
-  // Recommended fast models for completion per provider
-  const RECOMMENDED_MODELS: Record<string, { id: string; name: string }[]> = {
-    zen: [
-      { id: 'deepseek-chat', name: 'DeepSeek Chat' },
-      { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
-      { id: 'claude-3-5-haiku-latest', name: 'Claude 3.5 Haiku' },
-    ],
-    openai: [
-      { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
-      { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' },
-    ],
-    anthropic: [
-      { id: 'claude-3-5-haiku-latest', name: 'Claude 3.5 Haiku' },
-    ],
-    deepseek: [
-      { id: 'deepseek-chat', name: 'DeepSeek Chat' },
-    ],
-    groq: [
-      { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B (Instant)' },
-      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B' },
-    ],
-    mistral: [
-      { id: 'codestral-latest', name: 'Codestral' },
-      { id: 'mistral-small-latest', name: 'Mistral Small' },
-    ],
-    openrouter: [
-      { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat' },
-      { id: 'anthropic/claude-3.5-haiku', name: 'Claude 3.5 Haiku' },
-    ],
-    google: [
-      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash' },
-    ],
-    ollama: [
-      { id: 'qwen2.5-coder:1.5b', name: 'Qwen 2.5 Coder 1.5B' },
-      { id: 'deepseek-coder-v2:latest', name: 'DeepSeek Coder V2' },
-      { id: 'codellama:7b', name: 'Code Llama 7B' },
-    ],
+  // Providers that fetch models live from their API (have /models endpoint and many models)
+  const LIVE_FETCH_PROVIDERS = new Set(['openrouter', 'ollama'])
+
+  // Load models from models.json as static fallback
+  const modelsFromJson = (pid: string): { id: string; name: string }[] => {
+    const raw = (modelsConfig as Record<string, Array<{ id: string; name: string }>>)[pid]
+    if (!raw) return []
+    return raw.map(m => ({ id: m.id, name: m.name }))
   }
+
+  // Fetch models when provider changes: live fetch for OpenRouter/Ollama, models.json for rest
+  useEffect(() => {
+    if (!provider) { setProviderModels([]); return }
+
+    const isConfigured = provider === 'ollama' || (apiKeys as any)[provider]?.isConfigured
+
+    if (LIVE_FETCH_PROVIDERS.has(provider) && isConfigured) {
+      // Fetch live from the provider's API via main process
+      setFetchingModels(true)
+      window.artemis.inlineCompletion.fetchModels(provider).then(result => {
+        if (result.models.length > 0) {
+          setProviderModels(result.models)
+        } else {
+          // Fallback to models.json if fetch failed
+          setProviderModels(modelsFromJson(provider))
+        }
+        setFetchingModels(false)
+      }).catch(() => {
+        setProviderModels(modelsFromJson(provider))
+        setFetchingModels(false)
+      })
+    } else {
+      // Use models.json directly
+      setProviderModels(modelsFromJson(provider))
+      setFetchingModels(false)
+    }
+  }, [provider, apiKeys])
 
   if (loading) return null
 
-  const providerModels = RECOMMENDED_MODELS[provider] || []
+  // Determine which providers have API keys configured
+  const configuredProviderIds = new Set<string>(
+    PROVIDER_REGISTRY
+      .filter(p => p.id === 'ollama' || (apiKeys as any)[p.id]?.isConfigured)
+      .map(p => p.id)
+  )
+  const hasAnyConfigured = configuredProviderIds.size > 0
+
+  // Filter models for dropdown search
+  const filteredModels = modelSearch
+    ? providerModels.filter(m => m.id.toLowerCase().includes(modelSearch.toLowerCase()) || m.name.toLowerCase().includes(modelSearch.toLowerCase()))
+    : providerModels
 
   return (
     <>
@@ -1042,79 +1067,204 @@ function InlineCompletionSection() {
 
       {enabled && (
         <>
+          {/* Info banner: must configure API key first */}
+          {!hasAnyConfigured && (
+            <div className="rounded-xl p-4 mb-4 flex items-start gap-3" style={{ backgroundColor: 'rgba(251, 191, 36, 0.06)', border: '1px solid rgba(251, 191, 36, 0.2)' }}>
+              <Key size={16} className="shrink-0 mt-0.5" style={{ color: '#fbbf24' }} />
+              <div className="flex-1">
+                <p className="text-[12px] font-semibold mb-1" style={{ color: '#fbbf24' }}>API Key Required</p>
+                <p className="text-[11px] leading-relaxed mb-2.5" style={{ color: 'var(--text-muted)' }}>
+                  To use code completion, you need to add an API key for at least one provider first.
+                </p>
+                <button
+                  onClick={onGoToProviders}
+                  className="px-3 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition-all"
+                  style={{ backgroundColor: 'rgba(251, 191, 36, 0.12)', color: '#fbbf24', border: '1px solid rgba(251, 191, 36, 0.25)' }}
+                  onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(251, 191, 36, 0.2)' }}
+                  onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(251, 191, 36, 0.12)' }}
+                >
+                  <Key size={12} />
+                  Go to Providers
+                  <ExternalLink size={10} />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Provider selection */}
           <div className="rounded-xl p-5 mb-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-            <p className="text-[12px] font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>Provider</p>
+            <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Provider</p>
             <p className="text-[11px] mb-3" style={{ color: 'var(--text-muted)' }}>
-              Choose which AI provider to use for completions. Uses your existing API key from the Providers tab.
+              Select a provider for completions. Only providers with a configured API key can be selected.
             </p>
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
               {COMPLETION_PROVIDERS.map(p => {
                 const isActive = provider === p.id
+                const isConfigured = configuredProviderIds.has(p.id)
                 const ProvIcon = getProviderIcon(p.id)
                 return (
                   <button
                     key={p.id}
+                    disabled={!isConfigured}
                     onClick={() => {
-                      const models = RECOMMENDED_MODELS[p.id]
+                      if (!isConfigured) return
+                      const models = modelsFromJson(p.id)
+                      setModelSearch('')
+                      setModelDropdownOpen(false)
                       saveConfig({ provider: p.id, model: models?.[0]?.id || '' })
                     }}
-                    className="flex items-center gap-2.5 p-3 rounded-lg text-left transition-all"
+                    className="flex items-center gap-2.5 p-3 rounded-lg text-left transition-all relative"
                     style={{
                       backgroundColor: isActive ? 'var(--accent-glow)' : 'var(--bg-secondary)',
                       border: isActive ? '1.5px solid var(--accent)' : '1px solid var(--border-subtle)',
+                      opacity: isConfigured ? 1 : 0.4,
+                      cursor: isConfigured ? 'pointer' : 'not-allowed',
                     }}
                   >
                     <ProvIcon size={15} />
-                    <span className="text-[11px] font-medium" style={{ color: isActive ? 'var(--accent)' : 'var(--text-secondary)' }}>
+                    <span className="text-[11px] font-medium flex-1" style={{ color: isActive ? 'var(--accent)' : 'var(--text-secondary)' }}>
                       {p.name}
                     </span>
+                    {isConfigured && (
+                      <Check size={10} style={{ color: '#4ade80' }} />
+                    )}
+                    {!isConfigured && (
+                      <Shield size={10} style={{ color: 'var(--text-muted)' }} />
+                    )}
                   </button>
                 )
               })}
             </div>
+            {!hasAnyConfigured && (
+              <button
+                onClick={onGoToProviders}
+                className="mt-3 w-full py-2 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-2 transition-all"
+                style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--accent)', border: '1px solid var(--border-subtle)' }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)' }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border-subtle)' }}
+              >
+                <Key size={12} />
+                Configure API Keys in Providers
+              </button>
+            )}
           </div>
 
-          {/* Model selection */}
-          {provider && (
+          {/* Model selection — searchable dropdown */}
+          {provider && configuredProviderIds.has(provider) && (
             <div className="rounded-xl p-5 mb-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-              <p className="text-[12px] font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Model</p>
+              <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Model</p>
               <p className="text-[11px] mb-3" style={{ color: 'var(--text-muted)' }}>
-                Fast, small models are recommended for low latency. You can also type a custom model ID.
+                Select a model or search below. Fast, small models are recommended for low latency.
               </p>
-              {providerModels.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {providerModels.map(m => (
-                    <button
-                      key={m.id}
-                      onClick={() => saveConfig({ model: m.id })}
-                      className="px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all"
-                      style={{
-                        backgroundColor: model === m.id ? 'var(--accent-glow)' : 'var(--bg-elevated)',
-                        color: model === m.id ? 'var(--accent)' : 'var(--text-secondary)',
-                        border: model === m.id ? '1px solid rgba(var(--accent-rgb), 0.3)' : '1px solid var(--border-subtle)',
-                      }}
-                    >
-                      {m.name}
-                    </button>
-                  ))}
+
+              {/* Currently selected model chip */}
+              {model && (
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: 'var(--text-muted)' }}>Active:</span>
+                  <span className="px-2.5 py-1 rounded-md text-[11px] font-mono font-medium" style={{ backgroundColor: 'var(--accent-glow)', color: 'var(--accent)', border: '1px solid rgba(var(--accent-rgb), 0.2)' }}>
+                    {model}
+                  </span>
                 </div>
               )}
-              <input
-                type="text"
-                value={model}
-                onChange={e => setModel(e.target.value)}
-                onBlur={() => saveConfig({ model })}
-                placeholder="Model ID (e.g. gpt-4o-mini)"
-                className="w-full px-3 py-2 rounded-lg text-[11px] outline-none transition-all font-mono"
-                style={{
-                  backgroundColor: 'var(--bg-elevated)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                }}
-                onFocus={e => { e.target.style.borderColor = 'var(--accent)' }}
-                onKeyDown={e => { if (e.key === 'Enter') saveConfig({ model }) }}
-              />
+
+              {/* Searchable dropdown */}
+              <div className="relative">
+                <div className="relative">
+                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                  <input
+                    type="text"
+                    value={modelSearch}
+                    onChange={e => { setModelSearch(e.target.value); setModelDropdownOpen(true) }}
+                    onFocus={() => setModelDropdownOpen(true)}
+                    placeholder="Search models or type a custom model ID..."
+                    className="w-full pl-9 pr-3 py-2.5 rounded-lg text-[11px] outline-none transition-all font-mono"
+                    style={{
+                      backgroundColor: 'var(--bg-elevated)',
+                      border: `1px solid ${modelDropdownOpen ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                      color: 'var(--text-primary)',
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && modelSearch.trim()) {
+                        saveConfig({ model: modelSearch.trim() })
+                        setModelDropdownOpen(false)
+                      }
+                      if (e.key === 'Escape') setModelDropdownOpen(false)
+                    }}
+                  />
+                  {fetchingModels && (
+                    <Loader2 size={13} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin" style={{ color: 'var(--text-muted)' }} />
+                  )}
+                </div>
+
+                {/* Dropdown list */}
+                {modelDropdownOpen && (
+                  <div
+                    className="absolute z-50 w-full mt-1 rounded-lg overflow-hidden shadow-lg max-h-[240px] overflow-y-auto"
+                    style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}
+                  >
+                    {filteredModels.length === 0 && !modelSearch.trim() && (
+                      <p className="px-3 py-3 text-[10px]" style={{ color: 'var(--text-muted)' }}>No models available. Type a custom model ID and press Enter.</p>
+                    )}
+                    {filteredModels.length === 0 && modelSearch.trim() && (
+                      <button
+                        onClick={() => { saveConfig({ model: modelSearch.trim() }); setModelDropdownOpen(false) }}
+                        className="w-full px-3 py-2.5 text-left flex items-center gap-2 transition-colors"
+                        style={{ color: 'var(--text-secondary)' }}
+                        onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)' }}
+                        onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent' }}
+                      >
+                        <Code size={12} style={{ color: 'var(--accent)' }} />
+                        <span className="text-[11px] font-mono">{modelSearch.trim()}</span>
+                        <span className="text-[10px] ml-auto" style={{ color: 'var(--text-muted)' }}>Use custom ID</span>
+                      </button>
+                    )}
+                    {filteredModels.map(m => {
+                      const isSelected = model === m.id
+                      return (
+                        <button
+                          key={m.id}
+                          onClick={() => {
+                            saveConfig({ model: m.id })
+                            setModelSearch('')
+                            setModelDropdownOpen(false)
+                          }}
+                          className="w-full px-3 py-2 text-left flex items-center gap-2.5 transition-colors"
+                          style={{
+                            backgroundColor: isSelected ? 'var(--accent-glow)' : 'transparent',
+                            borderLeft: isSelected ? '2px solid var(--accent)' : '2px solid transparent',
+                          }}
+                          onMouseEnter={e => { if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--bg-hover)' }}
+                          onMouseLeave={e => { if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent' }}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[11px] font-medium truncate" style={{ color: isSelected ? 'var(--accent)' : 'var(--text-primary)' }}>{m.name}</p>
+                            <p className="text-[10px] font-mono truncate" style={{ color: 'var(--text-muted)' }}>{m.id}</p>
+                          </div>
+                          {isSelected && <Check size={12} style={{ color: 'var(--accent)' }} />}
+                        </button>
+                      )
+                    })}
+                    {modelSearch.trim() && filteredModels.length > 0 && (
+                      <button
+                        onClick={() => { saveConfig({ model: modelSearch.trim() }); setModelDropdownOpen(false) }}
+                        className="w-full px-3 py-2 text-left flex items-center gap-2 transition-colors"
+                        style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+                        onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)' }}
+                        onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent' }}
+                      >
+                        <Code size={11} />
+                        <span className="text-[10px] font-mono">{modelSearch.trim()}</span>
+                        <span className="text-[10px] ml-auto">Use as custom ID</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Click-away to close dropdown */}
+              {modelDropdownOpen && (
+                <div className="fixed inset-0 z-40" onClick={() => setModelDropdownOpen(false)} />
+              )}
             </div>
           )}
 

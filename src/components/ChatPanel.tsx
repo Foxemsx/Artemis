@@ -6,7 +6,7 @@ import { getLatestPlan } from '../lib/todoParser'
 import ChatMessage from './ChatMessage'
 import ModelSelector from './ModelSelector'
 import AgentModeSelector from './AgentModeSelector'
-import EnhancedChatInput from './EnhancedChatInput'
+import EnhancedChatInput, { type AttachedFile } from './EnhancedChatInput'
 import TodoPanel from './TodoPanel'
 
 interface Props {
@@ -54,6 +54,7 @@ export default function ChatPanel({
   const [showHelp, setShowHelp] = useState(false)
   const [showApprovalMenu, setShowApprovalMenu] = useState(false)
   const [attachedImages, setAttachedImages] = useState<Array<{ id: string; url: string; name: string }>>([])
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
   const attachImageRef = useRef<(() => void) | null>(null)
 
   const scrollRafRef = useRef<number>(0)
@@ -87,21 +88,25 @@ export default function ChatPanel({
           onCreateSession()
           setInput('')
           setAttachedImages([])
+          setAttachedFiles([])
           return
         case '/clear':
           onClearMessages?.()
           setInput('')
           setAttachedImages([])
+          setAttachedFiles([])
           return
         case '/terminal':
           onOpenTerminal?.()
           setInput('')
           setAttachedImages([])
+          setAttachedFiles([])
           return
         case '/help':
           setShowHelp(true)
           setInput('')
           setAttachedImages([])
+          setAttachedFiles([])
           return
         case '/init':
           onSendMessage(
@@ -110,6 +115,7 @@ export default function ChatPanel({
           )
           setInput('')
           setAttachedImages([])
+          setAttachedFiles([])
           return
         default:
           // Unknown command, send as regular message
@@ -136,11 +142,22 @@ export default function ChatPanel({
         console.error('[ChatPanel] Failed to resolve mentions:', err)
       }
     }
+
+    // Include drag-and-dropped files as context
+    if (attachedFiles.length > 0) {
+      let filesBlock = fileContext ? fileContext + '\n' : ''
+      filesBlock += '[Attached files]\n'
+      for (const f of attachedFiles) {
+        filesBlock += `\n--- ${f.path} ---\n${f.content.slice(0, 20000)}\n`
+      }
+      fileContext = filesBlock
+    }
     
     onSendMessage(messageToSend, fileContext || undefined, undefined, undefined, attachedImages.length > 0 ? attachedImages : undefined)
     setInput('')
     setAttachedImages([])
-  }, [input, hasApiKey, onSendMessage, onCreateSession, onClearMessages, onOpenTerminal, attachedImages])
+    setAttachedFiles([])
+  }, [input, hasApiKey, onSendMessage, onCreateSession, onClearMessages, onOpenTerminal, attachedImages, attachedFiles])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -224,6 +241,7 @@ export default function ChatPanel({
               onCreateSession()
               setInput('')
               setAttachedImages([])
+              setAttachedFiles([])
             }}
             className="p-1.5 rounded-md transition-all duration-150"
             style={{ color: 'var(--text-muted)' }}
@@ -273,6 +291,7 @@ export default function ChatPanel({
                     setShowSessions(false)
                     setInput('')
                     setAttachedImages([])
+                    setAttachedFiles([])
                   }}
                   onMouseEnter={(e) => {
                     if (!isActive) e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
@@ -328,6 +347,7 @@ export default function ChatPanel({
           )
           setInput('')
           setAttachedImages([])
+          setAttachedFiles([])
         }}
       />
 
@@ -486,8 +506,11 @@ export default function ChatPanel({
             disabled={!hasApiKey}
             projectPath={projectPath}
             mentionResolverRef={mentionResolverRef}
+            attachedImages={attachedImages}
             onImagesChange={setAttachedImages}
             attachImageRef={attachImageRef}
+            attachedFiles={attachedFiles}
+            onFilesChange={setAttachedFiles}
           />
           <div className="flex items-center justify-between px-3 pb-2.5">
             {/* Edit Approval Mode + Image Attach - bottom left */}

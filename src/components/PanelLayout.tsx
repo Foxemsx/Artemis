@@ -190,7 +190,7 @@ export default function PanelLayout({
           <Panel defaultSize="60%" minSize="30%" id="git-main">
             <PanelGroup orientation="horizontal">
               <Panel defaultSize="35%" minSize="15%" id="git-panel">
-                <SourceControlPanel projectPath={projectPath} onOpenFile={onOpenFile} isRestrictedMode={isRestrictedMode} />
+                <SourceControlPanel projectPath={projectPath} onOpenFile={onOpenFile} isRestrictedMode={isRestrictedMode} soundSettings={soundSettings} />
               </Panel>
               <PanelResizeHandle />
               <Panel defaultSize="65%" minSize="20%" id="git-editor">

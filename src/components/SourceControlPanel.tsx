@@ -3,6 +3,7 @@ import {
   GitBranch, GitCommit, RefreshCw, Plus, Minus, Check, X, ChevronDown, ChevronRight,
   Upload, Download, RotateCcw, FileText, Trash2, Eye, FolderOpen,
 } from 'lucide-react'
+import { playSound, showNotification, type SoundSettings } from '../lib/sounds'
 
 interface GitFileStatus {
   path: string
@@ -19,6 +20,7 @@ interface Props {
   projectPath: string | null
   onOpenFile?: (filePath: string) => void
   isRestrictedMode?: boolean
+  soundSettings?: SoundSettings
 }
 
 function parseGitStatus(raw: string): GitFileStatus[] {
@@ -81,7 +83,7 @@ const STATUS_LABELS: Record<GitFileStatus['status'], string> = {
   conflicted: 'C',
 }
 
-export default function SourceControlPanel({ projectPath, onOpenFile, isRestrictedMode = false }: Props) {
+export default function SourceControlPanel({ projectPath, onOpenFile, isRestrictedMode = false, soundSettings }: Props) {
   const [files, setFiles] = useState<GitFileStatus[]>([])
   const [branch, setBranch] = useState<GitBranchInfo>({ current: '', branches: [] })
   const [commitMsg, setCommitMsg] = useState('')
@@ -94,6 +96,7 @@ export default function SourceControlPanel({ projectPath, onOpenFile, isRestrict
   const [isGitRepo, setIsGitRepo] = useState(true)
   const [pushing, setPushing] = useState(false)
   const [pulling, setPulling] = useState(false)
+  const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
   const runGit = useCallback(async (args: string[]): Promise<string> => {
     if (!projectPath) throw new Error('No project open')
@@ -198,6 +201,12 @@ export default function SourceControlPanel({ projectPath, onOpenFile, isRestrict
     try {
       await runGit(['commit', '-m', commitMsg.trim()])
       setCommitMsg('')
+      if (soundSettings) {
+        playSound('task-done', soundSettings)
+        showNotification('Commit Successful', `Committed: ${commitMsg.trim().slice(0, 60)}`, soundSettings)
+      }
+      setSuccessMsg('Committed successfully')
+      setTimeout(() => setSuccessMsg(null), 3000)
       await refresh()
     } catch (err: any) {
       setError(err.message)
@@ -209,13 +218,19 @@ export default function SourceControlPanel({ projectPath, onOpenFile, isRestrict
     setPushing(true)
     try {
       await runGit(['push'])
+      if (soundSettings) {
+        playSound('task-done', soundSettings)
+        showNotification('Push Successful', `Pushed to ${branch.current}`, soundSettings)
+      }
+      setSuccessMsg('Pushed successfully')
+      setTimeout(() => setSuccessMsg(null), 3000)
       await refresh()
     } catch (err: any) {
       setError(err.message)
     } finally {
       setPushing(false)
     }
-  }, [runGit, refresh])
+  }, [runGit, refresh, soundSettings, branch.current])
 
   const pull = useCallback(async () => {
     if (isRestrictedMode) return
@@ -388,6 +403,16 @@ export default function SourceControlPanel({ projectPath, onOpenFile, isRestrict
         </div>
       </div>
 
+      {/* Success */}
+      {successMsg && (
+        <div className="px-3 py-2 shrink-0" style={{ backgroundColor: 'rgba(74, 222, 128, 0.06)', borderBottom: '1px solid rgba(74, 222, 128, 0.15)' }}>
+          <div className="flex items-center gap-2">
+            <Check size={11} className="shrink-0" style={{ color: '#4ade80' }} />
+            <p className="text-[10px] font-medium" style={{ color: '#4ade80' }}>{successMsg}</p>
+          </div>
+        </div>
+      )}
+
       {/* Error */}
       {error && (
         <div className="px-3 py-2 shrink-0" style={{ backgroundColor: 'rgba(248, 113, 113, 0.06)', borderBottom: '1px solid rgba(248, 113, 113, 0.15)' }}>
@@ -405,9 +430,12 @@ export default function SourceControlPanel({ projectPath, onOpenFile, isRestrict
       <div className="flex-1 overflow-y-auto">
         {/* Staged Changes */}
         <div>
-          <button
+          <div
+            role="button"
+            tabIndex={0}
             onClick={() => setStagedExpanded(!stagedExpanded)}
-            className="w-full flex items-center justify-between px-3 py-1.5 text-left"
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setStagedExpanded(!stagedExpanded) }}
+            className="w-full flex items-center justify-between px-3 py-1.5 text-left cursor-pointer select-none"
             style={{ backgroundColor: 'var(--bg-secondary)' }}
           >
             <div className="flex items-center gap-1.5">
@@ -431,7 +459,7 @@ export default function SourceControlPanel({ projectPath, onOpenFile, isRestrict
                 <Minus size={11} />
               </button>
             )}
-          </button>
+          </div>
           {stagedExpanded && stagedFiles.map(f => (
             <FileRow
               key={`staged-${f.path}`}
@@ -450,9 +478,12 @@ export default function SourceControlPanel({ projectPath, onOpenFile, isRestrict
 
         {/* Unstaged Changes */}
         <div>
-          <button
+          <div
+            role="button"
+            tabIndex={0}
             onClick={() => setUnstagedExpanded(!unstagedExpanded)}
-            className="w-full flex items-center justify-between px-3 py-1.5 text-left"
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setUnstagedExpanded(!unstagedExpanded) }}
+            className="w-full flex items-center justify-between px-3 py-1.5 text-left cursor-pointer select-none"
             style={{ backgroundColor: 'var(--bg-secondary)' }}
           >
             <div className="flex items-center gap-1.5">
@@ -476,7 +507,7 @@ export default function SourceControlPanel({ projectPath, onOpenFile, isRestrict
                 <Plus size={11} />
               </button>
             )}
-          </button>
+          </div>
           {unstagedExpanded && unstagedFiles.map(f => (
             <FileRow
               key={`unstaged-${f.path}`}

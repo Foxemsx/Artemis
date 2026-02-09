@@ -199,10 +199,9 @@ contextBridge.exposeInMainWorld('artemis', {
   inlineCompletion: {
     complete: (request: { prefix: string; suffix: string; language: string; filepath: string }) =>
       ipcRenderer.invoke('inlineCompletion:complete', request),
-    getConfig: () =>
-      ipcRenderer.invoke('inlineCompletion:getConfig'),
-    setConfig: (config: { enabled?: boolean; provider?: string; model?: string; maxTokens?: number }) =>
-      ipcRenderer.invoke('inlineCompletion:setConfig', config),
+    getConfig: () => ipcRenderer.invoke('inlineCompletion:getConfig'),
+    setConfig: (config: any) => ipcRenderer.invoke('inlineCompletion:setConfig', config),
+    fetchModels: (providerId: string) => ipcRenderer.invoke('inlineCompletion:fetchModels', providerId),
   },
 
   // ─── Agent API (New Provider-Agnostic System) ─────────────────────────
