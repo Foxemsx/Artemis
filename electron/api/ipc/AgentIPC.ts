@@ -4,45 +4,35 @@ import type { AgentRequest, AgentEvent } from '../types'
 import { AgentLoop } from '../agent/AgentLoop'
 import { toolRegistry } from '../tools/ToolRegistry'
 import { toolExecutor } from '../tools/ToolExecutor'
+import { isAllowedApiUrl } from '../../shared/security'
 
 import type { ToolApprovalCallback, PathApprovalCallback } from '../agent/AgentLoop'
 import type { ToolCall } from '../types'
 
-const ALLOWED_API_DOMAINS = new Set([
-  'opencode.ai', 'api.z.ai',
-  'api.openai.com', 'api.anthropic.com',
-  'openrouter.ai',
-  'generativelanguage.googleapis.com',
-  'api.deepseek.com',
-  'api.groq.com',
-  'api.mistral.ai',
-  'api.moonshot.cn',
-  'api.perplexity.ai',
-  'localhost',
-  'html.duckduckgo.com',
-])
-
-function isAllowedApiUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url)
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false
-    const hostname = parsed.hostname.toLowerCase()
-    const domains = Array.from(ALLOWED_API_DOMAINS)
-    for (let i = 0; i < domains.length; i++) {
-      if (hostname === domains[i] || hostname.endsWith('.' + domains[i])) return true
-    }
-    return false
-  } catch {
-    return false
-  }
-}
-
 
 const activeRuns = new Map<string, AgentLoop>()
+const MAX_ACTIVE_RUNS = 4
 
 
-const pendingApprovals = new Map<string, { resolve: (approved: boolean) => void }>()
-const pendingPathApprovals = new Map<string, { resolve: (approved: boolean) => void }>()
+const APPROVAL_TIMEOUT_MS = 120_000 // 2 minutes
+
+const pendingApprovals = new Map<string, { resolve: (approved: boolean) => void; timer: ReturnType<typeof setTimeout> }>()
+const pendingPathApprovals = new Map<string, { resolve: (approved: boolean) => void; timer: ReturnType<typeof setTimeout> }>()
+
+function cleanupPendingApprovals(requestId: string): void {
+  Array.from(pendingApprovals.entries()).forEach(([approvalId, pending]) => {
+    if (approvalId.startsWith(requestId)) {
+      pending.resolve(false)
+      pendingApprovals.delete(approvalId)
+    }
+  })
+  Array.from(pendingPathApprovals.entries()).forEach(([approvalId, pending]) => {
+    if (approvalId.includes(requestId)) {
+      pending.resolve(false)
+      pendingPathApprovals.delete(approvalId)
+    }
+  })
+}
 
 function createApprovalCallback(
   requestId: string,
@@ -70,7 +60,17 @@ function createApprovalCallback(
     }
 
     return new Promise<boolean>((resolve) => {
-      pendingApprovals.set(approvalId, { resolve })
+      const timer = setTimeout(() => {
+        pendingApprovals.delete(approvalId)
+        resolve(false)
+      }, APPROVAL_TIMEOUT_MS)
+      pendingApprovals.set(approvalId, {
+        resolve: (approved: boolean) => {
+          clearTimeout(timer)
+          resolve(approved)
+        },
+        timer,
+      })
     })
   }
 }
@@ -100,7 +100,17 @@ function createPathApprovalCallback(
     }
 
     return new Promise<boolean>((resolve) => {
-      pendingPathApprovals.set(approvalId, { resolve })
+      const timer = setTimeout(() => {
+        pendingPathApprovals.delete(approvalId)
+        resolve(false)
+      }, APPROVAL_TIMEOUT_MS)
+      pendingPathApprovals.set(approvalId, {
+        resolve: (approved: boolean) => {
+          clearTimeout(timer)
+          resolve(approved)
+        },
+        timer,
+      })
     })
   }
 }
@@ -216,6 +226,10 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
       return { error: 'Main window not available' }
     }
 
+    if (activeRuns.size >= MAX_ACTIVE_RUNS) {
+      return { error: `Too many concurrent agent runs. Please wait for an active run to finish (max ${MAX_ACTIVE_RUNS}).` }
+    }
+
     const requestId = request.requestId
     const httpAdapter = createHttpAdapter(mainWindow)
     const agentLoop = new AgentLoop(httpAdapter)
@@ -259,6 +273,7 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
     } finally {
       await new Promise(resolve => setTimeout(resolve, 100))
       activeRuns.delete(requestId)
+      cleanupPendingApprovals(requestId)
     }
   })
 
@@ -286,19 +301,7 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
     const agentLoop = activeRuns.get(requestId)
     if (agentLoop) {
       agentLoop.abort()
-
-      Array.from(pendingApprovals.entries()).forEach(([approvalId, pending]) => {
-        if (approvalId.startsWith(requestId)) {
-          pending.resolve(false)
-          pendingApprovals.delete(approvalId)
-        }
-      })
-      Array.from(pendingPathApprovals.entries()).forEach(([approvalId, pending]) => {
-        if (approvalId.includes(requestId)) {
-          pending.resolve(false)
-          pendingPathApprovals.delete(approvalId)
-        }
-      })
+      cleanupPendingApprovals(requestId)
 
       return { success: true }
     }

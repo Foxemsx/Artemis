@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, Component, type ReactNode } from 'react'
+import React, { useState, useEffect, useCallback, useRef, Component, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useTheme } from './hooks/useTheme'
 import { useOpenCode } from './hooks/useOpenCode'
@@ -580,6 +580,26 @@ export default function App() {
     setSetupComplete(false)
   }, [])
 
+  // Refs for keybind handler — avoids re-registering the listener on every state change
+  const keybindMapRef = useRef(keybindMap)
+  keybindMapRef.current = keybindMap
+  const showCommandPaletteRef = useRef(showCommandPalette)
+  showCommandPaletteRef.current = showCommandPalette
+  const activeTabPathRef = useRef(activeTabPath)
+  activeTabPathRef.current = activeTabPath
+  const editorTabsRef = useRef(editorTabs)
+  editorTabsRef.current = editorTabs
+  const saveFileRef = useRef(saveFile)
+  saveFileRef.current = saveFile
+  const opencodeRef = useRef(opencode)
+  opencodeRef.current = opencode
+  const createTerminalRef = useRef(createTerminal)
+  createTerminalRef.current = createTerminal
+  const closeTabRef = useRef(closeTab)
+  closeTabRef.current = closeTab
+  const addProjectRef = useRef(addProject)
+  addProjectRef.current = addProject
+
   useEffect(() => {
     const defaults: Record<string, string> = {
       commandPalette: 'Ctrl+K',
@@ -600,7 +620,7 @@ export default function App() {
       clearChat: 'Ctrl+Shift+L',
     }
 
-    const getBinding = (id: string) => keybindMap[id] || defaults[id] || ''
+    const getBinding = (id: string) => keybindMapRef.current[id] || defaults[id] || ''
 
     const matchesBinding = (e: KeyboardEvent, binding: string): boolean => {
       const parts = binding.split('+')
@@ -624,7 +644,7 @@ export default function App() {
       const target = e.target as HTMLElement
       const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
 
-      if (e.key === 'Escape' && showCommandPalette) {
+      if (e.key === 'Escape' && showCommandPaletteRef.current) {
         setShowCommandPalette(false)
         return
       }
@@ -637,10 +657,11 @@ export default function App() {
 
       if (matchesBinding(e, getBinding('saveFile'))) {
         e.preventDefault()
-        if (activeTabPath) {
-          const tab = editorTabs.find(t => t.path === activeTabPath)
+        const tabPath = activeTabPathRef.current
+        if (tabPath) {
+          const tab = editorTabsRef.current.find(t => t.path === tabPath)
           if (tab && tab.isDirty) {
-            saveFile(activeTabPath, tab.content)
+            saveFileRef.current(tabPath, tab.content)
           }
         }
         return
@@ -650,7 +671,7 @@ export default function App() {
 
       if (matchesBinding(e, getBinding('newSession'))) {
         e.preventDefault()
-        opencode.createSession()
+        opencodeRef.current.createSession()
         return
       }
 
@@ -681,14 +702,15 @@ export default function App() {
       if (matchesBinding(e, getBinding('newTerminal'))) {
         e.preventDefault()
         setActiveView('terminal')
-        createTerminal()
+        createTerminalRef.current()
         return
       }
 
       if (matchesBinding(e, getBinding('closeTab'))) {
         e.preventDefault()
-        if (activeTabPath) {
-          closeTab(activeTabPath)
+        const tabPath = activeTabPathRef.current
+        if (tabPath) {
+          closeTabRef.current(tabPath)
         }
         return
       }
@@ -701,7 +723,7 @@ export default function App() {
 
       if (matchesBinding(e, getBinding('openProject'))) {
         e.preventDefault()
-        addProject()
+        addProjectRef.current()
         return
       }
 
@@ -736,14 +758,14 @@ export default function App() {
 
       if (matchesBinding(e, getBinding('clearChat'))) {
         e.preventDefault()
-        opencode.clearMessages()
+        opencodeRef.current.clearMessages()
         return
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [showCommandPalette, keybindMap, activeTabPath, editorTabs, saveFile, opencode, createTerminal, closeTab, addProject])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
 
   if (!isLoaded || setupComplete === null) {

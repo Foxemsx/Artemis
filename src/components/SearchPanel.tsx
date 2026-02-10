@@ -36,6 +36,7 @@ export default function SearchPanel({ projectPath, onOpenFile }: Props) {
   const [caseSensitive, setCaseSensitive] = useState(false)
   const [results, setResults] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set())
   const [replacing, setReplacing] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -48,15 +49,23 @@ export default function SearchPanel({ projectPath, onOpenFile }: Props) {
   const doSearch = useCallback(async (searchQuery: string) => {
     if (!projectPath || !searchQuery.trim()) {
       setResults([])
+      setError(null)
       return
     }
     setLoading(true)
+    setError(null)
     try {
       const pattern = caseSensitive ? searchQuery : `(?i)${searchQuery}`
       const rawResults = await window.artemis.tools.searchFiles(
         isRegex ? pattern : searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
         projectPath
       )
+      if (rawResults && !Array.isArray(rawResults) && typeof rawResults === 'object' && 'error' in rawResults) {
+        setError(String((rawResults as any).error || 'Search failed'))
+        setResults([])
+        setExpandedFiles(new Set())
+        return
+      }
       if (Array.isArray(rawResults)) {
         setResults(rawResults.map(r => ({
           file: r.file.replace(/\\/g, '/'),
@@ -67,6 +76,7 @@ export default function SearchPanel({ projectPath, onOpenFile }: Props) {
       }
     } catch (err) {
       console.error('[SearchPanel] Search failed:', err)
+      setError('Search failed')
     }
     setLoading(false)
   }, [projectPath, isRegex, caseSensitive])
@@ -252,13 +262,19 @@ export default function SearchPanel({ projectPath, onOpenFile }: Props) {
 
       {/* Results */}
       <div className="flex-1 overflow-y-auto">
+        {!loading && error && (
+          <div className="flex items-center justify-center h-20">
+            <span className="text-[11px]" style={{ color: 'var(--error)' }}>{error}</span>
+          </div>
+        )}
+
         {loading && (
           <div className="flex items-center justify-center h-20">
             <span className="text-[11px] animate-pulse" style={{ color: 'var(--text-muted)' }}>Searching...</span>
           </div>
         )}
 
-        {!loading && query && results.length === 0 && (
+        {!loading && !error && query && results.length === 0 && (
           <div className="flex items-center justify-center h-20">
             <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>No results found</span>
           </div>

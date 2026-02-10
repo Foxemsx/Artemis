@@ -7,6 +7,10 @@ import { webSearch, formatSearchForAgent } from '../../services/webSearchService
 import { lintFile, formatLintForAgent } from '../../services/linterService'
 import { fetchUrl, formatFetchForAgent } from '../../services/urlFetchService'
 import { mcpClientManager } from '../../services/mcpClient'
+import {
+  DANGEROUS_SHELL_CHARS, ALLOWED_EXECUTABLES,
+  parseCommandTokens, validateFsPath, resolveCommand,
+} from '../../shared/security'
 
 
 const COMMAND_TIMEOUT_MS = 60_000
@@ -25,22 +29,7 @@ const IGNORE_DIRS = new Set([
 type PathApprovalCallback = (filePath: string, reason: string) => Promise<boolean>
 
 function validatePath(filePath: string, projectPath?: string, onPathApproval?: PathApprovalCallback): Promise<string> {
-  if (filePath.startsWith('\\\\') || filePath.startsWith('//') || filePath.startsWith('\\?\\')) {
-    throw new Error(`Access denied: UNC or extended paths are not allowed`)
-  }
-
-  const resolved = path.resolve(filePath)
-
-  if (resolved.startsWith('\\\\') || resolved.startsWith('//')) {
-    throw new Error(`Access denied: UNC paths are not allowed`)
-  }
-
-  const dangerous = ['C:\\Windows', 'C:\\Program Files', '/usr', '/etc', '/bin', '/sbin', '/lib', '/lib64', '/sys', '/proc', '/dev']
-  for (const d of dangerous) {
-    if (resolved.toLowerCase().startsWith(d.toLowerCase())) {
-      throw new Error(`Access denied: cannot operate on system path ${resolved}`)
-    }
-  }
+  const resolved = validateFsPath(filePath, 'access')
 
   if (projectPath) {
     const resolvedProject = path.resolve(projectPath)
@@ -232,6 +221,49 @@ async function searchWithRipgrep(pattern: string, searchPath: string, include?: 
   })
 }
 
+async function collectFilesForSearch(root: string, include?: string): Promise<string[]> {
+  const files: string[] = []
+  const includePattern = include ? include.replace('*', '') : ''
+
+  async function walk(dir: string, depth: number): Promise<void> {
+    if (depth > MAX_SEARCH_DEPTH) return
+    let entries: fs.Dirent[]
+    try { entries = await fs.promises.readdir(dir, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (!IGNORE_DIRS.has(entry.name) && !entry.name.startsWith('.')) {
+          await walk(fullPath, depth + 1)
+        }
+      } else if (entry.isFile()) {
+        if (includePattern) {
+          const ext = path.extname(entry.name)
+          if (!entry.name.endsWith(includePattern) && ext !== includePattern) continue
+        }
+        files.push(fullPath)
+      }
+    }
+  }
+
+  await walk(root, 0)
+  return files
+}
+
+async function processFilesWithConcurrency(
+  files: string[],
+  limit: number,
+  processor: (filePath: string) => Promise<void>
+): Promise<void> {
+  let index = 0
+  const workers = Array.from({ length: limit }, async () => {
+    while (index < files.length) {
+      const current = files[index++]
+      await processor(current)
+    }
+  })
+  await Promise.all(workers)
+}
+
 
 async function searchWithJS(args: Record<string, any>, searchPath: string): Promise<string> {
   const MAX_PATTERN_LENGTH = 500
@@ -250,51 +282,27 @@ async function searchWithJS(args: Record<string, any>, searchPath: string): Prom
   }
 
   const results: string[] = []
+  const files = await collectFilesForSearch(searchPath, args.include)
+  const maxConcurrency = 12
 
-  async function search(dir: string, depth: number): Promise<void> {
-    if (depth > MAX_SEARCH_DEPTH || results.length >= MAX_SEARCH_RESULTS) return
-
-    let entries: fs.Dirent[]
+  await processFilesWithConcurrency(files, maxConcurrency, async (fullPath) => {
+    if (results.length >= MAX_SEARCH_RESULTS) return
     try {
-      entries = await fs.promises.readdir(dir, { withFileTypes: true })
-    } catch { return }
+      const stat = await fs.promises.stat(fullPath)
+      if (stat.size > MAX_FILE_SIZE_FOR_SEARCH) return
 
-    for (const entry of entries) {
-      if (results.length >= MAX_SEARCH_RESULTS) break
-      const fullPath = path.join(dir, entry.name)
+      const content = await fs.promises.readFile(fullPath, 'utf-8')
+      const lines = content.split('\n')
 
-      if (entry.isDirectory()) {
-        if (!IGNORE_DIRS.has(entry.name) && !entry.name.startsWith('.')) {
-          await search(fullPath, depth + 1)
+      for (let i = 0; i < lines.length && results.length < MAX_SEARCH_RESULTS; i++) {
+        const line = lines[i].slice(0, 1000)
+        if (regex.test(line)) {
+          results.push(`${fullPath}:${i + 1}: ${lines[i].trim().slice(0, 200)}`)
         }
-      } else if (entry.isFile()) {
-        if (args.include) {
-          const ext = path.extname(entry.name)
-          const pattern = args.include.replace('*', '')
-          if (!entry.name.endsWith(pattern) && ext !== pattern) continue
-        }
-
-        try {
-          const stat = await fs.promises.stat(fullPath)
-          if (stat.size > MAX_FILE_SIZE_FOR_SEARCH) continue
-
-          const content = await fs.promises.readFile(fullPath, 'utf-8')
-          const lines = content.split('\n')
-
-          for (let i = 0; i < lines.length && results.length < MAX_SEARCH_RESULTS; i++) {
-              const line = lines[i].slice(0, 1000)
-            if (regex.test(line)) {
-              results.push(`${fullPath}:${i + 1}: ${lines[i].trim().slice(0, 200)}`)
-            }
-            regex.lastIndex = 0
-          }
-        } catch {
-        }
+        regex.lastIndex = 0
       }
-    }
-  }
-
-  await search(searchPath, 0)
+    } catch {}
+  })
 
   if (results.length === 0) return 'No matches found.'
   let output = results.join('\n')
@@ -307,94 +315,30 @@ async function searchWithJS(args: Record<string, any>, searchPath: string): Prom
 async function searchWithJSLiteral(pattern: string, args: Record<string, any>, searchPath: string): Promise<string> {
   const results: string[] = []
   const lowerPattern = pattern.toLowerCase()
+  const files = await collectFilesForSearch(searchPath, args.include)
+  const maxConcurrency = 12
 
-  async function search(dir: string, depth: number): Promise<void> {
-    if (depth > MAX_SEARCH_DEPTH || results.length >= MAX_SEARCH_RESULTS) return
-    let entries: fs.Dirent[]
-    try { entries = await fs.promises.readdir(dir, { withFileTypes: true }) } catch { return }
-    for (const entry of entries) {
-      if (results.length >= MAX_SEARCH_RESULTS) break
-      const fullPath = path.join(dir, entry.name)
-      if (entry.isDirectory()) {
-        if (!IGNORE_DIRS.has(entry.name) && !entry.name.startsWith('.')) await search(fullPath, depth + 1)
-      } else if (entry.isFile()) {
-        if (args.include) {
-          const ext = path.extname(entry.name)
-          const p = args.include.replace('*', '')
-          if (!entry.name.endsWith(p) && ext !== p) continue
+  await processFilesWithConcurrency(files, maxConcurrency, async (fullPath) => {
+    if (results.length >= MAX_SEARCH_RESULTS) return
+    try {
+      const stat = await fs.promises.stat(fullPath)
+      if (stat.size > MAX_FILE_SIZE_FOR_SEARCH) return
+      const content = await fs.promises.readFile(fullPath, 'utf-8')
+      const lines = content.split('\n')
+      for (let i = 0; i < lines.length && results.length < MAX_SEARCH_RESULTS; i++) {
+        if (lines[i].toLowerCase().includes(lowerPattern)) {
+          results.push(`${fullPath}:${i + 1}: ${lines[i].trim().slice(0, 200)}`)
         }
-        try {
-          const stat = await fs.promises.stat(fullPath)
-          if (stat.size > MAX_FILE_SIZE_FOR_SEARCH) continue
-          const content = await fs.promises.readFile(fullPath, 'utf-8')
-          const lines = content.split('\n')
-          for (let i = 0; i < lines.length && results.length < MAX_SEARCH_RESULTS; i++) {
-            if (lines[i].toLowerCase().includes(lowerPattern)) {
-              results.push(`${fullPath}:${i + 1}: ${lines[i].trim().slice(0, 200)}`)
-            }
-          }
-        } catch {}
       }
-    }
-  }
-
-  await search(searchPath, 0)
+    } catch {}
+  })
   if (results.length === 0) return 'No matches found.'
   let output = `(Note: used literal string search because pattern is not valid regex)\n${results.join('\n')}`
   if (results.length >= MAX_SEARCH_RESULTS) output += `\n... (truncated at ${MAX_SEARCH_RESULTS} results)`
   return output
 }
 
-const DANGEROUS_SHELL_CHARS = /[;&|`$(){}[\]\<>\n\r]/
-
-function parseCommandTokens(command: string): { exe: string; args: string[] } {
-  const tokens: string[] = []
-  let current = ''
-  let inSingle = false
-  let inDouble = false
-
-  for (let i = 0; i < command.length; i++) {
-    const ch = command[i]
-    if (ch === "'" && !inDouble) { inSingle = !inSingle; continue }
-    if (ch === '"' && !inSingle) { inDouble = !inDouble; continue }
-    if (ch === ' ' && !inSingle && !inDouble) {
-      if (current) { tokens.push(current); current = '' }
-      continue
-    }
-    current += ch
-  }
-  if (current) tokens.push(current)
-
-  if (tokens.length === 0) return { exe: '', args: [] }
-  return { exe: tokens[0], args: tokens.slice(1) }
-}
-
-const ALLOWED_EXECUTABLES = new Set([
-  'npm', 'npx', 'yarn', 'pnpm', 'bun', 'bunx', 'deno', 'node', 'tsx', 'ts-node',
-  'git',
-  'tsc', 'vite', 'webpack', 'esbuild', 'rollup', 'turbo', 'nx',
-  'eslint', 'prettier', 'biome',
-  'python', 'python3', 'pip', 'pip3', 'cargo', 'rustc', 'go', 'java', 'javac', 'ruby', 'gem',
-  'cat', 'echo', 'ls', 'dir', 'find', 'grep', 'rg', 'sed', 'awk', 'head', 'tail', 'wc',
-  'mkdir', 'rm', 'cp', 'mv', 'touch', 'chmod', 'curl', 'wget',
-  'docker', 'docker-compose', 'podman',
-  'jest', 'vitest', 'mocha', 'pytest',
-])
-
-function resolveWindowsCommand(command: string): string {
-  if (path.isAbsolute(command)) return command
-  const cmdExtensions = ['.cmd', '.bat', '.exe']
-  const pathDirs = (process.env.PATH || '').split(path.delimiter)
-  for (const dir of pathDirs) {
-    for (const ext of cmdExtensions) {
-      const withExt = path.join(dir, command + ext)
-      try { if (fs.existsSync(withExt)) return withExt } catch {}
-    }
-    const exact = path.join(dir, command)
-    try { if (fs.existsSync(exact)) return exact } catch {}
-  }
-  return command // fallback — spawn will throw ENOENT if not found
-}
+// DANGEROUS_SHELL_CHARS, ALLOWED_EXECUTABLES, parseCommandTokens, resolveCommand imported from ../../shared/security
 
 async function toolExecuteCommand(args: Record<string, any>, projectPath: string): Promise<string> {
   const cwd = args.cwd || projectPath || '.'
@@ -421,7 +365,7 @@ async function toolExecuteCommand(args: Record<string, any>, projectPath: string
     return `Error: Executable '${exe}' is not in the allowed list. Allowed: ${Array.from(ALLOWED_EXECUTABLES).slice(0, 20).join(', ')}...`
   }
 
-  let spawnExe = process.platform === 'win32' ? resolveWindowsCommand(exe) : exe
+  let spawnExe = process.platform === 'win32' ? await resolveCommand(exe) : exe
   let spawnArgs = cmdArgs
   if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(spawnExe)) {
     spawnArgs = ['/c', spawnExe, ...cmdArgs]

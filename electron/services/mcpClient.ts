@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from 'child_process'
 import { EventEmitter } from 'events'
 import path from 'path'
+import { ALLOWED_EXECUTABLES, resolveCommand } from '../shared/security'
 
 export interface MCPToolParameter {
   type: string
@@ -81,6 +82,11 @@ export class MCPClient extends EventEmitter {
   async connect(command: string, args: string[] = [], env?: Record<string, string>): Promise<void> {
     MCPClient.validateSpawnCommand(command)
 
+    let resolvedCommand = command
+    if (process.platform === 'win32') {
+      resolvedCommand = await resolveCommand(command)
+    }
+
     return new Promise((resolve, reject) => {
       let settled = false
       const settle = (fn: typeof resolve | typeof reject, value?: any) => {
@@ -92,9 +98,7 @@ export class MCPClient extends EventEmitter {
       try {
         const processEnv = { ...process.env, ...env }
 
-        let spawnCommand = process.platform === 'win32'
-          ? MCPClient.resolveCommand(command)
-          : command
+        let spawnCommand = resolvedCommand
         let spawnArgs = args
 
         if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(spawnCommand)) {
@@ -160,25 +164,10 @@ export class MCPClient extends EventEmitter {
     if (command.includes('..')) {
       throw new Error('Invalid MCP server command: path traversal not allowed')
     }
-  }
-
-  private static resolveCommand(command: string): string {
-    if (path.isAbsolute(command)) return command
-
-    const cmdExtensions = ['.cmd', '.bat', '.exe']
-    const pathDirs = (process.env.PATH || '').split(path.delimiter)
-    const fsModule = require('fs')
-
-    for (const dir of pathDirs) {
-      for (const ext of cmdExtensions) {
-        const withExt = path.join(dir, command + ext)
-        try { if (fsModule.existsSync(withExt)) return withExt } catch {}
-      }
-      const exact = path.join(dir, command)
-      try { if (fsModule.existsSync(exact)) return exact } catch {}
+    const base = path.basename(command).replace(/\.(cmd|bat|exe|sh)$/i, '').toLowerCase()
+    if (!ALLOWED_EXECUTABLES.has(base)) {
+      throw new Error(`Invalid MCP server command: executable '${base}' is not allowed`)
     }
-
-    return command
   }
 
   private async initialize(): Promise<void> {
@@ -239,6 +228,7 @@ export class MCPClient extends EventEmitter {
     this.rejectAllPending(new Error('Client disconnected'))
 
     if (this.process) {
+      try { this.process.removeAllListeners() } catch { }
       try {
         this.process.kill('SIGTERM')
         setTimeout(() => {
@@ -247,6 +237,7 @@ export class MCPClient extends EventEmitter {
       } catch { }
       this.process = null
     }
+    this.removeAllListeners()
   }
 
   private sendRequest(method: string, params: Record<string, any>): Promise<any> {
@@ -340,11 +331,17 @@ export class MCPClient extends EventEmitter {
   }
 }
 
+const MAX_MCP_SERVERS = 12
+
 class MCPClientManager {
   private clients: Map<string, MCPClient> = new Map()
 
   async connect(serverId: string, command: string, args: string[] = [], env?: Record<string, string>): Promise<MCPClient> {
     this.disconnect(serverId)
+
+    if (this.getAll().length >= MAX_MCP_SERVERS) {
+      throw new Error(`Maximum MCP server connections reached (${MAX_MCP_SERVERS}). Disconnect an existing server first.`)
+    }
 
     const client = new MCPClient(serverId)
     await client.connect(command, args, env)

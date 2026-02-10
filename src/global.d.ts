@@ -120,6 +120,7 @@ interface ArtemisAPI {
   store: {
     get: <T = any>(key: string) => Promise<T | undefined>
     set: (key: string, value: any) => Promise<void>
+    delete: (key: string) => Promise<void>
     getDir: () => Promise<string>
     isEncrypted: () => Promise<boolean>
   }
@@ -166,6 +167,13 @@ interface ArtemisAPI {
 
   git: {
     run: (args: string[], cwd: string) => Promise<{ stdout: string; stderr: string; exitCode: number }>
+  }
+
+  checkpoint: {
+    create: (sessionId: string, messageId: string, label: string, projectPath: string, filesToTrack?: string[]) => Promise<{ id: string; sessionId: string; messageId: string; timestamp: number; label: string; files: Array<{ path: string; existed: boolean }> }>
+    restore: (sessionId: string, checkpointId: string) => Promise<{ restored: number; errors: string[] }>
+    list: (sessionId: string) => Promise<Array<{ id: string; sessionId: string; messageId: string; timestamp: number; label: string; files: Array<{ path: string; existed: boolean }> }>>
+    delete: (sessionId: string, checkpointId?: string) => Promise<void>
   }
 
   mcp: {

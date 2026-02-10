@@ -249,6 +249,21 @@ function tryConnect(ipcPath: string, pipeIndex: number): Promise<boolean> {
   return new Promise((resolve) => {
     handshakeComplete = false
     readBuffer = Buffer.alloc(0)
+    let settled = false
+    let checkReady: ReturnType<typeof setInterval> | null = null
+    let readyTimeout: ReturnType<typeof setTimeout> | null = null
+
+    const cleanup = () => {
+      if (checkReady) { clearInterval(checkReady); checkReady = null }
+      if (readyTimeout) { clearTimeout(readyTimeout); readyTimeout = null }
+    }
+
+    const settle = (ok: boolean) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(ok)
+    }
 
     const socket = net.createConnection(ipcPath, () => {
       ipcSocket = socket
@@ -257,20 +272,18 @@ function tryConnect(ipcPath: string, pipeIndex: number): Promise<boolean> {
       const handshake = JSON.stringify({ v: RPC_VERSION, client_id: CLIENT_ID })
       writeFrame(OP_HANDSHAKE, handshake)
 
-      const readyTimeout = setTimeout(() => {
+      readyTimeout = setTimeout(() => {
         if (!handshakeComplete) {
           debugLog(`Handshake timeout on pipe ${pipeIndex}`)
           socket.destroy()
           ipcSocket = null
-          resolve(false)
+          settle(false)
         }
       }, 5000)
 
-      const checkReady = setInterval(() => {
+      checkReady = setInterval(() => {
         if (handshakeComplete) {
-          clearInterval(checkReady)
-          clearTimeout(readyTimeout)
-          resolve(true)
+          settle(true)
         }
       }, 50)
     })
@@ -281,7 +294,7 @@ function tryConnect(ipcPath: string, pipeIndex: number): Promise<boolean> {
 
     socket.on('error', (err) => {
       debugLog(`Socket error on pipe ${pipeIndex}:`, err.message)
-      resolve(false)
+      settle(false)
     })
 
     socket.on('close', () => {
@@ -289,6 +302,7 @@ function tryConnect(ipcPath: string, pipeIndex: number): Promise<boolean> {
       ipcSocket = null
       handshakeComplete = false
       rpcState.connected = false
+      settle(false)
 
       if (rpcState.enabled && !reconnectTimer) {
         debugLog('Scheduling reconnect in 15s...')
@@ -305,7 +319,7 @@ function tryConnect(ipcPath: string, pipeIndex: number): Promise<boolean> {
     setTimeout(() => {
       if (!ipcSocket || ipcSocket !== socket) {
         socket.destroy()
-        resolve(false)
+        settle(false)
       }
     }, 3000)
   })

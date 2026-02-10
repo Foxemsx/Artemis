@@ -90,21 +90,62 @@ export class ConversationManager {
 
     while (this.estimatedTokens > this.maxContextTokens && this.messages.length > minKeep && iterations < maxIterations) {
       iterations++
-      const removed = this.messages[0]
-      if (removed.role === 'system') {
-        let foundNonSystem = false
+      const removeAt = (index: number): UniversalMessage | null => {
+        if (index < 0 || index >= this.messages.length) return null
+        const msg = this.messages.splice(index, 1)[0]
+        this.estimatedTokens -= this.estimateMessageTokensWithToolCalls(msg)
+        return msg
+      }
+
+      const removeToolGroup = (toolCallIds: Set<string>, startIndex: number) => {
+        // Remove assistant tool_call message
+        removeAt(startIndex)
+        // Remove immediately following tool results that match
+        while (startIndex < this.messages.length) {
+          const next = this.messages[startIndex]
+          if (next.role !== 'tool') break
+          if (next.toolCallId && toolCallIds.has(next.toolCallId)) {
+            removeAt(startIndex)
+            continue
+          }
+          break
+        }
+      }
+
+      let indexToRemove = 0
+      if (this.messages[0].role === 'system') {
+        indexToRemove = -1
         for (let i = 1; i < this.messages.length - minKeep + 1; i++) {
           if (this.messages[i].role !== 'system') {
-            const msg = this.messages.splice(i, 1)[0]
-            this.estimatedTokens -= this.estimateMessageTokens(msg.content)
-            foundNonSystem = true
+            indexToRemove = i
             break
           }
         }
-        if (!foundNonSystem) break
+        if (indexToRemove === -1) break
+      }
+
+      const msg = this.messages[indexToRemove]
+      if (msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0) {
+        const toolCallIds = new Set(msg.toolCalls.map(tc => tc.id))
+        removeToolGroup(toolCallIds, indexToRemove)
+      } else if (msg.role === 'tool' && msg.toolCallId) {
+        let callIndex = -1
+        let toolCallIds = new Set<string>()
+        for (let i = indexToRemove - 1; i >= 0; i--) {
+          const candidate = this.messages[i]
+          if (candidate.role === 'assistant' && candidate.toolCalls && candidate.toolCalls.some(tc => tc.id === msg.toolCallId)) {
+            callIndex = i
+            toolCallIds = new Set(candidate.toolCalls.map(tc => tc.id))
+            break
+          }
+        }
+        if (callIndex >= 0) {
+          removeToolGroup(toolCallIds, callIndex)
+        } else {
+          removeAt(indexToRemove)
+        }
       } else {
-        this.messages.shift()
-        this.estimatedTokens -= this.estimateMessageTokens(removed.content)
+        removeAt(indexToRemove)
       }
     }
 
@@ -117,8 +158,15 @@ export class ConversationManager {
     return Math.ceil((content || '').length / 4)
   }
 
+  private estimateMessageTokensWithToolCalls(message: UniversalMessage): number {
+    const toolCallText = message.toolCalls
+      ? message.toolCalls.map(tc => `${tc.name}(${JSON.stringify(tc.arguments)})`).join(' ')
+      : ''
+    return this.estimateMessageTokens((message.content || '') + toolCallText)
+  }
+
   private estimateTokens(messages: UniversalMessage[]): number {
-    return messages.reduce((sum, m) => sum + this.estimateMessageTokens(m.content), 0)
+    return messages.reduce((sum, m) => sum + this.estimateMessageTokensWithToolCalls(m), 0)
   }
 
   toJSON(): UniversalMessage[] {

@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } from 'electro
 import path from 'path'
 import fs from 'fs'
 import { spawn } from 'child_process'
+import safeRegex from 'safe-regex2'
 import { registerAgentIPC } from './api'
 import { webSearch } from './services/webSearchService'
 import { lintFile } from './services/linterService'
@@ -9,6 +10,13 @@ import * as mcpService from './services/mcpService'
 import { mcpClientManager } from './services/mcpClient'
 import * as discordRPC from './services/discordRPCService'
 import { inlineCompletionService } from './services/inlineCompletionService'
+import * as checkpointService from './services/checkpointService'
+import { initLogger, logError } from './shared/logger'
+import {
+  isAllowedApiUrl, PROVIDER_BASE_URLS,
+  DANGEROUS_SHELL_CHARS, ALLOWED_EXECUTABLES, RUNTIME_EVAL_FLAGS,
+  parseCommandTokens, validateFsPath, enforceProjectContainment,
+} from './shared/security'
 
 type Capability = 'terminal' | 'commands'
 
@@ -21,17 +29,47 @@ app.commandLine.appendSwitch('disable-features', 'AutofillServerCommunication,Au
 
 let isQuitting = false
 
+const STORE_DIR = path.join(app.getPath('userData'))
+const STORE_PATH = path.join(STORE_DIR, 'artemis-settings.json')
+
+// Initialize error-only crash logger (writes to {userData}/error.log)
+initLogger(STORE_DIR)
+
 let ptyModule: typeof import('node-pty') | null = null
 try {
   ptyModule = require('node-pty')
 } catch (e) {
-  console.error('node-pty failed to load:', e)
+  logError('main', 'node-pty failed to load', { error: String(e) })
 }
 
-const STORE_DIR = path.join(app.getPath('userData'))
-const STORE_PATH = path.join(STORE_DIR, 'artemis-settings.json')
-
 const SENSITIVE_KEY_PREFIXES = ['apiKey:']
+
+const STORE_SET_ALLOWLIST = new Set([
+  'setupComplete',
+  'pendingApiKeys',
+  'lastProject',
+  'recentProjects',
+  'chatSessions',
+  'activeModel',
+  'agentMode',
+  'editApprovalMode',
+  'soundSettings',
+  'keybinds',
+  'theme',
+  'baseUrl:ollama',
+])
+
+const STORE_SET_PREFIX_ALLOWLIST = [
+  'apiKey:',
+  'messages-',
+  'tokenUsage-',
+  'baseUrl:',
+]
+
+function isStoreKeyAllowed(key: string): boolean {
+  if (STORE_SET_ALLOWLIST.has(key)) return true
+  return STORE_SET_PREFIX_ALLOWLIST.some(prefix => key.startsWith(prefix))
+}
 
 function isSensitiveKey(key: string): boolean {
   return SENSITIVE_KEY_PREFIXES.some(prefix => key.startsWith(prefix))
@@ -76,51 +114,70 @@ function loadStore(): Record<string, any> {
   return {}
 }
 
+let saveStoreTimer: ReturnType<typeof setTimeout> | null = null
+let saveStorePending = false
+
 function saveStore(data: Record<string, any>) {
+  saveStorePending = true
+  if (saveStoreTimer) return // already scheduled
+  saveStoreTimer = setTimeout(() => {
+    saveStoreTimer = null
+    if (!saveStorePending) return
+    saveStorePending = false
+    try {
+      const tmpPath = STORE_PATH + '.tmp'
+      fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2))
+      fs.renameSync(tmpPath, STORE_PATH)
+    } catch (e) {
+      logError('store', 'Failed to save store', { error: String(e) })
+    }
+  }, 100)
+}
+
+// Flush pending store writes synchronously (called on app quit)
+function flushStore(data: Record<string, any>) {
+  if (saveStoreTimer) {
+    clearTimeout(saveStoreTimer)
+    saveStoreTimer = null
+  }
   try {
-    fs.writeFileSync(STORE_PATH, JSON.stringify(data, null, 2))
+    const tmpPath = STORE_PATH + '.tmp'
+    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2))
+    fs.renameSync(tmpPath, STORE_PATH)
   } catch (e) {
-    console.error('Failed to save store:', e)
+    logError('store', 'Failed to flush store', { error: String(e) })
   }
 }
 
 let store = loadStore()
 
 let trustedFolders: Set<string> = new Set(
-  Array.isArray(store['trustedFolders']) ? store['trustedFolders'] : []
+  Array.isArray(store['trustedFolders'])
+    ? store['trustedFolders']
+      .filter((p: any) => typeof p === 'string' && p.trim().length > 0)
+      .map((p: string) => path.resolve(p).toLowerCase())
+    : []
 )
 
 function isFolderTrusted(folderPath: string): boolean {
   const resolved = path.resolve(folderPath).toLowerCase()
-  const folders = Array.from(trustedFolders)
-  for (let i = 0; i < folders.length; i++) {
-    if (resolved === folders[i].toLowerCase()) return true
-  }
-  return false
+  return trustedFolders.has(resolved)
 }
 
 function grantTrust(folderPath: string): void {
-  const resolved = path.resolve(folderPath)
+  const resolved = path.resolve(folderPath).toLowerCase()
   trustedFolders.add(resolved)
   store['trustedFolders'] = Array.from(trustedFolders)
   saveStore(store)
-  capabilities.terminal = true
-  capabilities.commands = true
+  updateCapabilitiesForActiveProject()
 }
 
 function revokeTrust(folderPath: string): void {
-  const resolved = path.resolve(folderPath)
+  const resolved = path.resolve(folderPath).toLowerCase()
   trustedFolders.delete(resolved)
-  const folders = Array.from(trustedFolders)
-  for (let i = 0; i < folders.length; i++) {
-    if (folders[i].toLowerCase() === resolved.toLowerCase()) {
-      trustedFolders.delete(folders[i])
-    }
-  }
   store['trustedFolders'] = Array.from(trustedFolders)
   saveStore(store)
-  capabilities.terminal = false
-  capabilities.commands = false
+  updateCapabilitiesForActiveProject()
 }
 
 const sessions = new Map<string, import('node-pty').IPty>()
@@ -133,6 +190,12 @@ let activeProjectPath: string | null = null
 const capabilities: Record<Capability, boolean> = {
   terminal: false,
   commands: false,
+}
+
+function updateCapabilitiesForActiveProject(): void {
+  const trusted = activeProjectPath ? isFolderTrusted(activeProjectPath) : false
+  capabilities.terminal = trusted
+  capabilities.commands = trusted
 }
 
 function createWindow() {
@@ -237,6 +300,9 @@ ipcMain.handle('store:get', (_e, key: string) => {
 })
 
 ipcMain.handle('store:set', (_e, key: string, value: any) => {
+  if (!isStoreKeyAllowed(key)) {
+    throw new Error(`Access denied: store key '${key}' is not writable from the renderer`)
+  }
   if (isSensitiveKey(key) && typeof value === 'string' && value) {
     store[key] = encryptValue(value)
     const providerMatch = key.match(/^apiKey:(.+)$/)
@@ -246,6 +312,14 @@ ipcMain.handle('store:set', (_e, key: string, value: any) => {
   } else {
     store[key] = value
   }
+  saveStore(store)
+})
+
+ipcMain.handle('store:delete', (_e, key: string) => {
+  if (!isStoreKeyAllowed(key)) {
+    throw new Error(`Access denied: store key '${key}' is not writable from the renderer`)
+  }
+  delete store[key]
   saveStore(store)
 })
 
@@ -287,13 +361,7 @@ ipcMain.handle('trust:revoke', (_e, folderPath: string) => {
 ipcMain.handle('project:setPath', (_e, projectPath: string) => {
   if (typeof projectPath === 'string' && projectPath.trim().length > 0) {
     activeProjectPath = path.resolve(projectPath)
-    if (isFolderTrusted(projectPath)) {
-      capabilities.terminal = true
-      capabilities.commands = true
-    } else {
-      capabilities.terminal = false
-      capabilities.commands = false
-    }
+    updateCapabilitiesForActiveProject()
     return true
   }
   return false
@@ -309,85 +377,24 @@ ipcMain.handle('dialog:openFolder', async () => {
 
   const folderPath = result.filePaths[0]
   activeProjectPath = path.resolve(folderPath)
+  updateCapabilitiesForActiveProject()
   return { path: folderPath, name: path.basename(folderPath) }
 })
 
-const DANGEROUS_SHELL_CHARS = /[;&|`$(){}[\]<>\n\r]/
+// Security constants (DANGEROUS_SHELL_CHARS, ALLOWED_EXECUTABLES, validateFsPath,
+// enforceProjectContainment, etc.) are imported from ./shared/security
 
-const ALLOWED_EXECUTABLES = new Set([
-  'npm', 'npx', 'yarn', 'pnpm', 'bun', 'bunx', 'deno', 'node', 'tsx', 'ts-node',
-  'git',
-  'tsc', 'vite', 'webpack', 'esbuild', 'rollup', 'turbo', 'nx',
-  'eslint', 'prettier', 'biome',
-  'python', 'python3', 'pip', 'pip3', 'cargo', 'rustc', 'go', 'java', 'javac', 'ruby', 'gem',
-  'cat', 'echo', 'ls', 'dir', 'find', 'grep', 'rg', 'sed', 'awk', 'head', 'tail', 'wc',
-  'mkdir', 'rm', 'cp', 'mv', 'touch', 'chmod',
-  'docker', 'docker-compose', 'podman',
-  'jest', 'vitest', 'mocha', 'pytest',
-])
-
-function validateFsPath(filePath: string, operation: string): string {
-  if (typeof filePath !== 'string') {
-    throw new Error(`Invalid path: expected string, got ${typeof filePath}`)
+function enforceProjectContainmentLocal(resolved: string, operation: string): void {
+  if (resolved.toLowerCase() === STORE_PATH.toLowerCase()) {
+    throw new Error(`Access denied: cannot ${operation} on application settings file`)
   }
-  
-  if (!filePath || filePath.trim().length === 0) {
-    throw new Error('Invalid path: empty path')
-  }
-  
-  if (filePath.startsWith('\\\\') || filePath.startsWith('//')) {
-    throw new Error('Access denied: UNC paths are not allowed')
-  }
-  
-  if (filePath.startsWith('\\?\\')) {
-    throw new Error('Access denied: Extended paths are not allowed')
-  }
-  
-  if (filePath.includes('\0')) {
-    throw new Error('Access denied: null bytes in path')
-  }
-  
-  const resolved = path.resolve(filePath)
-  
-  if (resolved.startsWith('\\\\') || resolved.startsWith('//')) {
-    throw new Error('Access denied: UNC paths are not allowed')
-  }
-  
-  const dangerous = [
-    'C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)', 'C:\\ProgramData',
-    '/usr', '/etc', '/bin', '/sbin', '/lib', '/lib64', '/sys', '/proc', '/dev',
-  ]
-  for (const d of dangerous) {
-    if (resolved.toLowerCase().startsWith(d.toLowerCase())) {
-      throw new Error(`Access denied: cannot ${operation} on system path`)
-    }
-  }
-  
-  return resolved
-}
-
-function enforceProjectContainment(resolved: string, operation: string): void {
-  const normalizedResolved = resolved.toLowerCase()
-
-  const userDataDir = app.getPath('userData').toLowerCase()
-  const userDataPrefix = userDataDir + path.sep.toLowerCase()
-  if (normalizedResolved === userDataDir || normalizedResolved.startsWith(userDataPrefix)) return
-
-  if (!activeProjectPath) {
-    throw new Error(`Access denied: cannot ${operation} without an active project directory`)
-  }
-
-  const normalizedProject = path.resolve(activeProjectPath).toLowerCase()
-  const projectPrefix = normalizedProject + path.sep.toLowerCase()
-  if (normalizedResolved !== normalizedProject && !normalizedResolved.startsWith(projectPrefix)) {
-    throw new Error(`Access denied: cannot ${operation} outside the active project directory`)
-  }
+  enforceProjectContainment(resolved, operation, activeProjectPath)
 }
 
 ipcMain.handle('fs:readDir', async (_e, dirPath: string) => {
   try {
     const validatedPath = validateFsPath(dirPath, 'read directory')
-    enforceProjectContainment(validatedPath, 'read directory')
+    enforceProjectContainmentLocal(validatedPath, 'read directory')
     const entries = await fs.promises.readdir(validatedPath, { withFileTypes: true })
     return entries
       .filter((e) => e.name !== '.git' && e.name !== 'node_modules')
@@ -408,7 +415,7 @@ ipcMain.handle('fs:readDir', async (_e, dirPath: string) => {
 ipcMain.handle('fs:readFile', async (_e, filePath: string) => {
   try {
     const validatedPath = validateFsPath(filePath, 'read file')
-    enforceProjectContainment(validatedPath, 'read file')
+    enforceProjectContainmentLocal(validatedPath, 'read file')
     return await fs.promises.readFile(validatedPath, 'utf-8')
   } catch (err: any) {
     console.error('fs:readFile error:', err.message)
@@ -419,8 +426,15 @@ ipcMain.handle('fs:readFile', async (_e, filePath: string) => {
 ipcMain.handle('fs:writeFile', async (_e, filePath: string, content: string) => {
   try {
     const validatedPath = validateFsPath(filePath, 'write file')
-    enforceProjectContainment(validatedPath, 'write file')
-    await fs.promises.writeFile(validatedPath, content, 'utf-8')
+    enforceProjectContainmentLocal(validatedPath, 'write file')
+    const tmpPath = validatedPath + '.tmp.' + Date.now()
+    try {
+      await fs.promises.writeFile(tmpPath, content, 'utf-8')
+      await fs.promises.rename(tmpPath, validatedPath)
+    } catch (err) {
+      try { await fs.promises.unlink(tmpPath) } catch {}
+      throw err
+    }
   } catch (err: any) {
     console.error('fs:writeFile error:', err.message)
     throw err
@@ -430,7 +444,7 @@ ipcMain.handle('fs:writeFile', async (_e, filePath: string, content: string) => 
 ipcMain.handle('fs:stat', async (_e, filePath: string) => {
   try {
     const validatedPath = validateFsPath(filePath, 'stat')
-    enforceProjectContainment(validatedPath, 'stat')
+    enforceProjectContainmentLocal(validatedPath, 'stat')
     const stat = await fs.promises.stat(validatedPath)
     return {
       size: stat.size,
@@ -446,7 +460,7 @@ ipcMain.handle('fs:stat', async (_e, filePath: string) => {
 ipcMain.handle('fs:createDir', async (_e, dirPath: string) => {
   try {
     const validatedPath = validateFsPath(dirPath, 'create directory')
-    enforceProjectContainment(validatedPath, 'create directory')
+    enforceProjectContainmentLocal(validatedPath, 'create directory')
     await fs.promises.mkdir(validatedPath, { recursive: true })
   } catch (err: any) {
     console.error('fs:createDir error:', err.message)
@@ -457,7 +471,7 @@ ipcMain.handle('fs:createDir', async (_e, dirPath: string) => {
 ipcMain.handle('fs:delete', async (_e, targetPath: string) => {
   try {
     const validatedPath = validateFsPath(targetPath, 'delete')
-    enforceProjectContainment(validatedPath, 'delete')
+    enforceProjectContainmentLocal(validatedPath, 'delete')
     const stat = await fs.promises.stat(validatedPath)
     if (stat.isDirectory()) {
       await fs.promises.rm(validatedPath, { recursive: true, force: true })
@@ -474,8 +488,8 @@ ipcMain.handle('fs:rename', async (_e, oldPath: string, newPath: string) => {
   try {
     const validatedOld = validateFsPath(oldPath, 'rename (source)')
     const validatedNew = validateFsPath(newPath, 'rename (destination)')
-    enforceProjectContainment(validatedOld, 'rename (source)')
-    enforceProjectContainment(validatedNew, 'rename (destination)')
+    enforceProjectContainmentLocal(validatedOld, 'rename (source)')
+    enforceProjectContainmentLocal(validatedNew, 'rename (destination)')
     await fs.promises.rename(validatedOld, validatedNew)
   } catch (err: any) {
     console.error('fs:rename error:', err.message)
@@ -488,8 +502,9 @@ ipcMain.handle('shell:openPath', async (_e, targetPath: string) => {
     if (typeof targetPath !== 'string' || !targetPath.trim()) {
       throw new Error('Invalid path: must be a non-empty string')
     }
-    validateFsPath(targetPath, 'open')
-    await shell.openPath(targetPath)
+    const resolved = validateFsPath(targetPath, 'open')
+    enforceProjectContainmentLocal(resolved, 'open')
+    await shell.openPath(resolved)
   } catch (err: any) {
     console.error('shell:openPath error:', err.message)
     throw err
@@ -508,27 +523,7 @@ ipcMain.handle('shell:openExternal', async (_e, url: string) => {
   }
 })
 
-function parseCommand(command: string): { exe: string; args: string[] } {
-  const tokens: string[] = []
-  let current = ''
-  let inSingle = false
-  let inDouble = false
-
-  for (let i = 0; i < command.length; i++) {
-    const ch = command[i]
-    if (ch === "'" && !inDouble) { inSingle = !inSingle; continue }
-    if (ch === '"' && !inSingle) { inDouble = !inDouble; continue }
-    if (ch === ' ' && !inSingle && !inDouble) {
-      if (current) { tokens.push(current); current = '' }
-      continue
-    }
-    current += ch
-  }
-  if (current) tokens.push(current)
-
-  if (tokens.length === 0) return { exe: '', args: [] }
-  return { exe: tokens[0], args: tokens.slice(1) }
-}
+// parseCommand replaced by parseCommandTokens from ./shared/security
 
 ipcMain.handle('tools:runCommand', async (_e, command: string, cwd: string) => {
   if (!capabilities.commands) {
@@ -557,13 +552,13 @@ ipcMain.handle('tools:runCommand', async (_e, command: string, cwd: string) => {
   if (cwd && typeof cwd === 'string') {
     try {
       validateFsPath(cwd, 'execute command in')
-      enforceProjectContainment(path.resolve(cwd), 'execute command in')
+      enforceProjectContainmentLocal(path.resolve(cwd), 'execute command in')
     } catch (err: any) {
       return { stdout: '', stderr: `Invalid cwd: ${err.message}`, exitCode: -1 }
     }
   }
 
-  const { exe, args } = parseCommand(command)
+  const { exe, args } = parseCommandTokens(command)
   if (!exe) {
     return { stdout: '', stderr: 'Invalid command: empty executable', exitCode: -1 }
   }
@@ -573,15 +568,6 @@ ipcMain.handle('tools:runCommand', async (_e, command: string, cwd: string) => {
     return { stdout: '', stderr: `Access denied: executable '${exe}' is not in the allowed list`, exitCode: -1 }
   }
 
-  const RUNTIME_EVAL_FLAGS: Record<string, string[]> = {
-    'node': ['-e', '--eval', '--input-type', '-p', '--print'],
-    'tsx': ['-e', '--eval'],
-    'ts-node': ['-e', '--eval'],
-    'python': ['-c', '--command'],
-    'python3': ['-c', '--command'],
-    'ruby': ['-e'],
-    'deno': ['eval'],
-  }
   const dangerousFlags = RUNTIME_EVAL_FLAGS[exeBasename]
   if (dangerousFlags) {
     const lowerArgs = args.map(a => a.toLowerCase())
@@ -640,10 +626,43 @@ ipcMain.handle('git:run', async (_e, args: string[], cwd: string) => {
   if (!Array.isArray(args) || args.length === 0) {
     return { stdout: '', stderr: 'Invalid git args', exitCode: -1 }
   }
+
+  const blockedArgs = new Set([
+    '-c',
+    '--config',
+    '--config-env',
+    '--exec-path',
+    '--upload-pack',
+    '--receive-pack',
+    '--git-dir',
+    '--work-tree',
+    '-C',
+  ])
+  for (const arg of args) {
+    const lower = arg.toLowerCase()
+    if (blockedArgs.has(arg) || blockedArgs.has(lower)) {
+      return { stdout: '', stderr: `Access denied: git argument '${arg}' is not allowed`, exitCode: -1 }
+    }
+    if (lower.startsWith('-c') && lower !== '-c') {
+      return { stdout: '', stderr: `Access denied: git argument '${arg}' is not allowed`, exitCode: -1 }
+    }
+    const blockedPrefixes = [
+      '--config=',
+      '--config-env=',
+      '--exec-path=',
+      '--upload-pack=',
+      '--receive-pack=',
+      '--git-dir=',
+      '--work-tree=',
+    ]
+    if (blockedPrefixes.some(p => lower.startsWith(p))) {
+      return { stdout: '', stderr: `Access denied: git argument '${arg}' is not allowed`, exitCode: -1 }
+    }
+  }
   if (cwd && typeof cwd === 'string') {
     try {
       validateFsPath(cwd, 'run git in')
-      enforceProjectContainment(path.resolve(cwd), 'run git in')
+      enforceProjectContainmentLocal(path.resolve(cwd), 'run git in')
     } catch (err: any) {
       return { stdout: '', stderr: `Invalid cwd: ${err.message}`, exitCode: -1 }
     }
@@ -672,77 +691,98 @@ ipcMain.handle('tools:searchFiles', async (_e, pattern: string, dirPath: string)
     return { error: `Invalid search pattern. Must be between 1 and ${MAX_PATTERN_LENGTH} characters.` }
   }
   
-  const dangerousPatterns = [
-    /\([^)]*\+\+?[^{}]*\)\??[+*]/,  
-    /\([^)]*\*\+?[^{}]*\)\??[+*]/,  
-    /\([^)]*\+\+?[^{}]*\)\??\{/,    
-  ]
-  
-  for (const dangerous of dangerousPatterns) {
-    if (dangerous.test(pattern)) {
-      return { error: 'Invalid search pattern: pattern contains potentially dangerous repetition that could cause performance issues.' }
+  try {
+    if (!safeRegex(pattern)) {
+      return { error: 'Invalid search pattern: regex may cause excessive backtracking.' }
     }
+  } catch {
+    // If validation fails, fall back to existing regex error handling later
+  }
+  
+  let validatedDir = ''
+  try {
+    validatedDir = validateFsPath(dirPath, 'search files')
+    enforceProjectContainmentLocal(validatedDir, 'search files')
+  } catch (err: any) {
+    return { error: `Invalid search path: ${err.message}` }
+  }
+
+  let regex: RegExp
+  try {
+    let normalizedPattern = pattern
+    let flags = 'g'
+    if (normalizedPattern.startsWith('(?i)')) {
+      normalizedPattern = normalizedPattern.slice(4)
+      flags += 'i'
+    } else {
+      flags += 'i'
+    }
+    regex = new RegExp(normalizedPattern, flags)
+  } catch (e) {
+    return { error: 'Invalid regex pattern: ' + (e as Error).message }
   }
   
   const results: { file: string; line: number; text: string }[] = []
   const maxResults = 50
   const maxDepth = 8
+  const maxConcurrency = 12
   
   const ignoreDirs = new Set([
     'node_modules', '.git', 'dist', 'build', '.next', '__pycache__',
     '.venv', 'venv', '.cache', 'coverage', '.idea', '.vscode',
   ])
   
-  async function searchDir(dir: string, depth: number) {
-    if (depth > maxDepth || results.length >= maxResults) return
-    
+  const filePaths: string[] = []
+
+  async function collectFiles(dir: string, depth: number) {
+    if (depth > maxDepth) return
     try {
       const entries = await fs.promises.readdir(dir, { withFileTypes: true })
       for (const entry of entries) {
-        if (results.length >= maxResults) break
-        
         const fullPath = path.join(dir, entry.name)
-        
         if (entry.isDirectory()) {
           if (!ignoreDirs.has(entry.name) && !entry.name.startsWith('.')) {
-            await searchDir(fullPath, depth + 1)
+            await collectFiles(fullPath, depth + 1)
           }
         } else if (entry.isFile()) {
-          try {
-            const stat = await fs.promises.stat(fullPath)
-            if (stat.size > 500000) continue
-          } catch { continue }
-          
-          try {
-            const content = await fs.promises.readFile(fullPath, 'utf-8')
-            const lines = content.split('\n')
-            
-            let regex: RegExp
-            try {
-              regex = new RegExp(pattern, 'gi')
-            } catch (e) {
-              return { error: 'Invalid regex pattern: ' + (e as Error).message }
-            }
-            
-            for (let i = 0; i < lines.length && results.length < maxResults; i++) {
-              const line = lines[i].slice(0, 1000)
-              if (regex.test(line)) {
-                results.push({
-                  file: fullPath,
-                  line: i + 1,
-                  text: lines[i].trim().slice(0, 200),
-                })
-              }
-              regex.lastIndex = 0
-            }
-          } catch {
-          }
+          filePaths.push(fullPath)
         }
       }
     } catch {}
   }
-  
-  await searchDir(dirPath, 0)
+
+  await collectFiles(validatedDir, 0)
+
+  let fileIndex = 0
+  async function worker() {
+    while (fileIndex < filePaths.length && results.length < maxResults) {
+      const idx = fileIndex++
+      const fullPath = filePaths[idx]
+      try {
+        const stat = await fs.promises.stat(fullPath)
+        if (stat.size > 500000) continue
+      } catch { continue }
+
+      try {
+        const content = await fs.promises.readFile(fullPath, 'utf-8')
+        const lines = content.split('\n')
+
+        for (let i = 0; i < lines.length && results.length < maxResults; i++) {
+          const line = lines[i].slice(0, 1000)
+          if (regex.test(line)) {
+            results.push({
+              file: fullPath,
+              line: i + 1,
+              text: lines[i].trim().slice(0, 200),
+            })
+          }
+          regex.lastIndex = 0
+        }
+      } catch {}
+    }
+  }
+
+  await Promise.all(Array.from({ length: maxConcurrency }, () => worker()))
   return results
 })
 
@@ -758,10 +798,18 @@ ipcMain.handle('session:create', (_event, { id, cwd }: { id: string; cwd: string
   if (sessions.size >= MAX_PTY_SESSIONS) {
     return { error: `Maximum terminal sessions reached (${MAX_PTY_SESSIONS}). Close an existing terminal first.` }
   }
+  
+  if (typeof id !== 'string' || !/^[a-zA-Z0-9_-]{3,64}$/.test(id)) {
+    return { error: 'Invalid session id: must be 3-64 chars (letters, numbers, hyphen, underscore).' }
+  }
+  
+  if (sessions.has(id)) {
+    return { error: `Session id already in use: ${id}` }
+  }
 
   try {
     validateFsPath(cwd, 'create terminal session in')
-    enforceProjectContainment(path.resolve(cwd), 'create terminal session in')
+    enforceProjectContainmentLocal(path.resolve(cwd), 'create terminal session in')
   } catch (err: any) {
     return { error: `Access denied: ${err.message}` }
   }
@@ -819,36 +867,26 @@ ipcMain.handle('session:kill', (_e, { id }: { id: string }) => {
   sessions.delete(id)
 })
 
-const ALLOWED_API_DOMAINS = new Set([
-  'opencode.ai', 'api.z.ai',
-  'api.openai.com', 'api.anthropic.com',
-  'openrouter.ai',
-  'generativelanguage.googleapis.com',
-  'api.deepseek.com',
-  'api.groq.com',
-  'api.mistral.ai',
-  'api.moonshot.cn',
-  'api.perplexity.ai',
-  'api.synthetic.new',
-  'localhost',
-  'html.duckduckgo.com',
-  'webcache.googleusercontent.com',
-])
-
-function isAllowedApiUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url)
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false
-    const hostname = parsed.hostname.toLowerCase()
-    const domains = Array.from(ALLOWED_API_DOMAINS)
-    for (let i = 0; i < domains.length; i++) {
-      if (hostname === domains[i] || hostname.endsWith('.' + domains[i])) return true
+// Periodic PTY dead session cleanup — every 60s, remove sessions whose process has exited
+setInterval(() => {
+  for (const [id, session] of Array.from(sessions)) {
+    try {
+      // node-pty process exposes pid; check if still alive
+      if (session.pid) {
+        try {
+          process.kill(session.pid, 0) // signal 0 = existence check, no actual kill
+        } catch {
+          // process.kill throws if PID doesn't exist — session is dead
+          sessions.delete(id)
+        }
+      }
+    } catch {
+      sessions.delete(id)
     }
-    return false
-  } catch {
-    return false
   }
-}
+}, 60_000)
+
+// ALLOWED_API_DOMAINS and isAllowedApiUrl imported from ./shared/security
 
 ipcMain.handle('zen:request', async (_e, options: {
   url: string
@@ -868,11 +906,19 @@ ipcMain.handle('zen:request', async (_e, options: {
       }
     }
 
-    const response = await fetch(options.url, {
-      method: options.method,
-      headers: options.headers,
-      body: options.body,
-    })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 60_000)
+    let response: Response
+    try {
+      response = await fetch(options.url, {
+        method: options.method,
+        headers: options.headers,
+        body: options.body,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timeout)
+    }
 
     const text = await response.text()
     const resHeaders: Record<string, string> = {}
@@ -889,7 +935,7 @@ ipcMain.handle('zen:request', async (_e, options: {
     return {
       ok: false,
       status: 0,
-      statusText: err.message || 'Network error',
+      statusText: err.name === 'AbortError' ? 'Request timed out' : (err.message || 'Network error'),
       data: '',
       headers: {},
       error: err.message,
@@ -897,11 +943,41 @@ ipcMain.handle('zen:request', async (_e, options: {
   }
 })
 
-mcpService.initMCPService(STORE_DIR)
+checkpointService.initCheckpointService(STORE_DIR)
 
-mcpService.reconnectInstalledServers().catch(err => {
-  console.warn('[Artemis MCP] Background reconnect failed:', err)
+ipcMain.handle('checkpoint:create', async (_e, sessionId: string, messageId: string, label: string, projectPath: string, filesToTrack?: string[]) => {
+  try {
+    const validatedProject = validateFsPath(projectPath, 'create checkpoint')
+    enforceProjectContainmentLocal(validatedProject, 'create checkpoint')
+    let validatedFiles: string[] | undefined
+    if (Array.isArray(filesToTrack) && filesToTrack.length > 0) {
+      validatedFiles = filesToTrack.map((p) => {
+        const validated = validateFsPath(p, 'create checkpoint file')
+        enforceProjectContainmentLocal(validated, 'create checkpoint file')
+        return validated
+      })
+    }
+    return checkpointService.createCheckpoint(sessionId, messageId, label, validatedProject, validatedFiles)
+  } catch (err: any) {
+    throw err
+  }
 })
+
+ipcMain.handle('checkpoint:restore', async (_e, sessionId: string, checkpointId: string) => {
+  if (!activeProjectPath) {
+    return { restored: 0, errors: ['No active project directory'] }
+  }
+  return checkpointService.restoreCheckpoint(sessionId, checkpointId, activeProjectPath)
+})
+
+ipcMain.handle('checkpoint:list', async (_e, sessionId: string) => {
+  return checkpointService.listCheckpoints(sessionId)
+})
+
+ipcMain.handle('checkpoint:delete', async (_e, sessionId: string, checkpointId?: string) => {
+  return checkpointService.deleteCheckpoint(sessionId, checkpointId)
+})
+
 
 ipcMain.handle('mcp:getServers', () => mcpService.getServers())
 ipcMain.handle('mcp:installServer', (_e, serverId: string, config?: Record<string, any>) =>
@@ -960,7 +1036,15 @@ ipcMain.handle('fetchUrl:fetch', async (_e, url: string) => {
 })
 
 ipcMain.handle('linter:lint', async (_e, filePath: string, projectPath: string) => {
-  return lintFile(filePath, projectPath)
+  try {
+    const validatedFile = validateFsPath(filePath, 'lint file')
+    const validatedProject = validateFsPath(projectPath, 'lint project')
+    enforceProjectContainmentLocal(validatedFile, 'lint file')
+    enforceProjectContainmentLocal(validatedProject, 'lint project')
+    return lintFile(validatedFile, validatedProject)
+  } catch (err: any) {
+    return { file: filePath, diagnostics: [], error: err.message || 'Invalid lint path' }
+  }
 })
 
 ipcMain.handle('discord:toggle', async (_e, enable: boolean) => {
@@ -993,7 +1077,7 @@ ipcMain.handle('inlineCompletion:complete', async (_e, request) => {
   try {
     return await inlineCompletionService.complete(request)
   } catch (err: any) {
-    console.error('[InlineCompletion] Error:', err.message)
+    logError('inlineCompletion', 'Completion error', { error: err.message })
     return { completion: '' }
   }
 })
@@ -1015,7 +1099,7 @@ ipcMain.handle('inlineCompletion:setConfig', async (_e, config) => {
         const decrypted = decryptValue(encryptedKey)
         if (decrypted) inlineCompletionService.setApiKey(config.provider, decrypted)
       } catch (err) {
-        console.error('[InlineCompletion] Failed to decrypt API key on config change:', err)
+        logError('inlineCompletion', 'Failed to decrypt API key on config change', { error: String(err) })
       }
     }
     if (config.provider === 'ollama') {
@@ -1026,21 +1110,7 @@ ipcMain.handle('inlineCompletion:setConfig', async (_e, config) => {
 })
 
 ipcMain.handle('inlineCompletion:fetchModels', async (_e, providerId: string) => {
-  const PROVIDER_BASE_URLS: Record<string, string> = {
-    zen: 'https://opencode.ai/zen/v1',
-    zai: 'https://api.z.ai/api/paas/v4',
-    anthropic: 'https://api.anthropic.com/v1',
-    openai: 'https://api.openai.com/v1',
-    openrouter: 'https://openrouter.ai/api/v1',
-    moonshot: 'https://api.moonshot.cn/v1',
-    google: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    deepseek: 'https://api.deepseek.com',
-    groq: 'https://api.groq.com/openai/v1',
-    mistral: 'https://api.mistral.ai/v1',
-    perplexity: 'https://api.perplexity.ai',
-    synthetic: 'https://api.synthetic.new/openai/v1',
-    ollama: 'http://localhost:11434/v1',
-  }
+  // PROVIDER_BASE_URLS imported from ./shared/security
 
   try {
     const customUrl = store[`baseUrl:${providerId}`] as string | undefined
@@ -1049,15 +1119,11 @@ ipcMain.handle('inlineCompletion:fetchModels', async (_e, providerId: string) =>
 
     let apiKey = ''
     const encKey = store[`apiKey:${providerId}`]
-    if (encKey) {
+    if (encKey && typeof encKey === 'string') {
       try {
-        if (safeStorage.isEncryptionAvailable()) {
-          apiKey = safeStorage.decryptString(Buffer.from(encKey as string, 'base64'))
-        } else {
-          apiKey = encKey as string
-        }
+        apiKey = decryptValue(encKey)
       } catch {
-        apiKey = encKey as string
+        apiKey = ''
       }
     }
 
@@ -1106,6 +1172,11 @@ registerAgentIPC(() => mainWindow)
 app.whenReady().then(async () => {
   createWindow()
 
+  mcpService.initMCPService(STORE_DIR)
+  mcpService.reconnectInstalledServers().catch(err => {
+    console.warn('[Artemis MCP] Background reconnect failed:', err)
+  })
+
   try {
     const inlineConfig = store['inlineCompletionConfig'] as any
     if (inlineConfig?.provider && inlineConfig.provider !== 'ollama') {
@@ -1116,19 +1187,22 @@ app.whenReady().then(async () => {
       }
     }
   } catch (err) {
-    console.error('[InlineCompletion] Failed to sync API key on ready:', err)
+    logError('inlineCompletion', 'Failed to sync API key on ready', { error: String(err) })
   }
 
   if (store['discordRpcEnabled'] === true) {
     console.log('[Artemis] Restoring Discord RPC from saved state...')
     discordRPC.toggle(true).catch((err) => {
-      console.error('[Artemis] Failed to restore Discord RPC:', err)
+      logError('discord', 'Failed to restore Discord RPC', { error: String(err) })
     })
   }
 })
 
 app.on('before-quit', () => {
   isQuitting = true
+
+  // Flush any pending store writes before quitting
+  flushStore(store)
 
   for (const [_id, session] of Array.from(sessions)) {
     try { session.kill() } catch {}

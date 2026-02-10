@@ -1,30 +1,28 @@
 
-export interface FileSnapshot {
-  path: string
-  content: string
-  existed: boolean
-}
-
 export interface Checkpoint {
   id: string
   sessionId: string
   messageId: string
   timestamp: number
   label: string
-  files: FileSnapshot[]
+  files: Array<{ path: string; existed: boolean }>
 }
 
-const checkpoints = new Map<string, Checkpoint[]>()
+// In-memory metadata cache (lightweight — no file content, only paths + labels)
+const metadataCache = new Map<string, Checkpoint[]>()
 
 export function getCheckpoints(sessionId: string): Checkpoint[] {
-  return checkpoints.get(sessionId) || []
+  return metadataCache.get(sessionId) || []
 }
 
-export function addCheckpoint(checkpoint: Checkpoint): void {
-  const existing = checkpoints.get(checkpoint.sessionId) || []
-  existing.push(checkpoint)
-  if (existing.length > 20) existing.shift()
-  checkpoints.set(checkpoint.sessionId, existing)
+export async function loadCheckpoints(sessionId: string): Promise<Checkpoint[]> {
+  try {
+    const metas = await window.artemis.checkpoint.list(sessionId)
+    metadataCache.set(sessionId, metas)
+    return metas
+  } catch {
+    return []
+  }
 }
 
 export async function createCheckpoint(
@@ -34,70 +32,35 @@ export async function createCheckpoint(
   projectPath: string,
   filesToTrack?: string[],
 ): Promise<Checkpoint> {
-  const files: FileSnapshot[] = []
+  const meta = await window.artemis.checkpoint.create(
+    sessionId, messageId, label, projectPath, filesToTrack,
+  )
 
-  if (filesToTrack && filesToTrack.length > 0) {
-    for (const filePath of filesToTrack) {
-      try {
-        const content = await window.artemis.fs.readFile(filePath)
-        files.push({ path: filePath, content, existed: true })
-      } catch {
-        files.push({ path: filePath, content: '', existed: false })
-      }
-    }
-  } else {
-    try {
-      const entries = await window.artemis.fs.readDir(projectPath)
-      const ignore = new Set(['node_modules', '.git', 'dist', 'dist-electron', '.next', '__pycache__', '.venv', 'venv', 'build', '.cache'])
-      for (const entry of entries) {
-        if (entry.type === 'file' && !ignore.has(entry.name) && !entry.name.startsWith('.')) {
-          const filePath = `${projectPath}/${entry.name}`.replace(/\\/g, '/')
-          try {
-            const content = await window.artemis.fs.readFile(filePath)
-            files.push({ path: filePath, content, existed: true })
-          } catch {
-          }
-        }
-      }
-    } catch {
-    }
-  }
+  // Update metadata cache
+  const existing = metadataCache.get(sessionId) || []
+  existing.unshift(meta)
+  if (existing.length > 20) existing.pop()
+  metadataCache.set(sessionId, existing)
 
-  const checkpoint: Checkpoint = {
-    id: `cp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    sessionId,
-    messageId,
-    timestamp: Date.now(),
-    label,
-    files,
-  }
-
-  addCheckpoint(checkpoint)
-  return checkpoint
+  return meta
 }
 
 export async function restoreCheckpoint(checkpoint: Checkpoint): Promise<{ restored: number; errors: string[] }> {
-  let restored = 0
-  const errors: string[] = []
+  return window.artemis.checkpoint.restore(checkpoint.sessionId, checkpoint.id)
+}
 
-  for (const snap of checkpoint.files) {
-    try {
-      if (snap.existed) {
-        await window.artemis.fs.writeFile(snap.path, snap.content)
-        restored++
-      } else {
-        try {
-          await window.artemis.fs.delete(snap.path)
-          restored++
-        } catch {
-        }
-      }
-    } catch (err: any) {
-      errors.push(`${snap.path}: ${err.message || 'Failed to restore'}`)
-    }
+export async function deleteCheckpoints(sessionId: string, checkpointId?: string): Promise<void> {
+  await window.artemis.checkpoint.delete(sessionId, checkpointId)
+  if (checkpointId) {
+    const existing = metadataCache.get(sessionId) || []
+    metadataCache.set(sessionId, existing.filter(c => c.id !== checkpointId))
+  } else {
+    metadataCache.delete(sessionId)
   }
+}
 
-  return { restored, errors }
+export function clearCheckpointCache(sessionId: string): void {
+  metadataCache.delete(sessionId)
 }
 
 export function extractModifiedFiles(parts: Array<{ type: string; toolCall?: { name: string; args: Record<string, unknown> } }>): string[] {

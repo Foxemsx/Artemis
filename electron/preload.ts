@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('artemis', {
   store: {
     get: (key: string) => ipcRenderer.invoke('store:get', key),
     set: (key: string, value: any) => ipcRenderer.invoke('store:set', key, value),
+    delete: (key: string) => ipcRenderer.invoke('store:delete', key),
     getDir: () => ipcRenderer.invoke('store:getDir'),
     isEncrypted: () => ipcRenderer.invoke('store:isEncrypted'),
   },
@@ -128,6 +129,17 @@ contextBridge.exposeInMainWorld('artemis', {
   git: {
     run: (args: string[], cwd: string) =>
       ipcRenderer.invoke('git:run', args, cwd),
+  },
+
+  checkpoint: {
+    create: (sessionId: string, messageId: string, label: string, projectPath: string, filesToTrack?: string[]) =>
+      ipcRenderer.invoke('checkpoint:create', sessionId, messageId, label, projectPath, filesToTrack),
+    restore: (sessionId: string, checkpointId: string) =>
+      ipcRenderer.invoke('checkpoint:restore', sessionId, checkpointId),
+    list: (sessionId: string) =>
+      ipcRenderer.invoke('checkpoint:list', sessionId),
+    delete: (sessionId: string, checkpointId?: string) =>
+      ipcRenderer.invoke('checkpoint:delete', sessionId, checkpointId),
   },
 
   mcp: {

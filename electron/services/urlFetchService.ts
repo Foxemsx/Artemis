@@ -1,4 +1,5 @@
 import dns from 'dns'
+import { Agent } from 'undici'
 
 export interface FetchResult {
   url: string
@@ -11,6 +12,7 @@ export interface FetchResult {
 
 const FETCH_TIMEOUT_MS = 20_000
 const MAX_CONTENT_LENGTH = 16_000
+const MAX_REDIRECTS = 5
 
 const BROWSER_USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -44,22 +46,86 @@ function buildBrowserHeaders(url: string, userAgent: string): Record<string, str
   }
 }
 
-async function tryFetch(url: string, headers: Record<string, string>, timeoutMs: number): Promise<Response | null> {
+async function resolvePublicAddress(hostname: string): Promise<{ address: string; family: number }> {
+  const isIPv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)
+  const isIPv6 = hostname.includes(':')
+  if (isIPv4 || isIPv6) {
+    if (isPrivateIP(hostname)) {
+      throw new Error(`SSRF blocked: ${hostname} is a private IP address`)
+    }
+    return { address: hostname, family: isIPv6 ? 6 : 4 }
+  }
+
+  const records = await dns.promises.lookup(hostname, { all: true, verbatim: true })
+  for (const record of records) {
+    if (!isPrivateIP(record.address)) {
+      return { address: record.address, family: record.family }
+    }
+  }
+  throw new Error(`SSRF blocked: ${hostname} resolves only to private IP addresses`)
+}
+
+async function fetchOnce(url: string, headers: Record<string, string>, timeoutMs: number): Promise<Response | null> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  let dispatcher: Agent | null = null
+
   try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers,
-      signal: controller.signal,
-      redirect: 'follow',
+    const parsed = new URL(url)
+    if (isPrivateHostname(parsed.hostname)) {
+      throw new Error('Access denied: requests to private/internal addresses are blocked (SSRF protection)')
+    }
+
+    const resolved = await resolvePublicAddress(parsed.hostname)
+    dispatcher = new Agent({
+      connect: {
+        lookup: (_hostname, _opts, cb) => cb(null, resolved.address, resolved.family),
+        servername: parsed.hostname,
+      },
     })
+
+    const fetchOptions: any = {
+      method: 'GET',
+      headers: { ...headers, Host: parsed.hostname },
+      signal: controller.signal,
+      redirect: 'manual',
+      dispatcher,
+    }
+
+    const response = await fetch(url, fetchOptions)
     clearTimeout(timeout)
     return response
   } catch {
     clearTimeout(timeout)
     return null
+  } finally {
+    if (dispatcher) {
+      try { await dispatcher.close() } catch {}
+    }
   }
+}
+
+async function tryFetch(url: string, headers: Record<string, string>, timeoutMs: number): Promise<Response | null> {
+  let currentUrl = url
+  for (let i = 0; i <= MAX_REDIRECTS; i++) {
+    const response = await fetchOnce(currentUrl, headers, timeoutMs)
+    if (!response) return null
+
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location')
+      if (!location) return response
+      try { await response.body?.cancel() } catch {}
+      try {
+        currentUrl = new URL(location, currentUrl).toString()
+        continue
+      } catch {
+        return response
+      }
+    }
+
+    return response
+  }
+  return null
 }
 
 function isPrivateHostname(hostname: string): boolean {
@@ -101,38 +167,6 @@ function isPrivateIP(ip: string): boolean {
   return false
 }
 
-async function checkDNSRebinding(hostname: string): Promise<void> {
-  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) return
-  if (hostname.includes(':')) return
-
-  return new Promise((resolve, reject) => {
-    dns.resolve4(hostname, (err, addresses) => {
-      if (err) {
-        dns.resolve6(hostname, (err6, addresses6) => {
-          if (err6) {
-            resolve()
-            return
-          }
-          for (const addr of addresses6) {
-            if (isPrivateIP(addr)) {
-              reject(new Error(`SSRF blocked: ${hostname} resolves to private IPv6 address ${addr}`))
-              return
-            }
-          }
-          resolve()
-        })
-        return
-      }
-      for (const addr of addresses) {
-        if (isPrivateIP(addr)) {
-          reject(new Error(`SSRF blocked: ${hostname} resolves to private IP address ${addr}`))
-          return
-        }
-      }
-      resolve()
-    })
-  })
-}
 
 export async function fetchUrl(url: string): Promise<FetchResult> {
   if (!url || typeof url !== 'string') {
@@ -151,12 +185,6 @@ export async function fetchUrl(url: string): Promise<FetchResult> {
 
   if (isPrivateHostname(parsed.hostname)) {
     return { url, title: '', content: '', contentLength: 0, truncated: false, error: 'Access denied: requests to private/internal addresses are blocked (SSRF protection)' }
-  }
-
-  try {
-    await checkDNSRebinding(parsed.hostname)
-  } catch (dnsErr: any) {
-    return { url, title: '', content: '', contentLength: 0, truncated: false, error: dnsErr.message || 'SSRF protection: DNS check failed' }
   }
 
   try {

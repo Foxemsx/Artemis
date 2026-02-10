@@ -20,9 +20,20 @@ export function useTheme() {
     })
   }, [])
 
+  const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const setTheme = useCallback((newTheme: Theme) => {
+    // Add transition class so CSS transitions only fire during theme switch
+    document.documentElement.classList.add('theme-transitioning')
     document.documentElement.setAttribute('data-theme', newTheme)
     setThemeState(newTheme)
+
+    // Remove transition class after animation completes
+    if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current)
+    transitionTimerRef.current = setTimeout(() => {
+      document.documentElement.classList.remove('theme-transitioning')
+    }, 300)
+
     // Debounce the IPC store write to prevent lag on rapid theme switching
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {

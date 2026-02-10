@@ -3,7 +3,7 @@ import type { ChatSession, ChatMessage, MessagePart, Provider, Model, AgentMode,
 import { AGENT_MODES } from '../components/AgentModeSelector'
 import { zenClient, type ZenModel, MODEL_METADATA, PROVIDER_REGISTRY, getProviderInfo } from '../lib/zenClient'
 import { type SoundSettings, DEFAULT_SOUND_SETTINGS, playSound, showNotification } from '../lib/sounds'
-import { createCheckpoint, getCheckpoints, restoreCheckpoint, extractModifiedFiles, type Checkpoint } from '../lib/checkpoints'
+import { createCheckpoint, getCheckpoints, loadCheckpoints, restoreCheckpoint, extractModifiedFiles, type Checkpoint } from '../lib/checkpoints'
 import { useSessionManager } from './useSessionManager'
 import { useTokenTracker } from './useTokenTracker'
 import { estimateTokens } from '../lib/tokenCounter'
@@ -116,9 +116,13 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
   
   const [models, setModels] = useState<ZenModel[]>([])
   const [activeModel, setActiveModelState] = useState<Model | null>(null)
+  const activeModelRef = useRef<Model | null>(null)
   const [agentMode, setAgentModeState] = useState<AgentMode>('builder')
   const [editApprovalMode, setEditApprovalModeState] = useState<EditApprovalMode>('allow-all')
   const [soundSettings, setSoundSettingsState] = useState<SoundSettings>(DEFAULT_SOUND_SETTINGS)
+
+  // Keep activeModel ref in sync for stable callbacks
+  activeModelRef.current = activeModel
 
   // Concurrency: Per-session state maps to prevent interference between concurrent agent runs
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map()) // sessionId → AbortController
@@ -206,6 +210,8 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
         const newFileStats = new Map<string, number>()
         let usedCacheHits = 0
 
+        const STAT_BATCH_SIZE = 15
+
         async function countInDir(dirPath: string, depth: number): Promise<void> {
           if (signal.aborted || depth > MAX_DEPTH || totalChars > MAX_TOTAL_CHARS) return
           
@@ -213,41 +219,62 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
             const dirEntries = await window.artemis.fs.readDir(dirPath)
             if (signal.aborted) return
             
+            const dirs: string[] = []
+            const files: string[] = []
             for (const entry of dirEntries) {
-              if (signal.aborted) return
               if (ignore.has(entry.name)) continue
               const fullPath = `${dirPath}/${entry.name}`.replace(/\\/g, '/')
               if (entry.type === 'directory') {
-                await countInDir(fullPath, depth + 1)
-                if (signal.aborted) return
+                dirs.push(fullPath)
               } else {
-                try {
-                  const stat = await window.artemis.fs.stat(fullPath)
-                  if (signal.aborted) return
-                  if (stat.size < MAX_FILE_SIZE) {
-                    // If file size matches cached stat, skip re-reading
-                    const prevSize = prevFileStats.get(fullPath)
-                    if (prevSize !== undefined && prevSize === stat.size) {
-                      usedCacheHits++
-                    }
-                    totalChars += stat.size
-                    newFileStats.set(fullPath, stat.size)
-                  }
-                } catch {}
+                files.push(fullPath)
               }
+            }
+
+            // Batch stat calls for files in parallel chunks
+            for (let i = 0; i < files.length; i += STAT_BATCH_SIZE) {
+              if (signal.aborted) return
+              const batch = files.slice(i, i + STAT_BATCH_SIZE)
+              const stats = await Promise.allSettled(batch.map(fp => window.artemis.fs.stat(fp)))
+              if (signal.aborted) return
+              for (let j = 0; j < stats.length; j++) {
+                const result = stats[j]
+                if (result.status === 'fulfilled' && result.value.size < MAX_FILE_SIZE) {
+                  const prevSize = prevFileStats.get(batch[j])
+                  if (prevSize !== undefined && prevSize === result.value.size) {
+                    usedCacheHits++
+                  }
+                  totalChars += result.value.size
+                  newFileStats.set(batch[j], result.value.size)
+                }
+              }
+            }
+
+            // Recurse into subdirectories
+            for (const dir of dirs) {
+              if (signal.aborted) return
+              await countInDir(dir, depth + 1)
             }
           } catch {}
         }
 
         await countInDir(projectPath, 0)
         if (!signal.aborted) {
-          const tokenCount = Math.ceil(totalChars / 3.5)
+          const tokenCount = Math.ceil(totalChars / 4)
           setProjectTokenCount(tokenCount)
           projectTokenCache.set(projectPath, {
             tokenCount,
             computedAt: Date.now(),
             fileStats: newFileStats,
           })
+          // Evict oldest entries if cache exceeds 3 projects
+          if (projectTokenCache.size > 3) {
+            let oldestKey = '', oldestTime = Infinity
+            for (const [k, v] of projectTokenCache) {
+              if (v.computedAt < oldestTime) { oldestTime = v.computedAt; oldestKey = k }
+            }
+            if (oldestKey && oldestKey !== projectPath) projectTokenCache.delete(oldestKey)
+          }
         }
       } catch {}
     }, 1000)
@@ -440,6 +467,13 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     // Don't auto-create — App.tsx handles that
   }, [activeProjectId]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Load checkpoint metadata from disk when session changes
+  useEffect(() => {
+    if (activeSessionId) {
+      loadCheckpoints(activeSessionId).catch(() => {})
+    }
+  }, [activeSessionId])
+
   // Fetch models when ready
   useEffect(() => {
     if (isReady || hasApiKey) {
@@ -494,7 +528,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
       setModels(fetchedModels)
       
       // Set default model if none selected
-      if (!activeModel && fetchedModels.length > 0) {
+      if (!activeModelRef.current && fetchedModels.length > 0) {
         // Prefer a free model as default
         const freeModel = fetchedModels.find(m => m.free)
         const defaultModel = freeModel || fetchedModels[0]
@@ -512,7 +546,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     } catch (err) {
       console.error('[useOpenCode] Error fetching models:', err)
     }
-  }, [activeModel])
+  }, [])
 
   // Set active model
   const setActiveModel = useCallback((model: Model) => {

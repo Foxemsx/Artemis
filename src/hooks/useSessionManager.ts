@@ -126,11 +126,12 @@ export function useSessionManager(activeProjectId: string | null): SessionManage
     })
 
     setAllSessionMessages(prev => {
+      if (!prev.has(id)) return prev
       const next = new Map(prev)
       next.delete(id)
       return next
     })
-    window.artemis.store.set(`messages-${id}`, null).catch(() => {})
+    window.artemis.store.delete(`messages-${id}`).catch(() => {})
   }, [saveSessions, selectSession])
 
   const renameSession = useCallback((id: string, title: string) => {

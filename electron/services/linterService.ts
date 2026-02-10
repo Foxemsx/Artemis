@@ -1,27 +1,10 @@
 import { spawn } from 'child_process'
 import path from 'path'
 import fs from 'fs'
-
-const DANGEROUS_PATH_CHARS = /[;&|`$(){}[\]\<>\n\r]/
-
-function resolveCommand(command: string): string {
-  if (process.platform !== 'win32') return command
-  if (path.isAbsolute(command)) return command
-  const cmdExtensions = ['.cmd', '.bat', '.exe']
-  const pathDirs = (process.env.PATH || '').split(path.delimiter)
-  for (const dir of pathDirs) {
-    for (const ext of cmdExtensions) {
-      const withExt = path.join(dir, command + ext)
-      try { if (fs.existsSync(withExt)) return withExt } catch {}
-    }
-    const exact = path.join(dir, command)
-    try { if (fs.existsSync(exact)) return exact } catch {}
-  }
-  return command
-}
+import { DANGEROUS_SHELL_CHARS, resolveCommand } from '../shared/security'
 
 function validateLintPath(filePath: string): void {
-  if (DANGEROUS_PATH_CHARS.test(filePath)) {
+  if (DANGEROUS_SHELL_CHARS.test(filePath)) {
     throw new Error(`Lint path contains dangerous characters: ${filePath}`)
   }
   if (filePath.includes('\0')) {
@@ -197,13 +180,14 @@ export function formatLintForAgent(result: LintResult): string {
   return lines.join('\n')
 }
 
-function spawnLinter(
+async function spawnLinter(
   command: string,
   args: string[],
   cwd: string
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const resolvedCommand = await resolveCommand(command)
   return new Promise((resolve) => {
-    let spawnExe = resolveCommand(command)
+    let spawnExe = resolvedCommand
     let spawnArgs = args
     if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(spawnExe)) {
       spawnArgs = ['/c', spawnExe, ...args]
