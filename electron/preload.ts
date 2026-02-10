@@ -204,6 +204,13 @@ contextBridge.exposeInMainWorld('artemis', {
     fetchModels: (providerId: string) => ipcRenderer.invoke('inlineCompletion:fetchModels', providerId),
   },
 
+  commitMessage: {
+    generate: (diff: string) => ipcRenderer.invoke('commitMessage:generate', diff),
+    getConfig: () => ipcRenderer.invoke('commitMessage:getConfig'),
+    setConfig: (config: any) => ipcRenderer.invoke('commitMessage:setConfig', config),
+    fetchModels: (providerId: string) => ipcRenderer.invoke('commitMessage:fetchModels', providerId),
+  },
+
   agent: {
     run: (request: any) =>
       ipcRenderer.invoke('agent:run', request),

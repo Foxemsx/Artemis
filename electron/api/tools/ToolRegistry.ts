@@ -203,6 +203,11 @@ const CHAT_TOOLS: UniversalToolDefinition[] = [
   TOOL_WEB_SEARCH, TOOL_LINT_FILE, TOOL_FETCH_URL,
 ]
 
+const ASK_TOOLS: UniversalToolDefinition[] = [
+  TOOL_READ_FILE, TOOL_LIST_DIRECTORY, TOOL_SEARCH_FILES,
+  TOOL_GET_GIT_DIFF, TOOL_LIST_CODE_DEFINITIONS,
+]
+
 
 export class ToolRegistry {
   private tools: Map<string, UniversalToolDefinition> = new Map()
@@ -247,11 +252,16 @@ export class ToolRegistry {
     return CHAT_TOOLS.filter(t => this.tools.has(t.name))
   }
 
-  getToolsForMode(mode: 'builder' | 'planner' | 'chat'): UniversalToolDefinition[] {
+  getAskTools(): UniversalToolDefinition[] {
+    return ASK_TOOLS.filter(t => this.tools.has(t.name))
+  }
+
+  getToolsForMode(mode: 'builder' | 'planner' | 'chat' | 'ask'): UniversalToolDefinition[] {
     switch (mode) {
       case 'builder': return this.getBuilderTools()
       case 'planner': return this.getPlannerTools()
       case 'chat': return this.getChatTools()
+      case 'ask': return this.getAskTools()
       default: return []
     }
   }

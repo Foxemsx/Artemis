@@ -218,6 +218,13 @@ interface ArtemisAPI {
     fetchModels: (providerId: string) => Promise<{ models: { id: string; name: string }[]; error?: string }>
   }
 
+  commitMessage: {
+    generate: (diff: string) => Promise<{ message: string; error?: string }>
+    getConfig: () => Promise<{ enabled: boolean; provider: string; model: string }>
+    setConfig: (config: { enabled: boolean; provider: string; model: string }) => Promise<void>
+    fetchModels: (providerId: string) => Promise<{ models: { id: string; name: string }[]; error?: string }>
+  }
+
   agent: {
     run: (request: AgentRunRequest) => Promise<AgentRunResponse>
     abort: (requestId: string) => Promise<{ success: boolean; error?: string }>

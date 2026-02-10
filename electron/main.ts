@@ -10,6 +10,7 @@ import * as mcpService from './services/mcpService'
 import { mcpClientManager } from './services/mcpClient'
 import * as discordRPC from './services/discordRPCService'
 import { inlineCompletionService } from './services/inlineCompletionService'
+import { commitMessageService } from './services/commitMessageService'
 import * as checkpointService from './services/checkpointService'
 import { initLogger, logError } from './shared/logger'
 import {
@@ -57,6 +58,7 @@ const STORE_SET_ALLOWLIST = new Set([
   'keybinds',
   'theme',
   'baseUrl:ollama',
+  'commitMessageConfig',
 ])
 
 const STORE_SET_PREFIX_ALLOWLIST = [
@@ -308,6 +310,7 @@ ipcMain.handle('store:set', (_e, key: string, value: any) => {
     const providerMatch = key.match(/^apiKey:(.+)$/)
     if (providerMatch) {
       inlineCompletionService.setApiKey(providerMatch[1], value)
+      commitMessageService.setApiKey(providerMatch[1], value)
     }
   } else {
     store[key] = value
@@ -346,8 +349,19 @@ ipcMain.handle('trust:check', (_e, folderPath: string) => {
   return isFolderTrusted(folderPath)
 })
 
-ipcMain.handle('trust:grant', (_e, folderPath: string) => {
+ipcMain.handle('trust:grant', async (_e, folderPath: string) => {
   if (typeof folderPath !== 'string' || !folderPath.trim()) return false
+  const resolved = path.resolve(folderPath)
+  const { response } = await dialog.showMessageBox(mainWindow!, {
+    type: 'question',
+    buttons: ['Trust Folder', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    title: 'Trust Folder',
+    message: `Grant trust to this folder?`,
+    detail: `Trusting "${resolved}" enables terminal access and command execution for this project.\n\nOnly trust folders you control.`,
+  })
+  if (response !== 0) return false
   grantTrust(folderPath)
   return true
 })
@@ -416,6 +430,12 @@ ipcMain.handle('fs:readFile', async (_e, filePath: string) => {
   try {
     const validatedPath = validateFsPath(filePath, 'read file')
     enforceProjectContainmentLocal(validatedPath, 'read file')
+    const MAX_FILE_READ_BYTES = 10 * 1024 * 1024 // 10 MB
+    const stat = await fs.promises.stat(validatedPath)
+    if (stat.size > MAX_FILE_READ_BYTES) {
+      console.warn(`fs:readFile: file too large (${(stat.size / 1024 / 1024).toFixed(1)}MB), max ${MAX_FILE_READ_BYTES / 1024 / 1024}MB`)
+      return ''
+    }
     return await fs.promises.readFile(validatedPath, 'utf-8')
   } catch (err: any) {
     console.error('fs:readFile error:', err.message)
@@ -920,7 +940,27 @@ ipcMain.handle('zen:request', async (_e, options: {
       clearTimeout(timeout)
     }
 
-    const text = await response.text()
+    const MAX_RESPONSE_BYTES = 10 * 1024 * 1024 // 10 MB
+    let text = ''
+    if (response.body) {
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let bytesRead = 0
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          bytesRead += value.byteLength
+          if (bytesRead > MAX_RESPONSE_BYTES) {
+            text += decoder.decode(value, { stream: false })
+            break
+          }
+          text += decoder.decode(value, { stream: true })
+        }
+      } finally {
+        reader.releaseLock()
+      }
+    }
     const resHeaders: Record<string, string> = {}
     response.headers.forEach((value, key) => { resHeaders[key] = value })
     
@@ -1167,7 +1207,120 @@ ipcMain.handle('inlineCompletion:fetchModels', async (_e, providerId: string) =>
   }
 })
 
-registerAgentIPC(() => mainWindow)
+// ─── Commit Message Service ───────────────────────────────────────────
+;(() => {
+  try {
+    const saved = store['commitMessageConfig'] as any
+    if (saved) {
+      commitMessageService.setConfig(saved)
+      if (saved.provider === 'ollama') {
+        const baseUrl = store['baseUrl:ollama'] as string
+        if (baseUrl) commitMessageService.setBaseUrl('ollama', baseUrl)
+      }
+    }
+  } catch {}
+})()
+
+ipcMain.handle('commitMessage:generate', async (_e, diff: string) => {
+  try {
+    return await commitMessageService.generate(diff)
+  } catch (err: any) {
+    logError('commitMessage', 'Generation error', { error: err.message })
+    return { message: '', error: err.message }
+  }
+})
+
+ipcMain.handle('commitMessage:getConfig', () => {
+  return commitMessageService.getConfig()
+})
+
+ipcMain.handle('commitMessage:setConfig', async (_e, config) => {
+  commitMessageService.setConfig(config)
+  store['commitMessageConfig'] = commitMessageService.getConfig()
+  saveStore(store)
+
+  if (config.provider) {
+    const keyStoreKey = `apiKey:${config.provider}`
+    const encryptedKey = store[keyStoreKey]
+    if (encryptedKey && typeof encryptedKey === 'string') {
+      try {
+        const decrypted = decryptValue(encryptedKey)
+        if (decrypted) commitMessageService.setApiKey(config.provider, decrypted)
+      } catch (err) {
+        logError('commitMessage', 'Failed to decrypt API key on config change', { error: String(err) })
+      }
+    }
+    if (config.provider === 'ollama') {
+      const baseUrl = store['baseUrl:ollama'] as string
+      if (baseUrl) commitMessageService.setBaseUrl('ollama', baseUrl)
+    }
+  }
+})
+
+ipcMain.handle('commitMessage:fetchModels', async (_e, providerId: string) => {
+  try {
+    const customUrl = store[`baseUrl:${providerId}`] as string | undefined
+    const baseUrl = customUrl || PROVIDER_BASE_URLS[providerId] || ''
+    if (!baseUrl) return { models: [], error: 'Unknown provider' }
+
+    let apiKey = ''
+    const encKey = store[`apiKey:${providerId}`]
+    if (encKey && typeof encKey === 'string') {
+      try {
+        apiKey = decryptValue(encKey)
+      } catch {
+        apiKey = ''
+      }
+    }
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (apiKey && providerId !== 'ollama') {
+      headers['Authorization'] = `Bearer ${apiKey}`
+    }
+    if (providerId === 'openrouter') {
+      headers['HTTP-Referer'] = 'https://artemis.ide'
+      headers['X-Title'] = 'Artemis IDE'
+    }
+
+    const { net } = require('electron')
+    const result = await new Promise<{ ok: boolean; data: any }>((resolve) => {
+      const req = net.request({ method: 'GET', url: `${baseUrl}/models` })
+      for (const [k, v] of Object.entries(headers)) req.setHeader(k, v)
+      let body = ''
+      req.on('response', (res: any) => {
+        res.on('data', (chunk: Buffer) => { body += chunk.toString() })
+        res.on('end', () => {
+          try {
+            resolve({ ok: res.statusCode >= 200 && res.statusCode < 300, data: JSON.parse(body) })
+          } catch { resolve({ ok: false, data: null }) }
+        })
+      })
+      req.on('error', () => resolve({ ok: false, data: null }))
+      setTimeout(() => { req.abort(); resolve({ ok: false, data: null }) }, 15000)
+      req.end()
+    })
+
+    if (!result.ok || !result.data) return { models: [], error: 'Failed to fetch models' }
+
+    const raw = Array.isArray(result.data) ? result.data : (result.data?.data && Array.isArray(result.data.data) ? result.data.data : [])
+    const models = raw
+      .filter((m: any) => m.id)
+      .map((m: any) => ({ id: m.id, name: m.name || m.id }))
+
+    return { models }
+  } catch (err: any) {
+    return { models: [], error: err.message }
+  }
+})
+
+registerAgentIPC(() => mainWindow, (providerId: string) => {
+  const key = `apiKey:${providerId}`
+  const raw = store[key]
+  if (isSensitiveKey(key) && typeof raw === 'string' && raw) {
+    return decryptValue(raw)
+  }
+  return typeof raw === 'string' ? raw : undefined
+})
 
 app.whenReady().then(async () => {
   createWindow()
@@ -1188,6 +1341,19 @@ app.whenReady().then(async () => {
     }
   } catch (err) {
     logError('inlineCompletion', 'Failed to sync API key on ready', { error: String(err) })
+  }
+
+  try {
+    const commitConfig = store['commitMessageConfig'] as any
+    if (commitConfig?.provider && commitConfig.provider !== 'ollama') {
+      const encryptedKey = store[`apiKey:${commitConfig.provider}`]
+      if (encryptedKey && typeof encryptedKey === 'string') {
+        const decrypted = decryptValue(encryptedKey)
+        if (decrypted) commitMessageService.setApiKey(commitConfig.provider, decrypted)
+      }
+    }
+  } catch (err) {
+    logError('commitMessage', 'Failed to sync API key on ready', { error: String(err) })
   }
 
   if (store['discordRpcEnabled'] === true) {

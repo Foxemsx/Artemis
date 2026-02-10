@@ -42,7 +42,7 @@ const DEFAULT_KEYBINDS: KeyBind[] = [
   { id: 'clearChat', label: 'Clear Chat', description: 'Clear current chat messages', defaultKey: 'Ctrl+Shift+L', currentKey: 'Ctrl+Shift+L', category: 'chat' },
 ]
 
-type SettingsCategory = 'providers' | 'appearance' | 'sounds' | 'discord' | 'general' | 'completion' | 'rules' | 'about'
+type SettingsCategory = 'providers' | 'appearance' | 'sounds' | 'discord' | 'general' | 'completion' | 'sourcecontrol' | 'rules' | 'about'
 
 interface ProviderConfig {
   key: string
@@ -84,6 +84,7 @@ const THEME_OPTIONS: { id: Theme; name: string; description: string; colors: { b
 const SIDEBAR_ITEMS: { id: SettingsCategory; label: string; icon: typeof Palette }[] = [
   { id: 'providers', label: 'Providers', icon: Server },
   { id: 'completion', label: 'Code Completion', icon: Sparkles },
+  { id: 'sourcecontrol', label: 'Source Control', icon: GitBranch },
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'sounds', label: 'Sounds & Alerts', icon: Volume2 },
   { id: 'discord', label: 'Discord RPC', icon: Gamepad2 },
@@ -174,6 +175,12 @@ export default function Settings({ theme, onSetTheme, apiKeys, onSetApiKey, soun
           )}
           {activeCategory === 'completion' && (
             <InlineCompletionSection
+              apiKeys={apiKeys}
+              onGoToProviders={() => setActiveCategory('providers')}
+            />
+          )}
+          {activeCategory === 'sourcecontrol' && (
+            <SourceControlSettingsSection
               apiKeys={apiKeys}
               onGoToProviders={() => setActiveCategory('providers')}
             />
@@ -841,6 +848,14 @@ const AGENT_MODES = [
     icon: MessageSquare,
     tools: ['read_file', 'write_file', 'str_replace', 'list_directory', 'search_files', 'execute_command', 'web_search', 'lint_file', 'fetch_url'],
   },
+  {
+    id: 'ask' as const,
+    name: 'Ask',
+    description: 'Read-only Q&A mode',
+    color: '#f472b6',
+    icon: Eye,
+    tools: ['read_file', 'list_directory', 'search_files', 'get_git_diff', 'list_code_definitions'],
+  },
 ]
 
 function AgentToolsSection() {
@@ -1332,6 +1347,335 @@ function InlineCompletionSection({ apiKeys, onGoToProviders }: {
                 <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>How it works</p>
                 <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
                   After you pause typing for 400ms, Artemis sends the surrounding code to your chosen AI model and displays the suggestion as ghost text. Press <strong style={{ color: 'var(--text-secondary)' }}>Tab</strong> to accept, or keep typing to dismiss. Requests are debounced and cancelled on new keystrokes to minimize API usage. A typical coding session uses only a few hundred requests.
+                </p>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {saved && (
+        <div className="mt-3 flex items-center gap-2 px-4 py-2 rounded-lg" style={{ backgroundColor: 'rgba(74, 222, 128, 0.06)', border: '1px solid rgba(74, 222, 128, 0.12)' }}>
+          <Check size={12} style={{ color: '#4ade80' }} />
+          <span className="text-[11px] font-medium" style={{ color: '#4ade80' }}>Settings saved</span>
+        </div>
+      )}
+    </>
+  )
+}
+
+// ─── Source Control Settings Section ─────────────────────────────────────
+
+function SourceControlSettingsSection({ apiKeys, onGoToProviders }: {
+  apiKeys: Record<AIProvider, { key: string; isConfigured: boolean }>
+  onGoToProviders: () => void
+}) {
+  const [enabled, setEnabled] = useState(false)
+  const [provider, setProvider] = useState('')
+  const [model, setModel] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saved, setSaved] = useState(false)
+
+  const [modelSearch, setModelSearch] = useState('')
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false)
+  const [providerModels, setProviderModels] = useState<{ id: string; name: string }[]>([])
+  const [fetchingModels, setFetchingModels] = useState(false)
+
+  useEffect(() => {
+    window.artemis.commitMessage.getConfig().then((config) => {
+      setEnabled(config.enabled)
+      setProvider(config.provider)
+      setModel(config.model)
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }, [])
+
+  const saveConfig = async (updates: { enabled?: boolean; provider?: string; model?: string }) => {
+    const newEnabled = updates.enabled ?? enabled
+    const newProvider = updates.provider ?? provider
+    const newModel = updates.model ?? model
+    if (updates.enabled !== undefined) setEnabled(newEnabled)
+    if (updates.provider !== undefined) setProvider(newProvider)
+    if (updates.model !== undefined) setModel(newModel)
+    await window.artemis.commitMessage.setConfig({
+      enabled: newEnabled, provider: newProvider, model: newModel,
+    })
+    setSaved(true)
+    setTimeout(() => setSaved(false), 1500)
+  }
+
+  const SC_PROVIDERS = PROVIDER_REGISTRY.map(p => ({ id: p.id, name: p.name }))
+  const LIVE_FETCH_PROVIDERS = new Set(['openrouter', 'ollama'])
+
+  const modelsFromJson = (pid: string): { id: string; name: string }[] => {
+    const raw = (modelsConfig as Record<string, Array<{ id: string; name: string }>>)[pid]
+    if (!raw) return []
+    return raw.map(m => ({ id: m.id, name: m.name }))
+  }
+
+  useEffect(() => {
+    if (!provider) { setProviderModels([]); return }
+    const isConfigured = provider === 'ollama' || (apiKeys as any)[provider]?.isConfigured
+    if (LIVE_FETCH_PROVIDERS.has(provider) && isConfigured) {
+      setFetchingModels(true)
+      window.artemis.commitMessage.fetchModels(provider).then(result => {
+        if (result.models.length > 0) {
+          setProviderModels(result.models)
+        } else {
+          setProviderModels(modelsFromJson(provider))
+        }
+        setFetchingModels(false)
+      }).catch(() => {
+        setProviderModels(modelsFromJson(provider))
+        setFetchingModels(false)
+      })
+    } else {
+      setProviderModels(modelsFromJson(provider))
+      setFetchingModels(false)
+    }
+  }, [provider, apiKeys])
+
+  if (loading) return null
+
+  const configuredProviderIds = new Set<string>(
+    PROVIDER_REGISTRY
+      .filter(p => p.id === 'ollama' || (apiKeys as any)[p.id]?.isConfigured)
+      .map(p => p.id)
+  )
+  const hasAnyConfigured = configuredProviderIds.size > 0
+
+  const filteredModels = modelSearch
+    ? providerModels.filter(m => m.id.toLowerCase().includes(modelSearch.toLowerCase()) || m.name.toLowerCase().includes(modelSearch.toLowerCase()))
+    : providerModels
+
+  return (
+    <>
+      <SectionHeader title="Source Control — AI Commit Messages" subtitle="Auto-generate commit messages from staged diffs using an AI model. Click the sparkle button in the Source Control panel to generate." />
+
+      {/* Master toggle */}
+      <div className="rounded-xl p-5 mb-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'var(--accent-glow)', border: '1px solid rgba(var(--accent-rgb), 0.12)' }}>
+              <GitBranch size={18} style={{ color: 'var(--accent)' }} />
+            </div>
+            <div>
+              <p className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>Enable AI Commit Messages</p>
+              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Generate commit messages from diffs using AI</p>
+            </div>
+          </div>
+          <button
+            onClick={() => saveConfig({ enabled: !enabled })}
+            className="w-10 rounded-full relative transition-all duration-200 shrink-0"
+            style={{
+              backgroundColor: enabled ? 'var(--accent)' : 'var(--bg-elevated)',
+              border: `1px solid ${enabled ? 'var(--accent)' : 'var(--border-default)'}`,
+              width: 40, height: 22,
+            }}
+          >
+            <div
+              className="absolute top-0.5 w-4 h-4 rounded-full transition-all duration-200"
+              style={{
+                backgroundColor: enabled ? '#000' : 'var(--text-muted)',
+                left: enabled ? 20 : 2,
+              }}
+            />
+          </button>
+        </div>
+      </div>
+
+      {enabled && (
+        <>
+          {!hasAnyConfigured && (
+            <div className="rounded-xl p-4 mb-4 flex items-start gap-3" style={{ backgroundColor: 'rgba(251, 191, 36, 0.06)', border: '1px solid rgba(251, 191, 36, 0.2)' }}>
+              <Key size={16} className="shrink-0 mt-0.5" style={{ color: '#fbbf24' }} />
+              <div className="flex-1">
+                <p className="text-[12px] font-semibold mb-1" style={{ color: '#fbbf24' }}>API Key Required</p>
+                <p className="text-[11px] leading-relaxed mb-2.5" style={{ color: 'var(--text-muted)' }}>
+                  To use AI commit messages, you need to add an API key for at least one provider first.
+                </p>
+                <button
+                  onClick={onGoToProviders}
+                  className="px-3 py-1.5 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition-all"
+                  style={{ backgroundColor: 'rgba(251, 191, 36, 0.12)', color: '#fbbf24', border: '1px solid rgba(251, 191, 36, 0.25)' }}
+                  onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(251, 191, 36, 0.2)' }}
+                  onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(251, 191, 36, 0.12)' }}
+                >
+                  <Key size={12} />
+                  Go to Providers
+                  <ExternalLink size={10} />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Provider selection */}
+          <div className="rounded-xl p-5 mb-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Provider</p>
+            <p className="text-[11px] mb-3" style={{ color: 'var(--text-muted)' }}>
+              Select a provider for commit message generation. Only providers with a configured API key can be selected.
+            </p>
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-2">
+              {SC_PROVIDERS.map(p => {
+                const isActive = provider === p.id
+                const isConfigured = configuredProviderIds.has(p.id)
+                const ProvIcon = getProviderIcon(p.id)
+                return (
+                  <button
+                    key={p.id}
+                    disabled={!isConfigured}
+                    onClick={() => {
+                      if (!isConfigured) return
+                      const models = modelsFromJson(p.id)
+                      setModelSearch('')
+                      setModelDropdownOpen(false)
+                      saveConfig({ provider: p.id, model: models?.[0]?.id || '' })
+                    }}
+                    className="flex items-center gap-2.5 p-3 rounded-lg text-left transition-all relative"
+                    style={{
+                      backgroundColor: isActive ? 'var(--accent-glow)' : 'var(--bg-secondary)',
+                      border: isActive ? '1.5px solid var(--accent)' : '1px solid var(--border-subtle)',
+                      opacity: isConfigured ? 1 : 0.4,
+                      cursor: isConfigured ? 'pointer' : 'not-allowed',
+                    }}
+                  >
+                    <ProvIcon size={15} />
+                    <span className="text-[11px] font-medium flex-1" style={{ color: isActive ? 'var(--accent)' : 'var(--text-secondary)' }}>
+                      {p.name}
+                    </span>
+                    {isConfigured && <Check size={10} style={{ color: '#4ade80' }} />}
+                    {!isConfigured && <Shield size={10} style={{ color: 'var(--text-muted)' }} />}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Model selection */}
+          {provider && configuredProviderIds.has(provider) && (
+            <div className="rounded-xl p-5 mb-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+              <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>Model</p>
+              <p className="text-[11px] mb-3" style={{ color: 'var(--text-muted)' }}>
+                Select a model for generating commit messages.
+              </p>
+
+              {model && (
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: 'var(--text-muted)' }}>Active:</span>
+                  <span className="px-2.5 py-1 rounded-md text-[11px] font-mono font-medium" style={{ backgroundColor: 'var(--accent-glow)', color: 'var(--accent)', border: '1px solid rgba(var(--accent-rgb), 0.2)' }}>
+                    {model}
+                  </span>
+                </div>
+              )}
+
+              <div className="relative">
+                <div className="relative">
+                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                  <input
+                    type="text"
+                    value={modelSearch}
+                    onChange={e => { setModelSearch(e.target.value); setModelDropdownOpen(true) }}
+                    onFocus={() => setModelDropdownOpen(true)}
+                    placeholder="Search models or type a custom model ID..."
+                    className="w-full pl-9 pr-3 py-2.5 rounded-lg text-[11px] outline-none transition-all font-mono"
+                    style={{
+                      backgroundColor: 'var(--bg-elevated)',
+                      border: `1px solid ${modelDropdownOpen ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                      color: 'var(--text-primary)',
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && modelSearch.trim()) {
+                        saveConfig({ model: modelSearch.trim() })
+                        setModelDropdownOpen(false)
+                      }
+                      if (e.key === 'Escape') setModelDropdownOpen(false)
+                    }}
+                  />
+                  {fetchingModels && (
+                    <Loader2 size={13} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin" style={{ color: 'var(--text-muted)' }} />
+                  )}
+                </div>
+
+                {modelDropdownOpen && (
+                  <div
+                    className="absolute z-50 w-full mt-1 rounded-lg overflow-hidden shadow-lg max-h-[240px] overflow-y-auto"
+                    style={{ backgroundColor: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}
+                  >
+                    {filteredModels.length === 0 && !modelSearch.trim() && (
+                      <p className="px-3 py-3 text-[10px]" style={{ color: 'var(--text-muted)' }}>No models available. Type a custom model ID and press Enter.</p>
+                    )}
+                    {filteredModels.length === 0 && modelSearch.trim() && (
+                      <button
+                        onClick={() => { saveConfig({ model: modelSearch.trim() }); setModelDropdownOpen(false) }}
+                        className="w-full px-3 py-2.5 text-left flex items-center gap-2 transition-colors"
+                        style={{ color: 'var(--text-secondary)' }}
+                        onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)' }}
+                        onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent' }}
+                      >
+                        <Code size={12} style={{ color: 'var(--accent)' }} />
+                        <span className="text-[11px] font-mono">{modelSearch.trim()}</span>
+                        <span className="text-[10px] ml-auto" style={{ color: 'var(--text-muted)' }}>Use custom ID</span>
+                      </button>
+                    )}
+                    {filteredModels.map(m => {
+                      const isSelected = model === m.id
+                      return (
+                        <button
+                          key={m.id}
+                          onClick={() => {
+                            saveConfig({ model: m.id })
+                            setModelSearch('')
+                            setModelDropdownOpen(false)
+                          }}
+                          className="w-full px-3 py-2 text-left flex items-center gap-2.5 transition-colors"
+                          style={{
+                            backgroundColor: isSelected ? 'var(--accent-glow)' : 'transparent',
+                            borderLeft: isSelected ? '2px solid var(--accent)' : '2px solid transparent',
+                          }}
+                          onMouseEnter={e => { if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--bg-hover)' }}
+                          onMouseLeave={e => { if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent' }}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[11px] font-medium truncate" style={{ color: isSelected ? 'var(--accent)' : 'var(--text-primary)' }}>{m.name}</p>
+                            <p className="text-[10px] font-mono truncate" style={{ color: 'var(--text-muted)' }}>{m.id}</p>
+                          </div>
+                          {isSelected && <Check size={12} style={{ color: 'var(--accent)' }} />}
+                        </button>
+                      )
+                    })}
+                    {modelSearch.trim() && filteredModels.length > 0 && (
+                      <button
+                        onClick={() => { saveConfig({ model: modelSearch.trim() }); setModelDropdownOpen(false) }}
+                        className="w-full px-3 py-2 text-left flex items-center gap-2 transition-colors"
+                        style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+                        onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)' }}
+                        onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent' }}
+                      >
+                        <Code size={11} />
+                        <span className="text-[10px] font-mono">{modelSearch.trim()}</span>
+                        <span className="text-[10px] ml-auto">Use as custom ID</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {modelDropdownOpen && (
+                <div className="fixed inset-0 z-40" onClick={() => setModelDropdownOpen(false)} />
+              )}
+            </div>
+          )}
+
+          {/* How it works */}
+          <div className="rounded-xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: 'rgba(96, 165, 250, 0.06)', border: '1px solid rgba(96, 165, 250, 0.1)' }}>
+                <Info size={18} style={{ color: 'rgb(96, 165, 250)' }} />
+              </div>
+              <div>
+                <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>How it works</p>
+                <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+                  Click the <strong style={{ color: 'var(--text-secondary)' }}>sparkle button</strong> next to the commit input in the Source Control panel. Artemis will read your staged diff (or all changes if nothing is staged), send it to your chosen AI model, and populate the commit message field. The message follows the Conventional Commits format.
                 </p>
               </div>
             </div>

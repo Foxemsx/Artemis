@@ -116,6 +116,31 @@ function createPathApprovalCallback(
 }
 
 
+const MAX_RESPONSE_BODY_BYTES = 10 * 1024 * 1024 // 10 MB cap for non-streaming responses
+
+async function readResponseTextCapped(response: Response, maxBytes: number = MAX_RESPONSE_BODY_BYTES): Promise<string> {
+  if (!response.body) return ''
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let result = ''
+  let bytesRead = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      bytesRead += value.byteLength
+      if (bytesRead > maxBytes) {
+        result += decoder.decode(value, { stream: false })
+        break
+      }
+      result += decoder.decode(value, { stream: true })
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  return result
+}
+
 function createHttpAdapter(mainWindow: BrowserWindow | null) {
   return {
     async request(
@@ -124,9 +149,18 @@ function createHttpAdapter(mainWindow: BrowserWindow | null) {
       headers: Record<string, string>,
       body?: string
     ) {
+      if (!isAllowedApiUrl(url)) {
+        return {
+          ok: false,
+          status: 0,
+          data: 'Access denied: URL domain is not in the allowed list',
+          headers: {},
+        }
+      }
+
       try {
         const response = await fetch(url, { method, headers, body })
-        const text = await response.text()
+        const text = await readResponseTextCapped(response)
         return {
           ok: response.ok,
           status: response.status,
@@ -150,6 +184,12 @@ function createHttpAdapter(mainWindow: BrowserWindow | null) {
       body: string,
       onData: (data: { type: 'chunk' | 'done' | 'error'; data?: string; status?: number }) => void
     ) {
+      if (!isAllowedApiUrl(url)) {
+        onData({ type: 'error', data: 'Access denied: URL domain is not in the allowed list' })
+        const cancel = () => {}
+        return { ok: false, status: 0, cancel }
+      }
+
       const controller = new AbortController()
       let cancelled = false
       const cancel = () => { cancelled = true; controller.abort() }
@@ -167,7 +207,7 @@ function createHttpAdapter(mainWindow: BrowserWindow | null) {
         clearTimeout(timeoutId)
 
         if (!response.ok) {
-          const errorText = await response.text()
+          const errorText = await readResponseTextCapped(response, 1024 * 1024)
           onData({ type: 'error', status: response.status, data: errorText })
           return { ok: false, status: response.status, cancel }
         }
@@ -218,7 +258,10 @@ function createHttpAdapter(mainWindow: BrowserWindow | null) {
 }
 
 
-export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): void {
+export function registerAgentIPC(
+  getMainWindow: () => BrowserWindow | null,
+  resolveApiKey?: (providerId: string) => string | undefined,
+): void {
 
   ipcMain.handle('agent:run', async (_event, request: AgentRequest) => {
     const mainWindow = getMainWindow()
@@ -228,6 +271,14 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
 
     if (activeRuns.size >= MAX_ACTIVE_RUNS) {
       return { error: `Too many concurrent agent runs. Please wait for an active run to finish (max ${MAX_ACTIVE_RUNS}).` }
+    }
+
+    // Resolve API key server-side — never trust the renderer-supplied key
+    if (resolveApiKey && request.provider?.id) {
+      const realKey = resolveApiKey(request.provider.id)
+      if (realKey) {
+        request.provider = { ...request.provider, apiKey: realKey }
+      }
     }
 
     const requestId = request.requestId
@@ -310,7 +361,7 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
 
   ipcMain.handle('agent:getTools', (_event, mode?: string) => {
     if (mode) {
-      return toolRegistry.getToolsForMode(mode as 'builder' | 'planner' | 'chat')
+      return toolRegistry.getToolsForMode(mode as 'builder' | 'planner' | 'chat' | 'ask')
     }
     return toolRegistry.getAll()
   })
@@ -346,7 +397,7 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
         headers: options.headers,
         body: options.body,
       })
-      const text = await response.text()
+      const text = await readResponseTextCapped(response)
       return {
         ok: response.ok,
         status: response.status,
@@ -400,7 +451,7 @@ export function registerAgentIPC(getMainWindow: () => BrowserWindow | null): voi
       clearTimeout(timeoutId)
 
       if (!response.ok) {
-        const errorText = await response.text()
+        const errorText = await readResponseTextCapped(response, 1024 * 1024)
         mainWindow.webContents.send(`agent:stream:${options.requestId}`, {
           type: 'error',
           status: response.status,

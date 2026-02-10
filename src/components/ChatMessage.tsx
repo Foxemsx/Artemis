@@ -1,4 +1,4 @@
-import React, { useState, memo } from 'react'
+import React, { useState, useEffect, memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { motion } from 'framer-motion'
@@ -218,9 +218,25 @@ function CollapsedToolCard({ toolCall, toolResult }: {
   toolResult?: NonNullable<MessagePart['toolResult']>
 }) {
   const [isExpanded, setIsExpanded] = useState(false)
-  const [approvalState, setApprovalState] = useState<'pending' | 'approved' | 'rejected' | null>(
+  const [approvalState, setApprovalState] = useState<'pending' | 'approved' | 'rejected' | 'auto-rejected' | null>(
     toolCall.args?.__pendingApproval ? 'pending' : null
   )
+
+  // Auto-reject timer: matches backend APPROVAL_TIMEOUT_MS (120s)
+  useEffect(() => {
+    if (approvalState !== 'pending') return
+    const timer = setTimeout(() => {
+      setApprovalState('auto-rejected')
+    }, 120_000)
+    return () => clearTimeout(timer)
+  }, [approvalState])
+
+  // If tool result arrives while still pending, the backend already resolved (likely auto-rejected)
+  useEffect(() => {
+    if (approvalState === 'pending' && toolResult) {
+      setApprovalState('auto-rejected')
+    }
+  }, [toolResult, approvalState])
   const [revertState, setRevertState] = useState<'idle' | 'reverting' | 'reverted' | 'error'>('idle')
   const config = getToolConfig(toolCall.name)
   // Filter out internal approval keys from args
@@ -359,7 +375,7 @@ function CollapsedToolCard({ toolCall, toolResult }: {
               <InlineDiff oldStr={String(cleanArgs.old_str)} newStr={String(cleanArgs.new_str)} />
             </div>
           )}
-          {/* Content preview for write_file */}
+          {/* Content preview for write_file — diff-style (all additions) */}
           {isWriteFile && (
             <div className="mb-2">
               <div className="flex items-center gap-1.5 mb-1">
@@ -368,17 +384,20 @@ function CollapsedToolCard({ toolCall, toolResult }: {
                   {pathArg ? `Writing to ${truncatePath(pathArg, 50)}` : 'New File Content'}
                 </span>
               </div>
-              <pre
-                className="text-[10px] overflow-x-auto p-2 rounded font-mono max-h-[180px] overflow-y-auto"
-                style={{
-                  backgroundColor: 'rgba(0,0,0,0.12)',
-                  color: 'var(--text-secondary)',
-                  border: '1px solid var(--border-subtle)',
-                }}
+              <div
+                className="mt-1 rounded-md overflow-hidden font-mono text-[10px] leading-[16px] max-h-[200px] overflow-y-auto"
+                style={{ border: '1px solid var(--border-subtle)' }}
               >
-                {String(cleanArgs.content).slice(0, 3000)}
-                {String(cleanArgs.content).length > 3000 && '\n... (truncated)'}
-              </pre>
+                {String(cleanArgs.content).slice(0, 3000).split('\n').map((line, i) => (
+                  <div key={`w-${i}`} className="flex" style={{ backgroundColor: 'rgba(74, 222, 128, 0.08)' }}>
+                    <span className="w-5 shrink-0 text-center select-none" style={{ color: 'var(--success)', opacity: 0.6 }}>+</span>
+                    <span className="flex-1 px-1 whitespace-pre-wrap break-all" style={{ color: 'var(--success)', opacity: 0.85 }}>{line}</span>
+                  </div>
+                ))}
+                {String(cleanArgs.content).length > 3000 && (
+                  <div className="px-2 py-1 text-[9px]" style={{ color: 'var(--text-muted)', backgroundColor: 'rgba(0,0,0,0.1)' }}>... (truncated)</div>
+                )}
+              </div>
             </div>
           )}
           <div className="flex items-center gap-2">
@@ -407,7 +426,13 @@ function CollapsedToolCard({ toolCall, toolResult }: {
         <span className="ml-4 text-[10px] font-medium" style={{ color: '#4ade80' }}>✓ Approved</span>
       )}
       {approvalState === 'rejected' && (
-        <span className="ml-4 text-[10px] font-medium" style={{ color: '#f87171' }}>✗ Rejected</span>
+        <span className="ml-4 text-[10px] font-medium" style={{ color: '#f87171' }}>✗ Rejected by user</span>
+      )}
+      {approvalState === 'auto-rejected' && (
+        <div className="ml-4 mt-1 rounded-lg p-2" style={{ backgroundColor: 'rgba(248, 113, 113, 0.06)', border: '1px solid rgba(248, 113, 113, 0.12)' }}>
+          <span className="text-[10px] font-semibold" style={{ color: '#f87171' }}>✗ Automatically rejected</span>
+          <p className="text-[9px] mt-0.5" style={{ color: 'var(--text-muted)' }}>No action was taken within 2 minutes, so this operation was automatically declined.</p>
+        </div>
       )}
       {/* Expanded: tool args (str_replace diff, write_file content, or JSON args) */}
       {isExpanded && isStrReplace && (

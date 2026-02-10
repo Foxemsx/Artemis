@@ -226,7 +226,27 @@ export async function fetchUrl(url: string): Promise<FetchResult> {
     }
 
     const contentType = response.headers.get('content-type') || ''
-    const rawText = await response.text()
+    const MAX_RAW_BYTES = 5 * 1024 * 1024 // 5 MB cap for raw page content
+    let rawText = ''
+    if (response.body) {
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let bytesRead = 0
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          bytesRead += value.byteLength
+          if (bytesRead > MAX_RAW_BYTES) {
+            rawText += decoder.decode(value, { stream: false })
+            break
+          }
+          rawText += decoder.decode(value, { stream: true })
+        }
+      } finally {
+        reader.releaseLock()
+      }
+    }
 
     if (contentType.includes('application/json')) {
       let pretty: string

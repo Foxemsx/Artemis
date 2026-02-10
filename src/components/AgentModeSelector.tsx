@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
-import { ChevronDown, Hammer, Lightbulb, MessageCircle, Check } from 'lucide-react'
+import { ChevronDown, Hammer, Lightbulb, MessageCircle, HelpCircle, Check } from 'lucide-react'
 
-export type AgentMode = 'builder' | 'planner' | 'chat'
+export type AgentMode = 'builder' | 'planner' | 'chat' | 'ask'
 
 interface AgentModeConfig {
   id: AgentMode
@@ -101,6 +101,31 @@ If the user wants to implement the plan, tell them to switch to Builder mode.`,
     bgColor: 'rgba(96, 165, 250, 0.10)',
     systemPromptAddition: `You are an AI coding assistant. You can read, write, edit files, run commands, and search the codebase. When the user asks you to create or modify files, use your tools to do it directly — do not just output code in chat. Be concise and helpful.`,
   },
+  ask: {
+    id: 'ask',
+    name: 'Ask',
+    icon: HelpCircle,
+    description: 'Read-only exploration mode. Can only read files and answer questions — never writes files or runs commands. Safe for exploration.',
+    shortDescription: 'Read-only Q&A mode',
+    color: '#f472b6',
+    bgColor: 'rgba(244, 114, 182, 0.10)',
+    systemPromptAddition: `You are an AI coding assistant in READ-ONLY ASK mode. You can ONLY read files and answer questions about the codebase. You CANNOT write files, edit files, run commands, or make any changes whatsoever.
+
+## Your Role
+- Answer questions about the codebase, architecture, and code patterns
+- Explain how code works, what functions do, and how components connect
+- Help the user understand existing code, debug mentally, and reason about behavior
+- Suggest approaches or solutions, but never implement them directly
+
+## Restrictions
+- You MUST NOT write, edit, create, or delete any files
+- You MUST NOT run any commands or terminal operations
+- If the user asks you to make changes, explain what they should do and suggest switching to Builder mode
+
+## Your Capabilities
+You can: read files, list directories, search code, view git diff, list code definitions
+You CANNOT: write/edit/delete files, run commands, create directories`,
+  },
 }
 
 /**
@@ -167,6 +192,17 @@ If the user shares code, analyze it thoroughly for improvements. If they want to
 You have no access to the user's files or project.
 Focus on providing helpful, knowledgeable responses to questions, brainstorming, and discussions.
 If the user needs help with their project files, suggest they switch to Builder mode.`,
+
+  ask: `You are in ASK mode — a read-only exploration assistant.
+You can read and analyze code but you CANNOT modify any files or run any commands.
+Your role is to answer questions, explain code, and help the user understand the codebase.
+If the user wants to make changes, suggest they switch to Builder mode.
+
+Focus on:
+- Explaining how code works
+- Analyzing architecture and patterns
+- Identifying potential issues or improvements
+- Suggesting approaches (without implementing them)`,
 }
 
 interface Props {

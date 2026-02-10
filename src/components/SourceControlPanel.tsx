@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   GitBranch, GitCommit, RefreshCw, Plus, Minus, Check, X, ChevronDown, ChevronRight,
-  Upload, Download, RotateCcw, FileText, Trash2, Eye, FolderOpen,
+  Upload, Download, RotateCcw, FileText, Trash2, Eye, FolderOpen, Sparkles, Loader2,
 } from 'lucide-react'
 import { playSound, showNotification, type SoundSettings } from '../lib/sounds'
 
@@ -97,6 +97,7 @@ export default function SourceControlPanel({ projectPath, onOpenFile, isRestrict
   const [pushing, setPushing] = useState(false)
   const [pulling, setPulling] = useState(false)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  const [generating, setGenerating] = useState(false)
 
   const runGit = useCallback(async (args: string[]): Promise<string> => {
     if (!projectPath) throw new Error('No project open')
@@ -259,6 +260,39 @@ export default function SourceControlPanel({ projectPath, onOpenFile, isRestrict
   const stagedFiles = files.filter(f => f.staged)
   const unstagedFiles = files.filter(f => !f.staged)
 
+  const generateCommitMessage = useCallback(async () => {
+    if (!projectPath) return
+    setGenerating(true)
+    setError(null)
+    try {
+      // Get the staged diff (or all diff if nothing staged)
+      let diff: string
+      const hasStaged = files.some(f => f.staged)
+      try {
+        diff = hasStaged
+          ? await runGit(['diff', '--cached'])
+          : await runGit(['diff'])
+      } catch {
+        diff = ''
+      }
+      if (!diff.trim()) {
+        setError('No diff available to generate a commit message from. Stage some changes first.')
+        setGenerating(false)
+        return
+      }
+      const result = await window.artemis.commitMessage.generate(diff)
+      if (result.error) {
+        setError(result.error)
+      } else if (result.message) {
+        setCommitMsg(result.message)
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to generate commit message')
+    } finally {
+      setGenerating(false)
+    }
+  }, [projectPath, runGit, files])
+
   if (!projectPath) {
     return (
       <div className="h-full flex flex-col items-center justify-center p-6" style={{ backgroundColor: 'var(--bg-primary)' }}>
@@ -387,6 +421,21 @@ export default function SourceControlPanel({ projectPath, onOpenFile, isRestrict
             onBlur={e => { e.target.style.borderColor = 'var(--border-subtle)' }}
             onKeyDown={e => { if (e.key === 'Enter' && commitMsg.trim()) commit() }}
           />
+          <button
+            onClick={generateCommitMessage}
+            disabled={generating || files.length === 0}
+            className="px-2 py-1.5 rounded-md text-[10px] font-semibold flex items-center gap-1 transition-all shrink-0"
+            style={{
+              backgroundColor: 'rgba(167, 139, 250, 0.08)',
+              color: generating ? 'var(--text-muted)' : '#a78bfa',
+              border: '1px solid rgba(167, 139, 250, 0.2)',
+            }}
+            onMouseEnter={e => { if (!generating) e.currentTarget.style.backgroundColor = 'rgba(167, 139, 250, 0.18)' }}
+            onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'rgba(167, 139, 250, 0.08)' }}
+            title="AI Generate Commit Message"
+          >
+            {generating ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
+          </button>
           <button
             onClick={commit}
             disabled={!commitMsg.trim() || stagedFiles.length === 0}

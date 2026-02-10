@@ -2,14 +2,15 @@
 import fs from 'fs'
 import path from 'path'
 import { spawn } from 'child_process'
+import safeRegex from 'safe-regex2'
 import type { ToolCall, ToolResult } from '../types'
 import { webSearch, formatSearchForAgent } from '../../services/webSearchService'
 import { lintFile, formatLintForAgent } from '../../services/linterService'
 import { fetchUrl, formatFetchForAgent } from '../../services/urlFetchService'
 import { mcpClientManager } from '../../services/mcpClient'
 import {
-  DANGEROUS_SHELL_CHARS, ALLOWED_EXECUTABLES,
-  parseCommandTokens, validateFsPath, resolveCommand,
+  DANGEROUS_SHELL_CHARS, ALLOWED_EXECUTABLES, RUNTIME_EVAL_FLAGS,
+  parseCommandTokens, validateFsPath, resolveCommand, enforceProjectContainment,
 } from '../../shared/security'
 
 
@@ -276,6 +277,9 @@ async function searchWithJS(args: Record<string, any>, searchPath: string): Prom
 
   let regex: RegExp
   try {
+    if (!safeRegex(args.pattern)) {
+      return searchWithJSLiteral(args.pattern, args, searchPath)
+    }
     regex = new RegExp(args.pattern, 'gi')
   } catch (e: any) {
     return searchWithJSLiteral(args.pattern, args, searchPath)
@@ -341,7 +345,7 @@ async function searchWithJSLiteral(pattern: string, args: Record<string, any>, s
 // DANGEROUS_SHELL_CHARS, ALLOWED_EXECUTABLES, parseCommandTokens, resolveCommand imported from ../../shared/security
 
 async function toolExecuteCommand(args: Record<string, any>, projectPath: string): Promise<string> {
-  const cwd = args.cwd || projectPath || '.'
+  const rawCwd = args.cwd || projectPath || '.'
   
   if (!args.command || typeof args.command !== 'string') {
     return 'Error: No command provided'
@@ -355,6 +359,23 @@ async function toolExecuteCommand(args: Record<string, any>, projectPath: string
     return 'Error: Command contains shell expansion characters that are not allowed.'
   }
 
+  const systemPaths = ['C:\\Windows', '/usr', '/etc', '/bin', '/sbin', '/sys', '/proc']
+  for (const sysPath of systemPaths) {
+    if (args.command.toLowerCase().includes(sysPath.toLowerCase())) {
+      return 'Error: Command references system paths'
+    }
+  }
+
+  let cwd: string
+  try {
+    cwd = validateFsPath(rawCwd, 'execute command in')
+    if (projectPath) {
+      enforceProjectContainment(cwd, 'execute command in', projectPath)
+    }
+  } catch (err: any) {
+    return `Error: Invalid cwd: ${err.message}`
+  }
+
   const { exe, args: cmdArgs } = parseCommandTokens(args.command)
   if (!exe) {
     return 'Error: Empty command'
@@ -363,6 +384,16 @@ async function toolExecuteCommand(args: Record<string, any>, projectPath: string
   const exeBasename = path.basename(exe).replace(/\.(cmd|bat|exe|sh)$/i, '').toLowerCase()
   if (!ALLOWED_EXECUTABLES.has(exeBasename)) {
     return `Error: Executable '${exe}' is not in the allowed list. Allowed: ${Array.from(ALLOWED_EXECUTABLES).slice(0, 20).join(', ')}...`
+  }
+
+  const dangerousFlags = RUNTIME_EVAL_FLAGS[exeBasename]
+  if (dangerousFlags) {
+    const lowerArgs = cmdArgs.map(a => a.toLowerCase())
+    for (const flag of dangerousFlags) {
+      if (lowerArgs.includes(flag)) {
+        return `Error: '${flag}' flag is not allowed for '${exeBasename}' to prevent arbitrary code execution`
+      }
+    }
   }
 
   let spawnExe = process.platform === 'win32' ? await resolveCommand(exe) : exe
