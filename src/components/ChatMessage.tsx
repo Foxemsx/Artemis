@@ -218,9 +218,10 @@ function CollapsedToolCard({ toolCall, toolResult }: {
   toolResult?: NonNullable<MessagePart['toolResult']>
 }) {
   const [isExpanded, setIsExpanded] = useState(false)
-  const [approvalState, setApprovalState] = useState<'pending' | 'approved' | 'rejected' | 'auto-rejected' | null>(
+  const [approvalState, setApprovalState] = useState<'pending' | 'approved' | 'rejected' | 'auto-rejected' | 'error' | null>(
     toolCall.args?.__pendingApproval ? 'pending' : null
   )
+  const [approvalError, setApprovalError] = useState<string | null>(null)
 
   // Auto-reject timer: matches backend APPROVAL_TIMEOUT_MS (120s)
   useEffect(() => {
@@ -254,12 +255,22 @@ function CollapsedToolCard({ toolCall, toolResult }: {
     setApprovalState(approved ? 'approved' : 'rejected')
     try {
       if (toolCall.name === 'path_approval') {
-        await window.artemis.agent.respondPathApproval(approvalId, approved)
+        const res = await window.artemis.agent.respondPathApproval(approvalId, approved)
+        if (!res?.success) {
+          setApprovalState('error')
+          setApprovalError(res?.error || 'Approval failed or expired. Please retry.')
+        }
       } else {
-        await window.artemis.agent.respondToolApproval(approvalId, approved)
+        const res = await window.artemis.agent.respondToolApproval(approvalId, approved)
+        if (!res?.success) {
+          setApprovalState('error')
+          setApprovalError(res?.error || 'Approval failed or expired. Please retry.')
+        }
       }
     } catch (err) {
       console.error('[CollapsedToolCard] Failed to respond to approval:', err)
+      setApprovalState('error')
+      setApprovalError('Approval failed due to an unexpected error.')
     }
   }
 
@@ -432,6 +443,12 @@ function CollapsedToolCard({ toolCall, toolResult }: {
         <div className="ml-4 mt-1 rounded-lg p-2" style={{ backgroundColor: 'rgba(248, 113, 113, 0.06)', border: '1px solid rgba(248, 113, 113, 0.12)' }}>
           <span className="text-[10px] font-semibold" style={{ color: '#f87171' }}>✗ Automatically rejected</span>
           <p className="text-[9px] mt-0.5" style={{ color: 'var(--text-muted)' }}>No action was taken within 2 minutes, so this operation was automatically declined.</p>
+        </div>
+      )}
+      {approvalState === 'error' && (
+        <div className="ml-4 mt-1 rounded-lg p-2" style={{ backgroundColor: 'rgba(248, 113, 113, 0.06)', border: '1px solid rgba(248, 113, 113, 0.12)' }}>
+          <span className="text-[10px] font-semibold" style={{ color: '#f87171' }}>✗ Approval failed</span>
+          <p className="text-[9px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{approvalError || 'Approval failed or expired. Please retry.'}</p>
         </div>
       )}
       {/* Expanded: tool args (str_replace diff, write_file content, or JSON args) */}
@@ -943,24 +960,38 @@ function ChatMessage({ message, onOpenFile }: Props) {
 
         {/* Parts — tool-call + tool-result are paired into single collapsed rows */}
         {(() => {
-          // Pre-compute which tool-result indices are consumed by a preceding tool-call
+          // Pre-compute tool-result indices paired by toolCallId,
           // so we skip rendering them as standalone rows.
+          const toolResultIndexById = new Map<string, number>()
+          for (let idx = 0; idx < message.parts.length; idx++) {
+            const p = message.parts[idx]
+            const id = p.type === 'tool-result' ? p.toolResult?.id : undefined
+            if (id && !toolResultIndexById.has(id)) {
+              toolResultIndexById.set(id, idx)
+            }
+          }
+
           const pairedResultIndices = new Set<number>()
           for (let idx = 0; idx < message.parts.length; idx++) {
             const p = message.parts[idx]
-            if (p.type === 'tool-call' && p.toolCall) {
-              // Find the next matching tool-result by name (looking ahead)
-              for (let j = idx + 1; j < message.parts.length; j++) {
-                const r = message.parts[j]
-                if (r.type === 'tool-result' && r.toolResult?.name === p.toolCall.name && !pairedResultIndices.has(j)) {
-                  pairedResultIndices.add(j)
-                  break
-                }
+            if (p.type === 'tool-call' && p.toolCall?.id) {
+              const resultIdx = toolResultIndexById.get(p.toolCall.id)
+              if (resultIdx !== undefined) {
+                pairedResultIndices.add(resultIdx)
               }
             }
           }
 
           return message.parts.map((part, i) => {
+            const partKey = (() => {
+              if (part.type === 'tool-call' && part.toolCall?.id) return `tool-call-${part.toolCall.id}`
+              if (part.type === 'tool-result' && part.toolResult?.id) return `tool-result-${part.toolResult.id}`
+              if (part.type === 'image' && part.image?.url) return `image-${part.image.url}`
+              if (part.type === 'thinking') return `thinking-${i}`
+              if (part.type === 'reasoning') return `reasoning-${i}`
+              if (part.type === 'text') return `text-${i}`
+              return `part-${i}`
+            })()
             if (part.type === 'text') {
               // Skip empty text parts silently — only show "no response" if the
               // ENTIRE message has no text content (not just this one part).
@@ -975,7 +1006,7 @@ function ChatMessage({ message, onOpenFile }: Props) {
                 if (hasAnyText || hasToolParts) return null
                 return (
                   <div
-                    key={i}
+                    key={partKey}
                     className="text-[13px] italic"
                     style={{ color: 'var(--text-muted)' }}
                   >
@@ -988,12 +1019,12 @@ function ChatMessage({ message, onOpenFile }: Props) {
               const isRawError = part.text.includes('"error"') && part.text.includes('"message"')
 
               if (isRawError || (part.text.startsWith('**Error:') && !isUser)) {
-                return <ErrorDisplay key={i} text={part.text} />
+                return <ErrorDisplay key={partKey} text={part.text} />
               }
 
               return (
                 <div
-                  key={i}
+                  key={partKey}
                   className="markdown-content text-[13px] leading-relaxed"
                   style={{ color: 'var(--text-primary)' }}
                 >
@@ -1003,39 +1034,31 @@ function ChatMessage({ message, onOpenFile }: Props) {
             }
 
             if (part.type === 'image' && part.image) {
-              return <ImagePart key={i} image={part.image} />
+              return <ImagePart key={partKey} image={part.image} />
             }
 
             if (part.type === 'tool-call' && part.toolCall) {
-              // Find the paired tool-result for this call
-              const pairedResultIndex = (() => {
-                for (let j = i + 1; j < message.parts.length; j++) {
-                  if (pairedResultIndices.has(j)) {
-                    const r = message.parts[j]
-                    if (r.type === 'tool-result' && r.toolResult?.name === part.toolCall!.name) {
-                      return j
-                    }
-                  }
-                }
-                return -1
-              })()
+              // Find the paired tool-result for this call (by toolCallId)
+              const pairedResultIndex = part.toolCall.id
+                ? (toolResultIndexById.get(part.toolCall.id) ?? -1)
+                : -1
               const pairedResult = pairedResultIndex >= 0 ? message.parts[pairedResultIndex].toolResult : undefined
 
               // Render execute_command as inline terminal (already collapsed)
               if (part.toolCall.name === 'execute_command') {
                 const cmdArg = (part.toolCall.args?.command || part.toolCall.args?.__command) as string || ''
-                return <InlineTerminalCard key={i} command={cmdArg} result={pairedResult || undefined} />
+                return <InlineTerminalCard key={partKey} command={cmdArg} result={pairedResult || undefined} />
               }
 
               // All other tools: collapsed card with inline status
-              return <CollapsedToolCard key={i} toolCall={part.toolCall} toolResult={pairedResult || undefined} />
+              return <CollapsedToolCard key={partKey} toolCall={part.toolCall} toolResult={pairedResult || undefined} />
             }
 
             if (part.type === 'tool-result' && part.toolResult) {
               // Skip if already paired with a tool-call above
               if (pairedResultIndices.has(i)) return null
               // Orphan result (no matching tool-call) — render standalone
-              return <OrphanToolResultCard key={i} toolResult={part.toolResult} />
+              return <OrphanToolResultCard key={partKey} toolResult={part.toolResult} />
             }
 
             if (part.type === 'thinking' && part.thinking) {
@@ -1043,7 +1066,7 @@ function ChatMessage({ message, onOpenFile }: Props) {
               const reasoningPart = message.parts.find(p => p.type === 'reasoning' && p.reasoning)
               return (
                 <ThinkingBlock
-                  key={i}
+                  key={partKey}
                   steps={part.thinking.steps}
                   duration={part.thinking.duration ?? 0}
                   isComplete={part.thinking.isComplete}

@@ -367,6 +367,34 @@ export default function App() {
     }
   }, [editorTabs])
 
+  const openPreview = useCallback(async (filePath: string) => {
+    const previewPath = `__preview__:${filePath}`
+    const existing = editorTabs.find((t) => t.path === previewPath)
+    if (existing) {
+      setActiveTabPath(previewPath)
+      return
+    }
+
+    try {
+      const content = await window.artemis.fs.readFile(filePath)
+      const name = filePath.split(/[\\/]/).pop() || filePath
+
+      const newTab: EditorTab = {
+        path: previewPath,
+        name: `⬡ ${name}`,
+        language: 'html',
+        content,
+        isDirty: false,
+        isPreview: true,
+      }
+
+      setEditorTabs((prev) => [...prev, newTab])
+      setActiveTabPath(previewPath)
+    } catch (err) {
+      console.error('[Artemis] Failed to open preview:', err)
+    }
+  }, [editorTabs])
+
   const closeTab = useCallback((path: string) => {
     setEditorTabs((prev) => {
       const next = prev.filter((t) => t.path !== path)
@@ -420,7 +448,15 @@ export default function App() {
 
   const handleTabContentChange = useCallback((path: string, content: string) => {
     setEditorTabs((prev) =>
-      prev.map((t) => (t.path === path ? { ...t, content, isDirty: true } : t))
+      prev.map((t) => {
+        if (t.path !== path) return t
+        // Preview tabs shouldn't be treated as dirty; refresh just syncs content.
+        if (t.isPreview) {
+          return { ...t, content, isDirty: false }
+        }
+        const isDirty = t.content !== content
+        return { ...t, content, isDirty }
+      })
     )
   }, [])
 
@@ -848,6 +884,7 @@ export default function App() {
             editorTabs={editorTabs}
             activeTabPath={activeTabPath}
             onOpenFile={openFile}
+            onOpenPreview={openPreview}
             onCloseTab={closeTab}
             onCloseOtherTabs={closeOtherTabs}
             onCloseAllTabs={closeAllTabs}
@@ -903,11 +940,13 @@ export default function App() {
             isRestrictedMode={isRestrictedMode}
             restrictedModeBanner={isRestrictedMode ? <RestrictedModeBanner onTrust={handleTrustWorkspace} /> : undefined}
             inlineCompletionEnabled={inlineCompletionEnabled}
+            onRequestAIQuickFix={isRestrictedMode ? undefined : opencode.requestAIQuickFix}
           />
         </div>
 
         <StatusBar
           projectName={project?.name || null}
+          projectPath={project?.path || null}
           isReady={opencode.isReady}
           hasApiKey={opencode.hasApiKey}
           activeModel={opencode.activeModel}
@@ -915,6 +954,7 @@ export default function App() {
           totalTokenUsage={opencode.totalTokenUsage}
           streamingSpeed={opencode.streamingSpeed}
           projectTokenCount={opencode.projectTokenCount}
+          projectTokenBreakdown={opencode.projectTokenBreakdown}
         />
 
         {/* Restricted mode indicator bar */}

@@ -203,6 +203,11 @@ interface ArtemisAPI {
     lint: (filePath: string, projectPath: string) => Promise<{ file: string; diagnostics: { file: string; line: number; column: number; severity: string; message: string; ruleId: string; source: string }[]; error?: string }>
   }
 
+  quickfix: {
+    findImport: (symbol: string, projectPath: string) => Promise<Array<{ path: string; exportName: string; isDefault: boolean }>>
+    apply: (fix: { type: 'edit' | 'ai'; edit?: any; request?: any }, projectPath: string) => Promise<{ success: boolean; edit?: any; requestId?: string; error?: string }>
+  }
+
   discord: {
     toggle: (enable: boolean) => Promise<{ connected: boolean; enabled: boolean; error?: string }>
     getState: () => Promise<{ connected: boolean; enabled: boolean; error?: string; lastFile?: string }>

@@ -5,7 +5,7 @@ import {
   FileMusic, FileArchive, FileTerminal, Settings, Database,
   Braces, Hash, AtSign, Globe, Layout, Type, Binary, FileSpreadsheet,
   FileCheck, FileKey, FileLock, FileCog,
-  FilePlus, FolderPlus, Clipboard, Pencil, Trash2, ExternalLink,
+  FilePlus, FolderPlus, Clipboard, Pencil, Trash2, ExternalLink, Eye,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import ContextMenu, { type MenuItem } from './ContextMenu'
@@ -214,6 +214,7 @@ interface TreeNode {
 interface Props {
   projectPath: string | null
   onOpenFile: (filePath: string) => void
+  onOpenPreview?: (filePath: string) => void
   onDeletePath?: (path: string) => Promise<void> | void
   onRenamePath?: (oldPath: string, newName: string) => void
   onCreateFile?: (dirPath: string, name: string) => void
@@ -221,7 +222,7 @@ interface Props {
   refreshTrigger?: number
 }
 
-export default function FileExplorer({ projectPath, onOpenFile, onDeletePath, onRenamePath, onCreateFile, onCreateFolder, refreshTrigger }: Props) {
+export default function FileExplorer({ projectPath, onOpenFile, onOpenPreview, onDeletePath, onRenamePath, onCreateFile, onCreateFolder, refreshTrigger }: Props) {
   const [tree, setTree] = useState<TreeNode[]>([])
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
@@ -330,8 +331,10 @@ export default function FileExplorer({ projectPath, onOpenFile, onDeletePath, on
         }},
       ]
     }
+    const isHtml = /\.html?$/i.test(node.name)
     return [
       { label: 'Open', icon: ExternalLink, onClick: () => onOpenFile(node.path) },
+      ...(isHtml && onOpenPreview ? [{ label: 'Preview Live', icon: Eye, onClick: () => onOpenPreview(node.path) }] : []),
       { separator: true },
       { label: 'Copy Path', icon: Clipboard, onClick: () => {
         navigator.clipboard.writeText(node.path)

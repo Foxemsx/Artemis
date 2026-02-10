@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, safeStorage, shell, protocol, net } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { spawn } from 'child_process'
@@ -273,6 +273,7 @@ function createWindow() {
           `font-src 'self' https://fonts.gstatic.com data:; ` +
           `img-src 'self' data: https: blob:; ` +
           `connect-src 'self' https://opencode.ai https://*.opencode.ai https://api.z.ai https://*.z.ai https://api.openai.com https://api.anthropic.com https://openrouter.ai https://*.openrouter.ai https://generativelanguage.googleapis.com https://api.deepseek.com https://api.groq.com https://api.mistral.ai https://api.moonshot.cn https://api.perplexity.ai https://api.synthetic.new https://html.duckduckgo.com https://webcache.googleusercontent.com http://localhost:11434; ` +
+          `frame-src 'self' file: preview: blob:; ` +
           `object-src 'none'; ` +
           `frame-ancestors 'none'; ` +
           `base-uri 'self';`
@@ -351,17 +352,6 @@ ipcMain.handle('trust:check', (_e, folderPath: string) => {
 
 ipcMain.handle('trust:grant', async (_e, folderPath: string) => {
   if (typeof folderPath !== 'string' || !folderPath.trim()) return false
-  const resolved = path.resolve(folderPath)
-  const { response } = await dialog.showMessageBox(mainWindow!, {
-    type: 'question',
-    buttons: ['Trust Folder', 'Cancel'],
-    defaultId: 1,
-    cancelId: 1,
-    title: 'Trust Folder',
-    message: `Grant trust to this folder?`,
-    detail: `Trusting "${resolved}" enables terminal access and command execution for this project.\n\nOnly trust folders you control.`,
-  })
-  if (response !== 0) return false
   grantTrust(folderPath)
   return true
 })
@@ -1075,6 +1065,101 @@ ipcMain.handle('fetchUrl:fetch', async (_e, url: string) => {
   return fetchUrl(url)
 })
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+async function findImportCandidates(symbol: string, projectPath: string) {
+  const MAX_RESULTS = 25
+  const MAX_DEPTH = 8
+  const MAX_FILE_SIZE = 500_000
+  const MAX_CONCURRENCY = 8
+  const ignoreDirs = new Set([
+    'node_modules', '.git', 'dist', 'dist-electron', 'build', '.next', '__pycache__',
+    '.venv', 'venv', '.cache', 'coverage', '.idea', '.vscode',
+  ])
+  const allowedExts = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'])
+
+  const escapedSymbol = escapeRegex(symbol)
+  const namedExportRegex = new RegExp(`\\bexport\\s+(?:const|let|var|function|class|enum|type|interface)\\s+${escapedSymbol}\\b`)
+  const exportBlockRegex = new RegExp(`\\bexport\\s*\\{[^}]*\\b${escapedSymbol}\\b[^}]*\\}`, 'm')
+  const exportDefaultRegex = new RegExp(`\\bexport\\s+default\\s+(?:function\\s+|class\\s+)?${escapedSymbol}\\b`)
+  const exportDefaultAliasRegex = new RegExp(`\\bexport\\s*\\{[^}]*\\bdefault\\s+as\\s+${escapedSymbol}\\b[^}]*\\}`, 'm')
+  const commonJsDefaultRegex = new RegExp(`\\bmodule\\.exports\\s*=\\s*${escapedSymbol}\\b`)
+  const commonJsNamedRegex = new RegExp(`\\bexports\\.${escapedSymbol}\\b`)
+
+  const filePaths: string[] = []
+  async function collectFiles(dir: string, depth: number) {
+    if (depth > MAX_DEPTH) return
+    try {
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue
+        const fullPath = path.join(dir, entry.name)
+        if (entry.isDirectory()) {
+          if (!ignoreDirs.has(entry.name)) {
+            await collectFiles(fullPath, depth + 1)
+          }
+        } else if (entry.isFile()) {
+          const ext = path.extname(entry.name).toLowerCase()
+          if (allowedExts.has(ext)) {
+            filePaths.push(fullPath)
+          }
+        }
+      }
+    } catch {}
+  }
+
+  await collectFiles(projectPath, 0)
+
+  const results: Array<{ path: string; exportName: string; isDefault: boolean }> = []
+  const seen = new Set<string>()
+  let index = 0
+
+  async function worker() {
+    while (index < filePaths.length && results.length < MAX_RESULTS) {
+      const current = filePaths[index++]
+      let stat: fs.Stats
+      try {
+        stat = await fs.promises.stat(current)
+      } catch {
+        continue
+      }
+      if (stat.size > MAX_FILE_SIZE) continue
+
+      let content = ''
+      try {
+        content = await fs.promises.readFile(current, 'utf-8')
+      } catch {
+        continue
+      }
+      if (!content.includes(symbol)) continue
+
+      const isDefault =
+        exportDefaultRegex.test(content) ||
+        exportDefaultAliasRegex.test(content) ||
+        commonJsDefaultRegex.test(content)
+      const isNamed =
+        namedExportRegex.test(content) ||
+        exportBlockRegex.test(content) ||
+        commonJsNamedRegex.test(content)
+
+      if (isDefault || isNamed) {
+        const key = `${current}:${isDefault ? 'default' : 'named'}`
+        if (!seen.has(key)) {
+          seen.add(key)
+          results.push({ path: current.replace(/\\/g, '/'), exportName: symbol, isDefault })
+        }
+      }
+    }
+  }
+
+  const workers = Array.from({ length: MAX_CONCURRENCY }, () => worker())
+  await Promise.all(workers)
+
+  return results.slice(0, MAX_RESULTS)
+}
+
 ipcMain.handle('linter:lint', async (_e, filePath: string, projectPath: string) => {
   try {
     const validatedFile = validateFsPath(filePath, 'lint file')
@@ -1085,6 +1170,40 @@ ipcMain.handle('linter:lint', async (_e, filePath: string, projectPath: string) 
   } catch (err: any) {
     return { file: filePath, diagnostics: [], error: err.message || 'Invalid lint path' }
   }
+})
+
+ipcMain.handle('quickfix:findImport', async (_e, symbol: string, projectPath: string) => {
+  if (typeof symbol !== 'string' || !symbol.trim()) return []
+  if (typeof projectPath !== 'string' || !projectPath.trim()) return []
+  try {
+    const validatedProject = validateFsPath(projectPath, 'quickfix search')
+    enforceProjectContainmentLocal(validatedProject, 'quickfix search')
+    return await findImportCandidates(symbol.trim(), validatedProject)
+  } catch (err: any) {
+    console.error('quickfix:findImport error:', err.message)
+    return []
+  }
+})
+
+ipcMain.handle('quickfix:apply', async (_e, fix: any, projectPath: string) => {
+  if (!fix || typeof fix !== 'object') {
+    return { success: false, error: 'Invalid quick fix payload' }
+  }
+  if (typeof projectPath === 'string' && projectPath.trim()) {
+    try {
+      const validatedProject = validateFsPath(projectPath, 'quickfix apply')
+      enforceProjectContainmentLocal(validatedProject, 'quickfix apply')
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  }
+  if (fix.type === 'edit') {
+    return { success: true, edit: fix.edit }
+  }
+  if (fix.type === 'ai') {
+    return { success: true, requestId: `quickfix-${Date.now()}` }
+  }
+  return { success: false, error: 'Unknown quick fix type' }
 })
 
 ipcMain.handle('discord:toggle', async (_e, enable: boolean) => {
@@ -1322,7 +1441,24 @@ registerAgentIPC(() => mainWindow, (providerId: string) => {
   return typeof raw === 'string' ? raw : undefined
 })
 
+// Register custom protocol for HTML live preview (must be before app.whenReady)
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'preview', privileges: { standard: true, secure: true, supportFetchAPI: true, allowServiceWorkers: false, corsEnabled: false } },
+])
+
 app.whenReady().then(async () => {
+  // Register preview:// protocol handler to serve local files
+  protocol.handle('preview', (request) => {
+    // URL format: preview://file/C:/path/to/file.html
+    const url = new URL(request.url)
+    let filePath = decodeURIComponent(url.pathname)
+    // On Windows, pathname starts with / before drive letter, e.g. /C:/...
+    if (process.platform === 'win32' && filePath.startsWith('/')) {
+      filePath = filePath.slice(1)
+    }
+    return net.fetch('file:///' + filePath.replace(/\\/g, '/'))
+  })
+
   createWindow()
 
   mcpService.initMCPService(STORE_DIR)

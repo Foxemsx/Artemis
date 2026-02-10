@@ -1,6 +1,7 @@
 import React from 'react'
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from 'react-resizable-panels'
 import type { ActivityView, Theme, ChatSession, ChatMessage, EditorTab, Provider, Model, PtySession, AgentMode, EditApprovalMode, AIProvider } from '../types'
+import type { QuickFixRange } from '../lib/quickFixes'
 import FileExplorer from './FileExplorer'
 import Editor from './Editor'
 import ChatPanel from './ChatPanel'
@@ -20,6 +21,7 @@ interface Props {
   editorTabs: EditorTab[]
   activeTabPath: string | null
   onOpenFile: (filePath: string) => void
+  onOpenPreview?: (filePath: string) => void
   onCloseTab: (path: string) => void
   onCloseOtherTabs: (path: string) => void
   onCloseAllTabs: () => void
@@ -30,6 +32,7 @@ interface Props {
   onPinTab?: (path: string) => void
   onUnpinTab?: (path: string) => void
   onReorderTabs?: (fromPath: string, toPath: string) => void
+  onRequestAIQuickFix?: (filePath: string, errorMessage: string, range: QuickFixRange, language?: string) => void
 
   // File system (context menu)
   onDeletePath: (path: string) => void
@@ -88,7 +91,7 @@ interface Props {
 
 export default function PanelLayout({
   activeView, theme, projectPath,
-  editorTabs, activeTabPath, onOpenFile, onCloseTab, onCloseOtherTabs, onCloseAllTabs, onCloseTabsToRight,
+  editorTabs, activeTabPath, onOpenFile, onOpenPreview, onCloseTab, onCloseOtherTabs, onCloseAllTabs, onCloseTabsToRight,
   onSelectTab, onSaveFile, onTabContentChange, onPinTab, onUnpinTab, onReorderTabs,
   onDeletePath, onRenamePath, onCreateFile, onCreateFolder,
   sessions, activeSessionId, messages, isStreaming, isReady, hasApiKey, error,
@@ -100,6 +103,7 @@ export default function PanelLayout({
   chatVisible = true,
   isRestrictedMode = false, restrictedModeBanner,
   inlineCompletionEnabled = false,
+  onRequestAIQuickFix,
 }: Props) {
 
   // Problems view — full panel
@@ -129,6 +133,8 @@ export default function PanelLayout({
                   onReorderTabs={onReorderTabs}
                   theme={theme}
                   inlineCompletionEnabled={inlineCompletionEnabled}
+                  projectPath={projectPath}
+                  onRequestAIQuickFix={onRequestAIQuickFix}
                 />
               </Panel>
             </PanelGroup>
@@ -169,6 +175,8 @@ export default function PanelLayout({
                   onReorderTabs={onReorderTabs}
                   theme={theme}
                   inlineCompletionEnabled={inlineCompletionEnabled}
+                  projectPath={projectPath}
+                  onRequestAIQuickFix={onRequestAIQuickFix}
                 />
               </Panel>
             </PanelGroup>
@@ -209,6 +217,8 @@ export default function PanelLayout({
                   onReorderTabs={onReorderTabs}
                   theme={theme}
                   inlineCompletionEnabled={inlineCompletionEnabled}
+                  projectPath={projectPath}
+                  onRequestAIQuickFix={onRequestAIQuickFix}
                 />
               </Panel>
             </PanelGroup>
@@ -260,6 +270,7 @@ export default function PanelLayout({
                 <FileExplorer
                   projectPath={projectPath}
                   onOpenFile={onOpenFile}
+                  onOpenPreview={onOpenPreview}
                   onDeletePath={onDeletePath}
                   onRenamePath={onRenamePath}
                   onCreateFile={onCreateFile}
@@ -290,6 +301,8 @@ export default function PanelLayout({
                   onReorderTabs={onReorderTabs}
                   theme={theme}
                   inlineCompletionEnabled={inlineCompletionEnabled}
+                  projectPath={projectPath}
+                  onRequestAIQuickFix={onRequestAIQuickFix}
                 />
               </Panel>
               {chatVisible && (

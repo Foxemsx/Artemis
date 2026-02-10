@@ -1,10 +1,11 @@
-import { useState } from 'react'
-import { Circle, Sparkles, Cpu, Zap, Activity, AlertTriangle } from 'lucide-react'
+import { useState, useMemo } from 'react'
+import { Circle, Sparkles, Cpu, Zap, Activity, AlertTriangle, FolderOpen, FileText } from 'lucide-react'
 import type { Model, SessionTokenUsage } from '../types'
 import { formatTokenCount, formatCost } from '../lib/formatters'
 
 interface Props {
   projectName: string | null
+  projectPath?: string | null
   isReady: boolean
   hasApiKey: boolean
   activeModel: Model | null
@@ -12,6 +13,7 @@ interface Props {
   totalTokenUsage: SessionTokenUsage
   streamingSpeed?: number
   projectTokenCount?: number
+  projectTokenBreakdown?: Map<string, number>
 }
 
 // ─── Token Budget Visualization ──────────────────────────────────────────────
@@ -117,9 +119,143 @@ function TokenBudgetBar({ usedTokens, contextWindow, percent }: { usedTokens: nu
   )
 }
 
+// ─── Token Breakdown Popover ────────────────────────────────────────────────
+function TokenBreakdownPopover({ breakdown, projectPath, projectTokenCount }: {
+  breakdown: Map<string, number>
+  projectPath: string
+  projectTokenCount: number
+}) {
+  const { topFolders, topFiles } = useMemo(() => {
+    const folderMap = new Map<string, number>()
+    const fileList: { path: string; tokens: number }[] = []
+    const normalizedRoot = projectPath.replace(/\\/g, '/')
+
+    for (const [filePath, sizeBytes] of breakdown) {
+      const normalizedFile = filePath.replace(/\\/g, '/')
+      const tokens = Math.ceil(sizeBytes / 4)
+      const relativePath = normalizedFile.startsWith(normalizedRoot)
+        ? normalizedFile.slice(normalizedRoot.length + 1)
+        : normalizedFile
+
+      fileList.push({ path: relativePath, tokens })
+
+      // Aggregate by top-level folder
+      const parts = relativePath.split('/')
+      const folder = parts.length > 1 ? parts[0] : '(root files)'
+      folderMap.set(folder, (folderMap.get(folder) || 0) + tokens)
+    }
+
+    const topFolders = [...folderMap.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([name, tokens]) => ({ name, tokens, percent: projectTokenCount > 0 ? (tokens / projectTokenCount) * 100 : 0 }))
+
+    const topFiles = fileList
+      .sort((a, b) => b.tokens - a.tokens)
+      .slice(0, 8)
+
+    return { topFolders, topFiles }
+  }, [breakdown, projectPath, projectTokenCount])
+
+  return (
+    <div
+      className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-[320px] rounded-xl z-50 overflow-hidden"
+      style={{
+        backgroundColor: 'var(--bg-card)',
+        border: '1px solid var(--border-default)',
+        boxShadow: '0 12px 36px rgba(0,0,0,0.4)',
+      }}
+    >
+      {/* Header */}
+      <div className="px-3 py-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+        <div className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>Project Token Breakdown</div>
+        <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          {formatTokenCount(projectTokenCount)} total &middot; {breakdown.size} files scanned
+        </div>
+      </div>
+
+      {/* Top Folders */}
+      <div className="px-3 py-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <FolderOpen size={10} style={{ color: 'var(--accent)' }} />
+          <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Top Folders</span>
+        </div>
+        <div className="space-y-1">
+          {topFolders.map(f => (
+            <div key={f.name} className="flex items-center gap-2">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-mono truncate" style={{ color: 'var(--text-secondary)' }}>{f.name}/</span>
+                  <span className="text-[10px] font-mono shrink-0 ml-2" style={{ color: 'var(--text-muted)' }}>{formatTokenCount(f.tokens)}</span>
+                </div>
+                <div className="w-full h-[3px] rounded-full mt-0.5" style={{ backgroundColor: 'var(--bg-elevated)' }}>
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{
+                      width: `${Math.min(100, f.percent)}%`,
+                      backgroundColor: f.percent > 40 ? '#f97316' : f.percent > 20 ? '#eab308' : 'var(--accent)',
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Top Files */}
+      <div className="px-3 py-2">
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <FileText size={10} style={{ color: 'var(--accent)' }} />
+          <span className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: 'var(--text-muted)' }}>Top Files</span>
+        </div>
+        <div className="space-y-0.5">
+          {topFiles.map(f => (
+            <div key={f.path} className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-mono truncate" style={{ color: 'var(--text-secondary)' }}>{f.path}</span>
+              <span className="text-[10px] font-mono shrink-0" style={{ color: 'var(--text-muted)' }}>{formatTokenCount(f.tokens)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Project Token Display with Hover Breakdown ─────────────────────────────
+function ProjectTokenDisplay({ projectTokenCount, projectPath, projectTokenBreakdown }: {
+  projectTokenCount: number
+  projectPath: string | null
+  projectTokenBreakdown?: Map<string, number>
+}) {
+  const [hovered, setHovered] = useState(false)
+  const hasBreakdown = projectPath && projectTokenBreakdown && projectTokenBreakdown.size > 0
+
+  return (
+    <div
+      className="relative flex items-center gap-1.5 cursor-default"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      title={hasBreakdown ? undefined : 'Total tokens in project (excludes node_modules, dist, build, .git, .cache)'}
+    >
+      <Cpu size={9} style={{ color: 'var(--text-muted)' }} />
+      <span className="text-[10px]">{formatTokenCount(projectTokenCount)} tokens</span>
+
+      {hovered && hasBreakdown && (
+        <TokenBreakdownPopover
+          breakdown={projectTokenBreakdown}
+          projectPath={projectPath}
+          projectTokenCount={projectTokenCount}
+        />
+      )}
+    </div>
+  )
+}
+
 export default function StatusBar({
-  projectName, isReady, hasApiKey, activeModel,
+  projectName, projectPath, isReady, hasApiKey, activeModel,
   sessionTokenUsage, totalTokenUsage, streamingSpeed = 0, projectTokenCount = 0,
+  projectTokenBreakdown,
 }: Props) {
   const getStatus = () => {
     if (!hasApiKey) return { text: 'No API Key', color: 'var(--text-muted)', dotColor: 'var(--text-muted)' }
@@ -163,12 +299,13 @@ export default function StatusBar({
           </div>
         )}
 
-        {/* Project token count */}
+        {/* Project token count with breakdown popover */}
         {projectTokenCount > 0 && (
-          <div className="flex items-center gap-1.5" title="Total tokens in project (excludes node_modules, dist, build, .git, .cache)">
-            <Cpu size={9} style={{ color: 'var(--text-muted)' }} />
-            <span className="text-[10px]">{formatTokenCount(projectTokenCount)} tokens</span>
-          </div>
+          <ProjectTokenDisplay
+            projectTokenCount={projectTokenCount}
+            projectPath={projectPath || null}
+            projectTokenBreakdown={projectTokenBreakdown}
+          />
         )}
 
         {/* Session tokens */}

@@ -25,6 +25,7 @@ export interface EditorTab {
   content: string
   isDirty: boolean
   isPinned?: boolean
+  isPreview?: boolean
 }
 
 export interface ChatSession {

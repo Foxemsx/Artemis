@@ -6,7 +6,7 @@ import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
 import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker'
 import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker'
 import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
-import { X, Clipboard, Pin } from 'lucide-react'
+import { X, Clipboard, Pin, Lightbulb } from 'lucide-react'
 
 // Security: Use local Monaco bundle instead of CDN to prevent remote code execution
 self.MonacoEnvironment = {
@@ -24,10 +24,13 @@ loader.config({ monaco })
 import type { EditorTab, Theme } from '../types'
 import ContextMenu, { type MenuItem } from './ContextMenu'
 import ConfirmDialog from './ConfirmDialog'
+import QuickFixMenu from './QuickFixMenu'
+import type { QuickFix, QuickFixRange } from '../lib/quickFixes'
 
 // ─── Inline Completion Provider ─────────────────────────────────────────────
 
 let inlineCompletionDisposable: monaco.IDisposable | null = null
+let codeActionDisposable: monaco.IDisposable | null = null
 
 // Cache the backend config locally to avoid an IPC round-trip on every keystroke.
 // Refreshed every 2 seconds so toggling in Settings still takes effect quickly.
@@ -133,6 +136,229 @@ function registerInlineCompletionProvider(monacoInstance: typeof monaco) {
   )
 }
 
+function getMarkersForLine(
+  monacoInstance: typeof monaco,
+  model: monaco.editor.ITextModel,
+  lineNumber: number
+): monaco.editor.IMarkerData[] {
+  return monacoInstance.editor.getModelMarkers({ resource: model.uri })
+    .filter(marker => lineNumber >= marker.startLineNumber && lineNumber <= marker.endLineNumber)
+}
+
+function extractSymbolFromError(message: string): string | null {
+  const singleQuote = message.match(/'([^']+)'/)
+  if (singleQuote?.[1]) return singleQuote[1]
+  const doubleQuote = message.match(/"([^"]+)"/)
+  if (doubleQuote?.[1]) return doubleQuote[1]
+  return null
+}
+
+function buildQuickFixes(
+  markers: monaco.editor.IMarkerData[],
+  model: monaco.editor.ITextModel,
+  monacoInstance: typeof monaco,
+  options?: { includeAi?: boolean }
+): QuickFix[] {
+  const fixes: QuickFix[] = []
+  const used = new Set<string>()
+  const includeAi = options?.includeAi ?? true
+
+  for (const marker of markers) {
+    const messageLower = marker.message.toLowerCase()
+
+    if (messageLower.includes('cannot find name') || messageLower.includes('is not defined')) {
+      const symbol = extractSymbolFromError(marker.message)
+      if (symbol && /^[A-Za-z_$][\w$]*$/.test(symbol)) {
+        const id = `import-${symbol}-${marker.startLineNumber}`
+        if (!used.has(id)) {
+          used.add(id)
+          fixes.push({
+            id,
+            title: `Import '${symbol}' from project`,
+            icon: 'import',
+            kind: 'deterministic',
+            command: { id: 'quickfix.import', symbol },
+            diagnostics: [marker],
+          })
+        }
+      }
+    }
+
+    if (messageLower.includes('cannot find module')) {
+      const symbol = extractSymbolFromError(marker.message)
+      if (symbol && /^[A-Za-z_$][\w$]*$/.test(symbol)) {
+        const id = `import-module-${symbol}-${marker.startLineNumber}`
+        if (!used.has(id)) {
+          used.add(id)
+          fixes.push({
+            id,
+            title: `Import '${symbol}' from project`,
+            icon: 'import',
+            kind: 'deterministic',
+            command: { id: 'quickfix.import', symbol },
+            diagnostics: [marker],
+          })
+        }
+      }
+    }
+
+    if (
+      messageLower.includes('is declared but') ||
+      messageLower.includes('never read') ||
+      messageLower.includes('never used')
+    ) {
+      const endLine = Math.min(marker.endLineNumber + 1, model.getLineCount() + 1)
+      const range = new monacoInstance.Range(marker.startLineNumber, 1, endLine, 1)
+      const id = `remove-${marker.startLineNumber}-${marker.endLineNumber}`
+      if (!used.has(id)) {
+        used.add(id)
+        fixes.push({
+          id,
+          title: 'Remove unused declaration',
+          icon: 'remove',
+          kind: 'deterministic',
+          edit: [{ range, text: '' }],
+          diagnostics: [marker],
+        })
+      }
+    }
+  }
+
+  if (includeAi && markers.length > 0) {
+    const marker = markers[0]
+    const range: QuickFixRange = {
+      startLine: marker.startLineNumber,
+      startColumn: marker.startColumn,
+      endLine: marker.endLineNumber,
+      endColumn: marker.endColumn,
+    }
+    fixes.push({
+      id: `ai-${marker.startLineNumber}-${marker.startColumn}`,
+      title: 'Ask AI to fix this',
+      icon: 'ai',
+      kind: 'ai',
+      command: { id: 'quickfix.ai', errorMessage: marker.message, range },
+      diagnostics: [marker],
+    })
+  }
+
+  return fixes
+}
+
+function registerCodeActionProvider(monacoInstance: typeof monaco) {
+  if (codeActionDisposable) codeActionDisposable.dispose()
+
+  codeActionDisposable = monacoInstance.languages.registerCodeActionProvider(
+    ['typescript', 'javascript', 'typescriptreact', 'javascriptreact'],
+    {
+      provideCodeActions: (model, range) => {
+        const markers = getMarkersForLine(monacoInstance, model, range.startLineNumber)
+        if (markers.length === 0) return { actions: [], dispose: () => {} }
+
+        const fixes = buildQuickFixes(markers, model, monacoInstance, { includeAi: false })
+        const actions = fixes
+          .filter(fix => fix.edit && fix.edit.length > 0)
+          .map((fix) => ({
+            title: fix.title,
+            diagnostics: fix.diagnostics,
+            kind: monacoInstance.languages.CodeActionKind.QuickFix,
+            edit: {
+              edits: (fix.edit || []).map(edit => ({
+                resource: model.uri,
+                versionId: undefined,
+                textEdit: { range: edit.range, text: edit.text ?? '' },
+              })),
+            },
+          }))
+
+        return { actions, dispose: () => {} }
+      },
+    }
+  )
+
+  return codeActionDisposable
+}
+
+interface ImportCandidate {
+  path: string
+  exportName: string
+  isDefault: boolean
+}
+
+function normalizePath(value: string): string {
+  return value.replace(/\\/g, '/')
+}
+
+function getDirname(filePath: string): string {
+  const normalized = normalizePath(filePath)
+  return normalized.replace(/\/[^/]+$/, '')
+}
+
+function stripExtension(filePath: string): string {
+  return filePath.replace(/\.(tsx|ts|jsx|js|mjs|cjs)$/i, '')
+}
+
+function buildRelativeImport(fromFile: string, toFile: string): string {
+  const fromDir = getDirname(fromFile)
+  const fromParts = normalizePath(fromDir).split('/').filter(Boolean)
+  const toParts = normalizePath(toFile).split('/').filter(Boolean)
+  let idx = 0
+  while (idx < fromParts.length && idx < toParts.length && fromParts[idx].toLowerCase() === toParts[idx].toLowerCase()) {
+    idx++
+  }
+  const up = fromParts.slice(idx).map(() => '..')
+  const down = toParts.slice(idx)
+  const rel = [...up, ...down].join('/')
+  return rel || '.'
+}
+
+function pickBestImportCandidate(candidates: ImportCandidate[], fromFile: string): ImportCandidate | null {
+  if (candidates.length === 0) return null
+  const sorted = [...candidates].sort((a, b) => {
+    const aRel = buildRelativeImport(fromFile, a.path)
+    const bRel = buildRelativeImport(fromFile, b.path)
+    if (aRel.length !== bRel.length) return aRel.length - bRel.length
+    if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1
+    return a.path.localeCompare(b.path)
+  })
+  return sorted[0]
+}
+
+function findImportInsertLine(lines: string[]): number {
+  let lastImportLine = -1
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim()
+    if (i === 0 && trimmed.startsWith('#!')) {
+      lastImportLine = i
+      continue
+    }
+    if (trimmed.startsWith('import ') || /^export\s+.+\s+from\s+['"]/.test(trimmed)) {
+      lastImportLine = i
+      continue
+    }
+    if (lastImportLine >= 0) {
+      if (trimmed === '') {
+        lastImportLine = i
+        continue
+      }
+      break
+    }
+    if (
+      trimmed === '' ||
+      trimmed.startsWith('//') ||
+      trimmed.startsWith('/*') ||
+      trimmed.startsWith('*') ||
+      trimmed.startsWith('*/') ||
+      trimmed === '"use strict";' ||
+      trimmed === "'use strict';"
+    ) {
+      continue
+    }
+    break
+  }
+  return lastImportLine >= 0 ? lastImportLine + 1 : 0
+}
+
 // Sync open tabs into Monaco's TypeScript service for cross-file go-to-definition
 function syncTabsToTypeScript(tabs: EditorTab[], monacoInstance: typeof monaco) {
   for (const tab of tabs) {
@@ -147,6 +373,121 @@ function syncTabsToTypeScript(tabs: EditorTab[], monacoInstance: typeof monaco) 
       }
     }
   }
+}
+
+// ─── HTML Live Preview (isolated via blob URL to avoid Vite HMR preamble) ────
+
+function HtmlPreviewPanel({ activeTab, onContentChange }: { activeTab: EditorTab; onContentChange: (path: string, content: string) => void }) {
+  const realPath = activeTab.path.replace('__preview__:', '')
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+
+  // Create a blob URL whenever content changes — fully isolated origin, no Vite interference
+  useEffect(() => {
+    const blob = new Blob([activeTab.content], { type: 'text/html;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    setPreviewUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [activeTab.content])
+
+  return (
+    <div className="flex-1 overflow-hidden flex flex-col" style={{ backgroundColor: 'var(--bg-primary)' }}>
+      {/* Toolbar */}
+      <div
+        className="flex items-center justify-between h-9 px-4 shrink-0"
+        style={{
+          backgroundColor: 'var(--bg-secondary)',
+          borderBottom: '1px solid var(--border-default)',
+        }}
+      >
+        <div className="flex items-center gap-2.5">
+          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: 'var(--success)' }} />
+          <span className="text-[11px] font-semibold" style={{ color: 'var(--text-primary)' }}>Live Preview</span>
+          <span
+            className="text-[10px] font-mono truncate max-w-[300px]"
+            style={{ color: 'var(--text-muted)' }}
+            title={realPath}
+          >
+            {realPath}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={async () => {
+              try {
+                const freshContent = await window.artemis.fs.readFile(realPath)
+                onContentChange(activeTab.path, freshContent)
+              } catch (err) {
+                console.error('[Artemis] Failed to refresh preview:', err)
+              }
+            }}
+            className="px-2.5 py-1 rounded text-[11px] font-medium transition-colors"
+            style={{
+              backgroundColor: 'var(--bg-elevated)',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border-subtle)',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
+              e.currentTarget.style.color = 'var(--text-primary)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.backgroundColor = 'var(--bg-elevated)'
+              e.currentTarget.style.color = 'var(--text-secondary)'
+            }}
+          >
+            ↻ Refresh
+          </button>
+          <button
+            onClick={() => {
+              if (realPath) window.artemis.shell.openPath(realPath)
+            }}
+            className="px-2.5 py-1 rounded text-[11px] font-medium transition-colors"
+            style={{
+              backgroundColor: 'var(--bg-elevated)',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border-subtle)',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.backgroundColor = 'var(--bg-hover)'
+              e.currentTarget.style.color = 'var(--text-primary)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.backgroundColor = 'var(--bg-elevated)'
+              e.currentTarget.style.color = 'var(--text-secondary)'
+            }}
+          >
+            Open in Browser
+          </button>
+        </div>
+      </div>
+      {/* Isolated iframe */}
+      {previewUrl && (
+        <iframe
+          ref={iframeRef}
+          data-preview={activeTab.path}
+          src={previewUrl}
+          sandbox="allow-scripts allow-popups allow-forms"
+          className="w-full flex-1 border-0"
+          style={{ backgroundColor: '#fff' }}
+          title="HTML Live Preview"
+        />
+      )}
+    </div>
+  )
+}
+
+interface QuickFixState {
+  visible: boolean
+  fixes: QuickFix[]
+  activeIndex: number
+  position: { x: number; y: number }
+}
+
+interface LightbulbState {
+  line: number
+  x: number
+  y: number
 }
 
 interface Props {
@@ -164,15 +505,33 @@ interface Props {
   onReorderTabs?: (fromPath: string, toPath: string) => void
   theme: Theme
   inlineCompletionEnabled?: boolean
+  projectPath?: string | null
+  onRequestAIQuickFix?: (filePath: string, errorMessage: string, range: QuickFixRange, language?: string) => void
 }
 
 export default function Editor({
   tabs, activeTabPath, onSelectTab, onCloseTab, onCloseOtherTabs, onCloseAllTabs, onCloseTabsToRight,
   onSave, onContentChange, onPinTab, onUnpinTab, onReorderTabs, theme, inlineCompletionEnabled: icEnabled = false,
+  projectPath = null, onRequestAIQuickFix,
 }: Props) {
   const activeTab = tabs.find((t) => t.path === activeTabPath) || null
   const [tabContextMenu, setTabContextMenu] = useState<{ x: number; y: number; path: string } | null>(null)
   const monacoRef = useRef<typeof monaco | null>(null)
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
+  const quickFixAnchorRef = useRef<monaco.Position | null>(null)
+  const editorDisposablesRef = useRef<monaco.IDisposable[]>([])
+  const quickFixVisibleRef = useRef(false)
+  const [quickFixState, setQuickFixState] = useState<QuickFixState>({
+    visible: false,
+    fixes: [],
+    activeIndex: 0,
+    position: { x: 0, y: 0 },
+  })
+  const [lightbulbState, setLightbulbState] = useState<LightbulbState | null>(null)
+
+  useEffect(() => {
+    quickFixVisibleRef.current = quickFixState.visible
+  }, [quickFixState.visible])
 
   // Note: inline completion enabled state is checked live from backend config
   // in the provider itself, so no module-level sync is needed.
@@ -261,6 +620,164 @@ export default function Editor({
       { label: 'Copy Path', icon: Clipboard, onClick: () => navigator.clipboard.writeText(path) },
     ]
   }, [tabs, tryCloseTab, onCloseOtherTabs, onCloseAllTabs, onCloseTabsToRight])
+
+  const hideQuickFixMenu = useCallback(() => {
+    quickFixAnchorRef.current = null
+    setQuickFixState(prev => ({ ...prev, visible: false }))
+  }, [])
+
+  const updateLightbulb = useCallback((editorOverride?: monaco.editor.IStandaloneCodeEditor) => {
+    const editor = editorOverride || editorRef.current
+    const monacoInstance = monacoRef.current
+    if (!editor || !monacoInstance) return
+    const model = editor.getModel()
+    const position = editor.getPosition()
+    if (!model || !position) {
+      setLightbulbState(null)
+      return
+    }
+    const markers = getMarkersForLine(monacoInstance, model, position.lineNumber)
+    if (markers.length === 0) {
+      setLightbulbState(null)
+      return
+    }
+    const visible = editor.getScrolledVisiblePosition(position)
+    const domNode = editor.getDomNode()
+    if (!visible || !domNode) return
+    const rect = domNode.getBoundingClientRect()
+    const lineHeight = editor.getOption(monacoInstance.editor.EditorOption.lineHeight)
+    const top = rect.top + (visible.top ?? 0) + Math.max(0, (lineHeight - 14) / 2)
+    const left = rect.left + 6
+    setLightbulbState({ line: position.lineNumber, x: left, y: top })
+  }, [])
+
+  const showQuickFixMenu = useCallback((editor: monaco.editor.IStandaloneCodeEditor, markers?: monaco.editor.IMarkerData[]) => {
+    const monacoInstance = monacoRef.current
+    const model = editor.getModel()
+    if (!monacoInstance || !model) return
+    const position = editor.getPosition()
+    if (!position) return
+
+    const lineMarkers = markers || getMarkersForLine(monacoInstance, model, position.lineNumber)
+    const baseFixes = buildQuickFixes(lineMarkers, model, monacoInstance, { includeAi: !!onRequestAIQuickFix })
+    const fixes = baseFixes.map((fix) => {
+      if (fix.command?.id === 'quickfix.import' && !projectPath) {
+        return { ...fix, disabled: true }
+      }
+      return fix
+    })
+    if (fixes.length === 0) {
+      hideQuickFixMenu()
+      return
+    }
+
+    const visible = editor.getScrolledVisiblePosition(position)
+    const domNode = editor.getDomNode()
+    if (!visible || !domNode) return
+    const rect = domNode.getBoundingClientRect()
+    const lineHeight = editor.getOption(monacoInstance.editor.EditorOption.lineHeight)
+    const x = rect.left + (visible.left ?? 0) + 16
+    const y = rect.top + (visible.top ?? 0) + lineHeight
+
+    quickFixAnchorRef.current = position
+    setQuickFixState({
+      visible: true,
+      fixes,
+      activeIndex: 0,
+      position: { x, y },
+    })
+  }, [hideQuickFixMenu, onRequestAIQuickFix, projectPath])
+
+  const applyImportFix = useCallback(async (symbol: string) => {
+    const editor = editorRef.current
+    const monacoInstance = monacoRef.current
+    if (!editor || !monacoInstance || !activeTab || !projectPath) return
+
+    try {
+      const candidates = await window.artemis.quickfix.findImport(symbol, projectPath) as ImportCandidate[]
+      const best = pickBestImportCandidate(candidates || [], activeTab.path)
+      if (!best) return
+
+      const model = editor.getModel()
+      if (!model) return
+
+      const normalizedTarget = stripExtension(normalizePath(best.path))
+      let importPath = buildRelativeImport(activeTab.path, normalizedTarget)
+      if (importPath.endsWith('/index')) {
+        importPath = importPath.slice(0, -'/index'.length)
+      }
+      if (!importPath.startsWith('.')) {
+        importPath = `./${importPath}`
+      }
+      if (importPath === './') importPath = '.'
+
+      const escapedPath = importPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const escapedSymbol = symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const content = model.getValue()
+      const alreadyDefault = new RegExp(`\\bimport\\s+${escapedSymbol}\\s+from\\s+['"]${escapedPath}['"]`).test(content)
+      const alreadyNamed = new RegExp(`\\bimport\\s+\\{[^}]*\\b${escapedSymbol}\\b[^}]*\\}\\s+from\\s+['"]${escapedPath}['"]`).test(content)
+      if (alreadyDefault || alreadyNamed) return
+
+      const lines = content.split('\n')
+      const insertLine = findImportInsertLine(lines)
+      const importStatement = best.isDefault
+        ? `import ${symbol} from '${importPath}'`
+        : `import { ${symbol} } from '${importPath}'`
+
+      editor.pushUndoStop()
+      editor.executeEdits('quickfix', [{
+        range: new monacoInstance.Range(insertLine + 1, 1, insertLine + 1, 1),
+        text: `${importStatement}\n`,
+      }])
+      editor.pushUndoStop()
+      editor.focus()
+    } catch (err) {
+      console.error('[Editor] Import quick fix failed:', err)
+    }
+  }, [activeTab, projectPath])
+
+  const handleQuickFixSelect = useCallback(async (fix: QuickFix) => {
+    hideQuickFixMenu()
+    const editor = editorRef.current
+    if (!editor) return
+
+    if (fix.edit && fix.edit.length > 0) {
+      editor.pushUndoStop()
+      editor.executeEdits('quickfix', fix.edit)
+      editor.pushUndoStop()
+      editor.focus()
+      return
+    }
+
+    if (fix.command?.id === 'quickfix.import') {
+      await applyImportFix(fix.command.symbol)
+      return
+    }
+
+    if (fix.command?.id === 'quickfix.ai') {
+      if (!activeTab || !onRequestAIQuickFix) return
+      onRequestAIQuickFix(activeTab.path, fix.command.errorMessage, fix.command.range, activeTab.language)
+    }
+  }, [applyImportFix, activeTab, hideQuickFixMenu, onRequestAIQuickFix])
+
+  const handleQuickFixMove = useCallback((nextIndex: number) => {
+    setQuickFixState(prev => {
+      const clamped = Math.max(0, Math.min(nextIndex, prev.fixes.length - 1))
+      return { ...prev, activeIndex: clamped }
+    })
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      editorDisposablesRef.current.forEach(d => d.dispose())
+      editorDisposablesRef.current = []
+    }
+  }, [])
+
+  useEffect(() => {
+    hideQuickFixMenu()
+    setLightbulbState(null)
+  }, [activeTab?.path, hideQuickFixMenu])
 
   // Empty state
   if (tabs.length === 0) {
@@ -424,8 +941,11 @@ export default function Editor({
         />
       )}
 
+      {/* HTML Live Preview */}
+      {activeTab && activeTab.isPreview && <HtmlPreviewPanel activeTab={activeTab} onContentChange={onContentChange} />}
+
       {/* Monaco Editor */}
-      {activeTab && (
+      {activeTab && !activeTab.isPreview && (
         <div className="flex-1 overflow-hidden">
           <MonacoEditor
             key={activeTab.path}
@@ -435,6 +955,7 @@ export default function Editor({
             onChange={handleEditorChange}
             onMount={(editor, monacoInstance) => {
               monacoRef.current = monacoInstance
+              editorRef.current = editor
 
               // ─── TypeScript / JavaScript language service configuration ───
               const tsDefaults = monacoInstance.languages.typescript.typescriptDefaults
@@ -464,6 +985,48 @@ export default function Editor({
               // ─── Register inline completion provider (once globally) ───
               registerInlineCompletionProvider(monacoInstance)
 
+              // ─── Register code action provider for quick fixes ───
+              registerCodeActionProvider(monacoInstance)
+
+              // ─── Quick Fix command (Ctrl/Cmd + .) ───
+              editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.Period, () => {
+                const model = editor.getModel()
+                const position = editor.getPosition()
+                if (!model || !position) return
+                const markers = getMarkersForLine(monacoInstance, model, position.lineNumber)
+                if (markers.length > 0) {
+                  showQuickFixMenu(editor, markers)
+                }
+              })
+
+              // ─── Track cursor and markers for lightbulb indicator ───
+              editorDisposablesRef.current.push(
+                editor.onDidChangeCursorPosition(() => {
+                  updateLightbulb(editor)
+                  if (quickFixVisibleRef.current) hideQuickFixMenu()
+                })
+              )
+
+              editorDisposablesRef.current.push(
+                editor.onDidScrollChange(() => {
+                  updateLightbulb(editor)
+                  if (quickFixVisibleRef.current && quickFixAnchorRef.current) {
+                    showQuickFixMenu(editor)
+                  }
+                })
+              )
+
+              editorDisposablesRef.current.push(
+                monacoInstance.editor.onDidChangeMarkers((uris) => {
+                  const modelUri = editor.getModel()?.uri
+                  if (modelUri && uris.some(uri => uri.toString() === modelUri.toString())) {
+                    updateLightbulb(editor)
+                  }
+                })
+              )
+
+              updateLightbulb(editor)
+
               // ─── "Add Selection to Chat" context menu action ───
               editor.addAction({
                 id: 'artemis.addSelectionToChat',
@@ -492,6 +1055,7 @@ export default function Editor({
               fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace",
               fontLigatures: true,
               lineHeight: 20,
+              glyphMargin: true,
               minimap: { enabled: false },
               padding: { top: 12 },
               scrollBeyondLastLine: false,
@@ -534,6 +1098,34 @@ export default function Editor({
               suggestOnTriggerCharacters: true,
             }}
           />
+
+          {lightbulbState && (
+            <button
+              type="button"
+              className="fixed z-[900] p-1 rounded transition-transform"
+              style={{ left: lightbulbState.x, top: lightbulbState.y }}
+              onClick={() => {
+                const editor = editorRef.current
+                if (editor) showQuickFixMenu(editor)
+              }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'scale(1.08)' }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)' }}
+              title="Quick Fix"
+            >
+              <Lightbulb size={14} style={{ color: 'var(--accent)' }} />
+            </button>
+          )}
+
+          {quickFixState.visible && (
+            <QuickFixMenu
+              fixes={quickFixState.fixes}
+              activeIndex={quickFixState.activeIndex}
+              position={quickFixState.position}
+              onSelect={handleQuickFixSelect}
+              onClose={hideQuickFixMenu}
+              onMove={handleQuickFixMove}
+            />
+          )}
         </div>
       )}
     </div>

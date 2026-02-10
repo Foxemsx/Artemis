@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import type { ChatSession, ChatMessage, MessagePart, Provider, Model, AgentMode, EditApprovalMode, SessionTokenUsage, AgentStep, AIProvider } from '../types'
+import type { QuickFixRange } from '../lib/quickFixes'
 import { AGENT_MODES } from '../components/AgentModeSelector'
 import { zenClient, type ZenModel, MODEL_METADATA, PROVIDER_REGISTRY, getProviderInfo } from '../lib/zenClient'
 import { type SoundSettings, DEFAULT_SOUND_SETTINGS, playSound, showNotification } from '../lib/sounds'
@@ -30,6 +31,7 @@ interface UseOpenCodeReturn {
   isStreaming: boolean
   streamingSessionIds: Set<string>  // Which sessions have running agents (for UI badges)
   sendMessage: (text: string, fileContext?: string, modeOverride?: AgentMode, planText?: string, images?: Array<{ id: string; url: string; name: string }>) => Promise<void>
+  requestAIQuickFix: (filePath: string, errorMessage: string, range: QuickFixRange, language?: string) => Promise<void>
   abortMessage: () => void
   clearMessages: () => void
 
@@ -67,6 +69,9 @@ interface UseOpenCodeReturn {
 
   // Project token count (total tokens in project, excluding node_modules/dist)
   projectTokenCount: number
+
+  // Project token breakdown (filePath → size in bytes) for hover popover
+  projectTokenBreakdown: Map<string, number>
 
   // Project context for tools
   setProjectPath: (path: string | null) => void
@@ -132,6 +137,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
   const projectPathRef = useRef<string | null>(null)
   const [streamingSpeed, setStreamingSpeed] = useState(0) // tokens/sec
   const [projectTokenCount, setProjectTokenCount] = useState(0)
+  const [projectTokenBreakdown, setProjectTokenBreakdown] = useState<Map<string, number>>(new Map())
 
   // Batched streaming updates: coalesce rapid setAllSessionMessages calls into one per animation frame
   const pendingMessageUpdatesRef = useRef<Map<string, (msgs: ChatMessage[]) => ChatMessage[]>>(new Map())
@@ -196,6 +202,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     const cached = projectTokenCache.get(projectPath)
     if (cached && Date.now() - cached.computedAt < CACHE_TTL_MS) {
       setProjectTokenCount(cached.tokenCount)
+      setProjectTokenBreakdown(cached.fileStats)
       return
     }
 
@@ -262,6 +269,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
         if (!signal.aborted) {
           const tokenCount = Math.ceil(totalChars / 4)
           setProjectTokenCount(tokenCount)
+          setProjectTokenBreakdown(newFileStats)
           projectTokenCache.set(projectPath, {
             tokenCount,
             computedAt: Date.now(),
@@ -567,7 +575,8 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
   // Set edit approval mode
   const setEditApprovalMode = useCallback((mode: EditApprovalMode) => {
     setEditApprovalModeState(mode)
-    window.artemis.store.set('editApprovalMode', mode).catch(err => {
+    const persistMode = mode === 'session-only' ? 'ask' : mode
+    window.artemis.store.set('editApprovalMode', persistMode).catch(err => {
       console.error('[useOpenCode] Error saving edit approval mode:', err)
     })
   }, [])
@@ -976,13 +985,13 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
         toolResult,
       })
       stepStartTime = now
-      if (agentMode !== 'chat') {
+      if (effectiveMode !== 'chat') {
         updateThinkingBlock(sessionId!, agentSteps, thinkingStartTime, false, reasoningContent)
       }
     }
 
     // ─── Create Checkpoint Before Agent Run ──────────────────────
-    if (projectPath && agentMode !== 'chat') {
+    if (projectPath && effectiveMode !== 'chat') {
       try {
         // Collect files that were previously modified in this session
         const prevMessages = allSessionMessages.get(sessionId) || []
@@ -1000,7 +1009,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
 
       switch (event.type) {
         case 'thinking':
-          if (agentMode !== 'chat') {
+          if (effectiveMode !== 'chat') {
             addStep('thinking', event.data.message || 'Analyzing the request and planning approach...')
           }
           break
@@ -1041,7 +1050,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
 
         case 'reasoning_delta':
           reasoningContent += event.data.content || ''
-          if (agentMode !== 'chat') {
+          if (effectiveMode !== 'chat') {
             updateThinkingBlock(sessionId!, agentSteps, thinkingStartTime, false, reasoningContent)
           }
           break
@@ -1113,15 +1122,45 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
           // Show approval prompt in chat as a special tool-call part
           playSound('action-required', soundSettings)
           showNotification('Artemis — Approval Required', `${event.data.toolName} needs your approval`, soundSettings)
-          // Add an approval-pending part to the message
-          parts.push({
-            type: 'tool-call' as const,
-            toolCall: {
-              id: event.data.toolCallId || generateId('tc-'),
-              name: event.data.toolName,
-              args: { ...event.data.toolArgs, __approvalId: event.data.approvalId, __pendingApproval: true },
-            },
-          })
+          // Add or update an approval-pending part (merge with existing tool-call by id)
+          const tcId = event.data.toolCallId || generateId('tc-')
+          const approvalArgs = { ...event.data.toolArgs, __approvalId: event.data.approvalId, __pendingApproval: true }
+          const existingIdx = parts.findIndex(
+            p => p.type === 'tool-call' && p.toolCall?.id === tcId
+          )
+          let targetIdx = existingIdx
+          if (targetIdx < 0) {
+            for (let i = parts.length - 1; i >= 0; i--) {
+              const p = parts[i]
+              if (p.type === 'tool-call' && p.toolCall?.name === event.data.toolName) {
+                const args = p.toolCall.args as Record<string, unknown> | undefined
+                const hasApproval = args?.__approvalId || args?.__pendingApproval
+                if (!hasApproval) {
+                  targetIdx = i
+                  break
+                }
+              }
+            }
+          }
+          if (targetIdx >= 0) {
+            parts[targetIdx] = {
+              ...parts[targetIdx],
+              toolCall: {
+                ...parts[targetIdx].toolCall!,
+                name: event.data.toolName,
+                args: { ...parts[targetIdx].toolCall!.args, ...approvalArgs },
+              },
+            }
+          } else {
+            parts.push({
+              type: 'tool-call' as const,
+              toolCall: {
+                id: tcId,
+                name: event.data.toolName,
+                args: approvalArgs,
+              },
+            })
+          }
           updateAssistantParts(sessionId!, parts)
           break
         }
@@ -1129,19 +1168,35 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
         case 'path_approval_required': {
           playSound('action-required', soundSettings)
           showNotification('Artemis — Path Access', 'Access to file outside project requested', soundSettings)
-          parts.push({
-            type: 'tool-call' as const,
-            toolCall: {
-              id: generateId('tc-'),
-              name: 'path_approval',
-              args: {
-                __approvalId: event.data.approvalId,
-                __pendingApproval: true,
-                filePath: event.data.filePath,
-                reason: event.data.reason,
+          const tcId = event.data.approvalId || generateId('tc-')
+          const approvalArgs = {
+            __approvalId: event.data.approvalId,
+            __pendingApproval: true,
+            filePath: event.data.filePath,
+            reason: event.data.reason,
+          }
+          const existingIdx = parts.findIndex(
+            p => p.type === 'tool-call' && p.toolCall?.id === tcId
+          )
+          if (existingIdx >= 0) {
+            parts[existingIdx] = {
+              ...parts[existingIdx],
+              toolCall: {
+                ...parts[existingIdx].toolCall!,
+                name: 'path_approval',
+                args: { ...parts[existingIdx].toolCall!.args, ...approvalArgs },
               },
-            },
-          })
+            }
+          } else {
+            parts.push({
+              type: 'tool-call' as const,
+              toolCall: {
+                id: tcId,
+                name: 'path_approval',
+                args: approvalArgs,
+              },
+            })
+          }
           updateAssistantParts(sessionId!, parts)
           break
         }
@@ -1183,7 +1238,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
 
       // ─── Finalize Thinking Block ───────────────────────────────
       const totalText = getTotalText()
-      if (agentMode !== 'chat' && agentSteps.length > 0) {
+      if (effectiveMode !== 'chat' && agentSteps.length > 0) {
         addStep('summary', totalText.slice(0, 150) + (totalText.length > 150 ? '...' : ''))
         updateThinkingBlock(sessionId!, agentSteps, thinkingStartTime, true, reasoningContent)
       }
@@ -1281,7 +1336,42 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
       setStreamingSessionIds(prev => { const next = new Set(prev); next.delete(sessionId!); return next })
       setStreamingSpeed(0)
     }
-  }, [activeSessionId, activeModel, allSessionMessages, agentMode, soundSettings, createSession, saveMessages, saveSessions, updateAssistantParts, updateThinkingBlock, flushMessageUpdates, trackUsage])
+  }, [activeSessionId, activeModel, allSessionMessages, agentMode, soundSettings, editApprovalMode, createSession, saveMessages, saveSessions, updateAssistantParts, updateThinkingBlock, flushMessageUpdates, trackUsage])
+
+  const requestAIQuickFix = useCallback(async (
+    filePath: string,
+    errorMessage: string,
+    range: QuickFixRange,
+    language?: string
+  ) => {
+    if (!filePath || !errorMessage) return
+
+    let fileContent = ''
+    try {
+      fileContent = await window.artemis.fs.readFile(filePath)
+    } catch {}
+
+    const lines = fileContent.split('\n')
+    const startLine = Math.max(1, range.startLine)
+    const endLine = Math.min(lines.length || startLine, range.endLine)
+    const snippet = lines.slice(startLine - 1, endLine).join('\n')
+    const fenceLang = language || filePath.split('.').pop() || 'text'
+
+    const prompt = [
+      `Fix the error in ${filePath} at lines ${startLine}-${endLine}.`,
+      '',
+      `Error: ${errorMessage}`,
+      '',
+      'Code:',
+      '```' + fenceLang,
+      snippet,
+      '```',
+      '',
+      'Apply the fix directly in the project files. Keep the change minimal and do not add explanations.',
+    ].join('\n')
+
+    await sendMessage(prompt, undefined, 'builder')
+  }, [sendMessage])
 
   const abortMessage = useCallback(() => {
     if (!activeSessionId) return
@@ -1322,6 +1412,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     isStreaming,
     streamingSessionIds,
     sendMessage,
+    requestAIQuickFix,
     abortMessage,
     models,
     activeModel,
@@ -1340,6 +1431,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     totalTokenUsage,
     streamingSpeed,
     projectTokenCount,
+    projectTokenBreakdown,
     setProjectPath,
   }
 }

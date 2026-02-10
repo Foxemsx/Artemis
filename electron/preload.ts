@@ -183,6 +183,13 @@ contextBridge.exposeInMainWorld('artemis', {
       ipcRenderer.invoke('linter:lint', filePath, projectPath),
   },
 
+  quickfix: {
+    findImport: (symbol: string, projectPath: string) =>
+      ipcRenderer.invoke('quickfix:findImport', symbol, projectPath),
+    apply: (fix: any, projectPath: string) =>
+      ipcRenderer.invoke('quickfix:apply', fix, projectPath),
+  },
+
   discord: {
     toggle: (enable: boolean) =>
       ipcRenderer.invoke('discord:toggle', enable),
