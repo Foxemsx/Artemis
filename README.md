@@ -4,95 +4,192 @@
 
 <br />
 
-# Artemis IDE
+# <span style="font-size: 72px; font-weight: 900;">Artemis IDE</span>
 
-### ⚡ The AI-Powered Development Environment Built for Speed
+### **⚡ The AI-Powered IDE Built for Speed**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-gold.svg)](LICENSE)
-[![Electron](https://img.shields.io/badge/Electron-35-blue.svg)](https://electronjs.org/)
-[![React](https://img.shields.io/badge/React-18-61dafb.svg)](https://reactjs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-3178c6.svg)](https://typescriptlang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-gold.svg?style=for-the-badge)](LICENSE)
+[![Electron](https://img.shields.io/badge/Electron-35-blue.svg?style=for-the-badge&logo=electron&logoColor=white)](https://electronjs.org/)
+[![React](https://img.shields.io/badge/React-18-61dafb.svg?style=for-the-badge&logo=react&logoColor=white)](https://reactjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-3178c6.svg?style=for-the-badge&logo=typescript&logoColor=white)](https://typescriptlang.org/)
+[![Tailwind](https://img.shields.io/badge/Tailwind-3.4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
 
-**Artemis is a free, open-source agentic IDE that can plan, code, run commands, and manage your project — while you stay in control of every action.**
-No subscriptions. No cloud lock-in. Fully open-source.
+<br />
 
-[🚀 Getting Started](#-getting-started) · [✨ Features](#-features) · [� Security](#-security) · [�📸 Screenshots](#-screenshots) · [🤝 Support](#-support--community)
+**Free, open-source agentic IDE — no subscriptions, no cloud lock-in.**
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/foxemsx)
+[![GitHub Stars](https://img.shields.io/github/stars/Foxemsx/Artemis?style=for-the-badge&logo=github&color=gold)](https://github.com/Foxemsx/Artemis)
 
 </div>
 
 ---
 
-## ✨ Features
+## 📊 By The Numbers
 
-### 🤖 Autonomous AI Agent
-- **Builder Mode** — The agent plans, writes code, runs commands, and iterates until the task is done
-- **Planner Mode** — Get a structured plan first, review it, then one-click implement it in Builder
-- **Chat Mode** — Fast conversational help without tool execution
-- **13 Providers** — OpenAI, Anthropic, Google Gemini, DeepSeek, Groq, Mistral, OpenRouter, Moonshot, Perplexity, Synthetic, Z.AI, OpenCode Zen, and **Ollama** for fully local, private inference
-- **@-Mentions** — Type `@filename` to attach file context or `@codebase` to index your entire project into the conversation
-- **Image Attachments** — Drop images into chat for vision-capable models
-- **Web Browsing** — The agent can fetch and read web pages with built-in SSRF protection
-- **Tool Approval** — Every file write, delete, and command requires your explicit approval before execution
-
-### 🧠 AI Inline Completion
-- **Ghost-text suggestions** as you type — press TAB to accept
-- Works with all supported providers, with smart caching, rate limiting, and context trimming
-
-### 🛠️ Full IDE Experience
-- **Monaco Editor** — Same engine as VS Code, with syntax highlighting for 40+ languages
-- **Integrated Terminal** — Real PTY-backed shell (cmd, PowerShell, bash) with full I/O
-- **Source Control** — Built-in Git panel with staging, unstaging, commits, inline diffs, push, pull, and branch management
-- **File Explorer** — Create, rename, delete, and browse files and folders
-- **Multi-Tab Editing** — Pin tabs, reorder them, and work across multiple files
-- **Project Search** — Regex-powered search across your entire codebase
-- **Problems Panel** — Live TypeScript diagnostics with click-to-navigate
-- **Customizable Keybindings** — Remap every shortcut to your preference
-
-### 🔌 MCP Marketplace
-- **One-Click Install** — Browse and install Model Context Protocol servers instantly
-- **Custom Servers** — Add your own MCP servers with full configuration
-- **Live Tool Status** — See connected tools and server health in real-time
-
-### 🎨 16 Beautiful Themes
-Dark · Light · Cyberpunk · Nord · Monokai · Solarized · Dracula · Rosé Pine · Pine · Catppuccin · Gruvbox · Material Ocean · Everforest · Sakura · Beach · Space
-
-### 🔒 Security
-Artemis treats the AI agent as **untrusted code**. Every action is validated, contained, and gated.
-
-- **OS-Level Key Encryption** — API keys and MCP secrets encrypted via `safeStorage` (DPAPI / Keychain / Secret Service). Plaintext storage is refused — keys are never saved unencrypted
-- **Renderer Sandbox** — `sandbox: true`, `contextIsolation: true`, `nodeIntegration: false` — even if the renderer is compromised, it can't touch Node.js
-- **Content Security Policy** — No `unsafe-inline` scripts in production, whitelisted `connect-src`, `object-src 'none'`, `frame-ancestors 'none'`
-- **Workspace Trust** — Untrusted folders run in Restricted Mode: no terminal, no commands, no agent. Trust is per-folder and persisted
-- **Filesystem Containment** — All destructive ops restricted to the active project. System paths, UNC paths, null bytes, and path traversal blocked
-- **Command Injection Prevention** — `shell: false` everywhere, shell metacharacter blocking, executable allowlist (only dev tools like npm, git, python, docker)
-- **SSRF Protection** — Blocks private IPs, loopback, link-local, and cloud metadata endpoints. DNS rebinding checks resolve hostnames and verify the IP isn't private
-- **HTTP Domain Allowlist** — Agent HTTP proxy only connects to whitelisted API domains
-- **Output Bounds** — Command output capped at 50KB, file reads at 2MB, agent limited to 50 iterations per run
-
-### 🎵 And More
-- **Sound Effects & Notifications** — Audio cues when tasks complete, even while tabbed out
-- **Discord Rich Presence** — Show what you're working on
-- **Token Tracking** — Real-time cost estimation and context window visualization
-- **Checkpoints** — Snapshot and restore your project state at any point
-- **Auto-Linting** — ESLint, Biome, and more — integrated and automatic
-- **Web Search** — DuckDuckGo-powered search available to the AI agent
-- **Command Palette** — Quick access to every action with `Ctrl+Shift+P`
+| Metric | Count | Metric | Count |
+|--------|-------|--------|-------|
+| **Lines of Code** | 15,000+ | **AI Providers** | 13 |
+| **React Components** | 28 | **Built-in Tools** | 14 |
+| **IPC Handlers** | 50+ | **MCP Servers** | 12 |
+| **Themes** | 16 | **Security Layers** | 12+ |
 
 ---
 
-## 📸 Screenshots
+## ✨ What Makes Artemis Special
 
-### Main Editor View
+Artemis treats the AI as **untrusted code** — every action is validated, contained, and requires your approval. You stay in control while the agent handles the tedious work.
+
+---
+
+## 🤖 Autonomous AI Agent
+
+**4 Modes for Every Workflow:**
+
+- **🏗️ Builder Mode** — Full autonomy. Plans, codes, runs commands, iterates until done
+- **📋 Planner Mode** — Creates structured plans first, review them, then one-click implement
+- **💬 Chat Mode** — Fast conversational help without tool execution
+- **❓ Ask Mode** — Quick Q&A with read-only context
+
+**13 AI Providers:** OpenAI, Anthropic, Google Gemini, DeepSeek, Groq, Mistral, OpenRouter, Moonshot, Perplexity, Synthetic, Z.AI, OpenCode Zen, and **Ollama** for fully local, private inference.
+
+**Smart Features:**
+- **@-Mentions** — Type `@filename` for context or `@codebase` to index your entire project
+- **Image Attachments** — Drop images for vision-capable models
+- **Web Browsing** — Built-in DuckDuckGo search + URL fetching with SSRF protection
+- **Tool Approval** — Every file write, delete, and command requires your explicit approval
+
+![AI Chat in Action](screenshots/ai-chat.png)
+
+---
+
+## 🔒 Security First
+
+Artemis is built with a **defense-in-depth** security model:
+
+| Layer | Protection |
+|-------|-----------|
+| **OS Encryption** | API keys encrypted via `safeStorage` (DPAPI/Keychain/Secret Service) |
+| **Renderer Sandbox** | `sandbox: true`, `contextIsolation: true` — renderer can't touch Node.js |
+| **Path Containment** | All file ops validated; blocks traversal, UNC paths, system directories |
+| **Command Restrictions** | `shell: false`, executable allowlist, dangerous flag blocking |
+| **SSRF Protection** | Blocks private IPs, loopback, cloud metadata endpoints |
+| **Workspace Trust** | Untrusted folders run in Restricted Mode (no terminal/commands) |
+| **Output Bounds** | 50KB command limit, 2MB file reads, 50 iteration cap |
+
+---
+
+## 🛠️ Full IDE Experience
+
+**Everything you expect from a modern editor:**
+
+- **Monaco Editor** — Same engine as VS Code, 40+ languages
+- **Integrated Terminal** — Real PTY-backed shell (PowerShell, bash, zsh)
+- **Source Control** — Built-in Git panel with staging, diffs, commits, push/pull
+- **File Explorer** — Create, rename, delete with full context menus
+- **Multi-Tab Editing** — Pin tabs, preview mode, drag-to-reorder
+- **Project Search** — Regex search with ripgrep fallback across entire codebase
+- **Problems Panel** — Live TypeScript diagnostics with quick fixes
+
 ![Editor View](screenshots/editor.png)
 
-### AI Chat in Action
-![AI Chat](screenshots/ai-chat.png)
+---
 
-### MCP Marketplace
+## 🔌 MCP Marketplace
+
+**One-Click Superpowers:**
+
+12 curated MCP servers ready to install:
+- **GitHub** — Repos, issues, PRs, code search
+- **Git** — Full version control via natural language
+- **SQLite/PostgreSQL** — Query databases directly
+- **Puppeteer/Playwright** — Browser automation
+- **Docker** — Container management
+- **Notion** — Docs and databases
+- **Brave Search** — Web search
+- **Memory** — Persistent knowledge graph
+- **Filesystem** — Enhanced file operations
+- **Context7** — Up-to-date library documentation
+
+Add custom servers with your own configuration and environment variables.
+
 ![MCP Marketplace](screenshots/mcp.png)
 
-### Theme Gallery
+---
+
+## 🎨 16 Beautiful Themes
+
+Dark · Light · Cyberpunk · Nord · Monokai · Solarized · Dracula · Rosé Pine · Pine · Catppuccin · Gruvbox · Material Ocean · Everforest · Sakura · Beach · Space
+
 ![Themes](screenshots/themes.png)
+
+---
+
+## 🎵 And More
+
+- **🧠 Inline Completions** — Ghost-text suggestions as you type (Tab to accept)
+- **🔔 Sound Effects** — Audio cues when tasks complete
+- **🎮 Discord Rich Presence** — Show what you're working on
+- **📊 Token Tracking** — Real-time cost estimation and context window visualization
+- **🔄 Checkpoints** — Snapshot and restore project state at any point
+- **🧹 Auto-Linting** — ESLint, Pylint integration
+- **⌨️ Command Palette** — Quick access with `Ctrl+Shift+P`
+
+---
+
+## 🏗️ Architecture
+
+### Electron Main Process
+
+```
+electron/
+├── main.ts              # Main entry (~1500 lines)
+│   ├── IPC handlers (fs, git, terminal, agent)
+│   ├── Store with safeStorage encryption
+│   └── Window & security management
+├── preload.ts           # Context bridge (window.artemis.*)
+├── api/
+│   ├── agent/           # AgentLoop, StreamParser
+│   ├── conversation/    # ConversationManager
+│   ├── ipc/             # AgentIPC handlers
+│   ├── providers/       # AI provider adapters
+│   ├── tools/           # ToolRegistry, ToolExecutor
+│   └── types.ts         # Shared TypeScript
+├── services/
+│   ├── checkpointService.ts
+│   ├── commitMessageService.ts
+│   ├── discordRPCService.ts
+│   ├── inlineCompletionService.ts
+│   ├── linterService.ts
+│   ├── mcpClient.ts
+│   ├── mcpService.ts    # MCP marketplace (814 lines)
+│   ├── urlFetchService.ts
+│   └── webSearchService.ts
+└── shared/
+    ├── logger.ts
+    └── security.ts      # Validation & allowlists
+```
+
+### React Renderer
+
+```
+src/
+├── components/          # 28 components
+│   ├── Editor.tsx      # Monaco wrapper (~1000 lines)
+│   ├── ChatPanel.tsx   # AI chat interface
+│   ├── Settings.tsx    # Configuration (~1200 lines)
+│   ├── Terminal.tsx    # xterm.js component
+│   └── ...
+├── hooks/
+│   ├── useOpenCode.ts  # Main state (~1400 lines)
+│   ├── useTheme.ts
+│   └── useTokenTracker.ts
+├── lib/
+│   ├── models.json     # 200+ AI models
+│   ├── zenClient.ts    # Provider client
+│   └── checkpoints.ts  # Checkpoint API
+└── types.ts            # Core TypeScript types
+```
 
 ---
 
@@ -109,36 +206,51 @@ Artemis treats the AI agent as **untrusted code**. Every action is validated, co
 git clone https://github.com/Foxemsx/Artemis.git
 cd Artemis
 
-# Install dependencies
+# Install dependencies (rebuilds node-pty automatically)
 npm install
 
-# Start in development mode
+# Start development mode
 npm run dev
-```
 
-### Building
-
-```bash
+# Build for production
 npm run build
 ```
 
 ---
 
-## 🏗️ Tech Stack
+## 📝 License
 
-| Layer | Technology |
-|-------|-----------|
-| **Framework** | Electron 35 |
-| **Frontend** | React 18 + TypeScript 5.3 |
-| **Styling** | Tailwind CSS 3.4 |
-| **Editor** | Monaco Editor |
-| **Terminal** | xterm.js + node-pty |
-| **Animations** | Framer Motion |
-| **Bundler** | Vite 5 |
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+
+### What MIT License Means:
+- ✅ You can use this code for free, forever
+- ✅ You can modify it
+- ✅ You can distribute it
+- ✅ You can use it in commercial projects
+- ✅ Private use is allowed
+- ✅ You must include the license and copyright notice
+- ⚠️ You can't hold the author liable
+- ⚠️ There's no warranty
 
 ---
 
-## 🤝 Support & Community
+## 🙏 Acknowledgments
+
+Artemis is built on the shoulders of giants:
+
+- [Monaco Editor](https://microsoft.github.io/monaco-editor/) — The same editor that powers VS Code
+- [xterm.js](https://xtermjs.org/) — Terminal emulator for the web
+- [node-pty](https://github.com/microsoft/node-pty) — Pseudoterminal support
+- [Electron](https://electronjs.org/) — Cross-platform desktop apps
+- [React](https://react.dev/) — UI library
+- [Framer Motion](https://www.framer.com/motion/) — Smooth animations
+- [Tailwind CSS](https://tailwindcss.com/) — Utility-first styling
+- [Lucide](https://lucide.dev/) — Beautiful icons
+- [Vite](https://vitejs.dev/) — Lightning fast builds
+
+---
+
+## 🌐 Connect & Support
 
 <div align="center">
 
@@ -147,21 +259,13 @@ If Artemis helps your workflow, consider supporting the project! 💛
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/foxemsx)
 [![GitHub](https://img.shields.io/badge/GitHub-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Foxemsx/Artemis)
 
-</div>
+**💬 Get in Touch**
 
-### 💬 Get in Touch
-
-- **Discord** — Add me: <kbd>767347091873595433</kbd>
+- **Discord** — Add me: `767347091873595433`
 - **GitHub Issues** — [Report bugs or request features](https://github.com/Foxemsx/Artemis/issues)
 - **Stars** ⭐ — If you like Artemis, give it a star on GitHub!
 
----
-
-## 📄 License
-
-Artemis IDE is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
-
-You are free to use, modify, and distribute this software. Attribution is required.
+</div>
 
 ---
 
@@ -172,3 +276,4 @@ You are free to use, modify, and distribute this software. Attribution is requir
 <img src="resources/icon.png" alt="Artemis" width="32" />
 
 </div>
+
