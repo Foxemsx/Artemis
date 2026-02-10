@@ -187,6 +187,10 @@ interface ArtemisAPI {
     search: (query: string) => Promise<{ query: string; results: { title: string; url: string; snippet: string }[]; error?: string }>
   }
 
+  fetchUrl: {
+    fetch: (url: string) => Promise<{ url: string; title: string; content: string; contentLength: number; truncated: boolean; error?: string }>
+  }
+
   linter: {
     lint: (filePath: string, projectPath: string) => Promise<{ file: string; diagnostics: { file: string; line: number; column: number; severity: string; message: string; ruleId: string; source: string }[]; error?: string }>
   }

@@ -13,22 +13,36 @@ interface KeyBind {
   description: string
   defaultKey: string
   currentKey: string
+  category: 'most-used' | 'navigation' | 'editor' | 'chat'
 }
 
-const DEFAULT_KEYBINDS: KeyBind[] = [
-  { id: 'commandPalette', label: 'Command Palette', description: 'Open the command palette', defaultKey: 'Ctrl+K', currentKey: 'Ctrl+K' },
-  { id: 'newSession', label: 'New Session', description: 'Create a new chat session', defaultKey: 'Ctrl+N', currentKey: 'Ctrl+N' },
-  { id: 'search', label: 'Search Files', description: 'Open file search', defaultKey: 'Ctrl+Shift+F', currentKey: 'Ctrl+Shift+F' },
-  { id: 'quickSearch', label: 'Quick Search', description: 'Quick file search', defaultKey: 'Ctrl+T', currentKey: 'Ctrl+T' },
-  { id: 'toggleSidebar', label: 'Toggle Sidebar', description: 'Show/hide the sidebar', defaultKey: 'Ctrl+B', currentKey: 'Ctrl+B' },
-  { id: 'toggleChat', label: 'Toggle Chat', description: 'Show/hide the chat panel', defaultKey: 'Ctrl+J', currentKey: 'Ctrl+J' },
-  { id: 'newTerminal', label: 'New Terminal', description: 'Open a new terminal', defaultKey: 'Ctrl+`', currentKey: 'Ctrl+`' },
-  { id: 'saveFile', label: 'Save File', description: 'Save the current file', defaultKey: 'Ctrl+S', currentKey: 'Ctrl+S' },
-  { id: 'closeTab', label: 'Close Tab', description: 'Close the active tab', defaultKey: 'Ctrl+W', currentKey: 'Ctrl+W' },
-  { id: 'settings', label: 'Settings', description: 'Open settings', defaultKey: 'Ctrl+,', currentKey: 'Ctrl+,' },
+const KEYBIND_CATEGORIES: { id: string; label: string; description: string }[] = [
+  { id: 'most-used', label: 'Most Useful', description: 'Frequently used shortcuts' },
+  { id: 'navigation', label: 'Navigation', description: 'Switch between views and panels' },
+  { id: 'editor', label: 'Editor', description: 'File editing and tab management' },
+  { id: 'chat', label: 'Chat & AI', description: 'AI agent and chat controls' },
 ]
 
-type SettingsCategory = 'providers' | 'appearance' | 'sounds' | 'discord' | 'general' | 'completion' | 'about'
+const DEFAULT_KEYBINDS: KeyBind[] = [
+  { id: 'commandPalette', label: 'Command Palette', description: 'Open the command palette', defaultKey: 'Ctrl+K', currentKey: 'Ctrl+K', category: 'most-used' },
+  { id: 'saveFile', label: 'Save File', description: 'Save the current file', defaultKey: 'Ctrl+S', currentKey: 'Ctrl+S', category: 'most-used' },
+  { id: 'search', label: 'Search Files', description: 'Open file search', defaultKey: 'Ctrl+Shift+F', currentKey: 'Ctrl+Shift+F', category: 'most-used' },
+  { id: 'quickSearch', label: 'Quick Search', description: 'Quick file search', defaultKey: 'Ctrl+T', currentKey: 'Ctrl+T', category: 'most-used' },
+  { id: 'openProject', label: 'Open Project', description: 'Open a folder as a project', defaultKey: 'Ctrl+O', currentKey: 'Ctrl+O', category: 'most-used' },
+  { id: 'settings', label: 'Settings', description: 'Open settings', defaultKey: 'Ctrl+,', currentKey: 'Ctrl+,', category: 'most-used' },
+  { id: 'toggleSidebar', label: 'Toggle Sidebar', description: 'Show/hide the sidebar', defaultKey: 'Ctrl+B', currentKey: 'Ctrl+B', category: 'navigation' },
+  { id: 'toggleChat', label: 'Toggle Chat', description: 'Show/hide the chat panel', defaultKey: 'Ctrl+J', currentKey: 'Ctrl+J', category: 'navigation' },
+  { id: 'showExplorer', label: 'Show Explorer', description: 'Switch to file explorer view', defaultKey: 'Ctrl+Shift+E', currentKey: 'Ctrl+Shift+E', category: 'navigation' },
+  { id: 'showGit', label: 'Source Control', description: 'Switch to source control view', defaultKey: 'Ctrl+Shift+G', currentKey: 'Ctrl+Shift+G', category: 'navigation' },
+  { id: 'showProblems', label: 'Show Problems', description: 'Switch to problems panel', defaultKey: 'Ctrl+Shift+M', currentKey: 'Ctrl+Shift+M', category: 'navigation' },
+  { id: 'newTerminal', label: 'New Terminal', description: 'Open a new terminal', defaultKey: 'Ctrl+`', currentKey: 'Ctrl+`', category: 'editor' },
+  { id: 'closeTab', label: 'Close Tab', description: 'Close the active tab', defaultKey: 'Ctrl+W', currentKey: 'Ctrl+W', category: 'editor' },
+  { id: 'focusChat', label: 'Focus Chat', description: 'Focus the chat input', defaultKey: 'Ctrl+L', currentKey: 'Ctrl+L', category: 'chat' },
+  { id: 'newSession', label: 'New Session', description: 'Create a new chat session', defaultKey: 'Ctrl+N', currentKey: 'Ctrl+N', category: 'chat' },
+  { id: 'clearChat', label: 'Clear Chat', description: 'Clear current chat messages', defaultKey: 'Ctrl+Shift+L', currentKey: 'Ctrl+Shift+L', category: 'chat' },
+]
+
+type SettingsCategory = 'providers' | 'appearance' | 'sounds' | 'discord' | 'general' | 'completion' | 'rules' | 'about'
 
 interface ProviderConfig {
   key: string
@@ -73,6 +87,7 @@ const SIDEBAR_ITEMS: { id: SettingsCategory; label: string; icon: typeof Palette
   { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'sounds', label: 'Sounds & Alerts', icon: Volume2 },
   { id: 'discord', label: 'Discord RPC', icon: Gamepad2 },
+  { id: 'rules', label: 'Agent Rules', icon: FileText },
   { id: 'general', label: 'General', icon: Settings2 },
   { id: 'about', label: 'About', icon: Info },
 ]
@@ -171,6 +186,7 @@ export default function Settings({ theme, onSetTheme, apiKeys, onSetApiKey, soun
           )}
           {activeCategory === 'discord' && <DiscordRPCSection />}
           {activeCategory === 'general' && <GeneralSection />}
+          {activeCategory === 'rules' && <RulesSection />}
           {activeCategory === 'about' && <AboutSection />}
         </div>
       </div>
@@ -616,6 +632,7 @@ function GeneralSection() {
       map[kb.id] = kb.currentKey
     }
     window.artemis.store.set('keybinds', map).catch(() => {})
+    window.dispatchEvent(new CustomEvent('artemis:keybinds-changed', { detail: map }))
   }
 
   useEffect(() => {
@@ -677,70 +694,81 @@ function GeneralSection() {
     <>
       <SectionHeader title="General" subtitle="Keyboard shortcuts and general preferences." />
 
-      <div className="rounded-xl overflow-hidden" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
-        <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-          <div className="flex items-center gap-2">
-            <Keyboard size={14} style={{ color: 'var(--accent)' }} />
-            <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>Keyboard Shortcuts</span>
-          </div>
-          <button
-            onClick={resetAll}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium transition-all duration-100"
-            style={{ color: 'var(--text-muted)', backgroundColor: 'transparent' }}
-            onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-secondary)' }}
-            onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}
-          >
-            <RotateCcw size={10} />
-            Reset All
-          </button>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Keyboard size={14} style={{ color: 'var(--accent)' }} />
+          <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>Keyboard Shortcuts</span>
         </div>
+        <button
+          onClick={resetAll}
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium transition-all duration-100"
+          style={{ color: 'var(--text-muted)', backgroundColor: 'transparent' }}
+          onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-secondary)' }}
+          onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}
+        >
+          <RotateCcw size={10} />
+          Reset All
+        </button>
+      </div>
 
-        <div className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
-          {keybinds.map(kb => {
-            const isRecording = recordingId === kb.id
-            const isModified = kb.currentKey !== kb.defaultKey
-
-            return (
-              <div
-                key={kb.id}
-                className="flex items-center justify-between px-5 py-3"
-                style={{ borderColor: 'var(--border-subtle)' }}
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{kb.label}</p>
-                  <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{kb.description}</p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => setRecordingId(isRecording ? null : kb.id)}
-                    className="px-3 py-1.5 rounded-md text-[11px] font-mono font-semibold transition-all duration-150"
-                    style={{
-                      backgroundColor: isRecording ? 'rgba(var(--accent-rgb), 0.15)' : 'var(--bg-elevated)',
-                      color: isRecording ? 'var(--accent)' : isModified ? 'var(--accent)' : 'var(--text-secondary)',
-                      border: isRecording ? '1.5px solid var(--accent)' : '1px solid var(--border-default)',
-                      minWidth: 80,
-                      textAlign: 'center',
-                    }}
-                  >
-                    {isRecording ? 'Press keys...' : kb.currentKey}
-                  </button>
-                  {isModified && (
-                    <button
-                      onClick={() => resetKeybind(kb.id)}
-                      className="p-1 rounded-md transition-all duration-100"
-                      style={{ color: 'var(--text-muted)' }}
-                      onMouseEnter={e => { e.currentTarget.style.color = 'var(--accent)'; e.currentTarget.style.backgroundColor = 'var(--bg-hover)' }}
-                      onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.backgroundColor = 'transparent' }}
-                      title="Reset to default"
-                    >
-                      <RotateCcw size={12} />
-                    </button>
-                  )}
-                </div>
+      <div className="space-y-4">
+        {KEYBIND_CATEGORIES.map(cat => {
+          const categoryBinds = keybinds.filter(kb => kb.category === cat.id)
+          if (categoryBinds.length === 0) return null
+          return (
+            <div key={cat.id} className="rounded-xl overflow-hidden" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+              <div className="px-5 py-2.5" style={{ borderBottom: '1px solid var(--border-subtle)', backgroundColor: 'rgba(var(--accent-rgb), 0.03)' }}>
+                <p className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--accent)' }}>{cat.label}</p>
+                <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{cat.description}</p>
               </div>
-            )
-          })}
-        </div>
+              <div className="divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
+                {categoryBinds.map(kb => {
+                  const isRecording = recordingId === kb.id
+                  const isModified = kb.currentKey !== kb.defaultKey
+                  return (
+                    <div
+                      key={kb.id}
+                      className="flex items-center justify-between px-5 py-3"
+                      style={{ borderColor: 'var(--border-subtle)' }}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{kb.label}</p>
+                        <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{kb.description}</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => setRecordingId(isRecording ? null : kb.id)}
+                          className="px-3 py-1.5 rounded-md text-[11px] font-mono font-semibold transition-all duration-150"
+                          style={{
+                            backgroundColor: isRecording ? 'rgba(var(--accent-rgb), 0.15)' : 'var(--bg-elevated)',
+                            color: isRecording ? 'var(--accent)' : isModified ? 'var(--accent)' : 'var(--text-secondary)',
+                            border: isRecording ? '1.5px solid var(--accent)' : '1px solid var(--border-default)',
+                            minWidth: 80,
+                            textAlign: 'center',
+                          }}
+                        >
+                          {isRecording ? 'Press keys...' : kb.currentKey}
+                        </button>
+                        {isModified && (
+                          <button
+                            onClick={() => resetKeybind(kb.id)}
+                            className="p-1 rounded-md transition-all duration-100"
+                            style={{ color: 'var(--text-muted)' }}
+                            onMouseEnter={e => { e.currentTarget.style.color = 'var(--accent)'; e.currentTarget.style.backgroundColor = 'var(--bg-hover)' }}
+                            onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.backgroundColor = 'transparent' }}
+                            title="Reset to default"
+                          >
+                            <RotateCcw size={12} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })}
       </div>
 
       {/* Agent Mode Default */}
@@ -1493,6 +1521,233 @@ function DiscordRPCSection() {
           </div>
         </div>
       </div>
+    </>
+  )
+}
+
+// ─── Rules Section ──────────────────────────────────────────────────────────
+
+function RulesSection() {
+  const [personalRules, setPersonalRules] = useState('')
+  const [projectRules, setProjectRules] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [savingPersonal, setSavingPersonal] = useState(false)
+  const [savedPersonal, setSavedPersonal] = useState(false)
+  const [savingProject, setSavingProject] = useState(false)
+  const [savedProject, setSavedProject] = useState(false)
+  const [projectPath, setProjectPath] = useState<string | null>(null)
+  const [hasProject, setHasProject] = useState(false)
+  const [activeTab, setActiveTab] = useState<'project' | 'personal'>('project')
+
+  useEffect(() => {
+    window.artemis.store.get('lastProject').then(async (project: any) => {
+      if (!project?.path) { setLoading(false); return }
+      setHasProject(true)
+      const pPath = project.path.replace(/\\/g, '/')
+      setProjectPath(pPath)
+      try { const c = await window.artemis.fs.readFile(`${pPath}/.artemis/rules`); setPersonalRules(c) } catch { setPersonalRules('') }
+      try { const c = await window.artemis.fs.readFile(`${pPath}/artemis.md`); setProjectRules(c) } catch { setProjectRules('') }
+      setLoading(false)
+    }).catch(() => setLoading(false))
+  }, [])
+
+  const handleSavePersonal = async () => {
+    if (!projectPath) return
+    setSavingPersonal(true)
+    try {
+      try { await window.artemis.fs.createDir(`${projectPath}/.artemis`) } catch { /* exists */ }
+      await window.artemis.fs.writeFile(`${projectPath}/.artemis/rules`, personalRules)
+      setSavedPersonal(true); setTimeout(() => setSavedPersonal(false), 2000)
+    } catch (err) { console.error('[Rules] Save personal failed:', err) }
+    setSavingPersonal(false)
+  }
+
+  const handleSaveProject = async () => {
+    if (!projectPath) return
+    setSavingProject(true)
+    try {
+      await window.artemis.fs.writeFile(`${projectPath}/artemis.md`, projectRules)
+      setSavedProject(true); setTimeout(() => setSavedProject(false), 2000)
+    } catch (err) { console.error('[Rules] Save project failed:', err) }
+    setSavingProject(false)
+  }
+
+  const PERSONAL_TEMPLATE = `# Personal Rules\n# Your personal AI preferences — NOT committed to git.\n\n## Preferences\n- Always explain changes before making them\n- Use verbose variable names\n- Add comments for complex logic\n\n## Restrictions\n- Do not auto-format files I didn't ask you to touch\n- Ask before deleting anything\n`
+
+  const PROJECT_TEMPLATE = `# Project Rules (artemis.md)\n# Shared with the team — committed to git.\n# Like CLAUDE.md for Claude, this defines project-wide AI rules.\n\n## Project Overview\n- Describe your project here\n\n## Tech Stack\n- List frameworks, languages, libraries\n\n## Code Conventions\n- Follow existing patterns\n- Preserve comments and documentation\n\n## AI Instructions\n- Do not modify config files without asking\n- Always run tests after changes\n- Keep functions small and focused\n`
+
+  if (loading) return null
+
+  const isProject = activeTab === 'project'
+  const content = isProject ? projectRules : personalRules
+  const setContent = isProject ? setProjectRules : setPersonalRules
+  const saving = isProject ? savingProject : savingPersonal
+  const saved = isProject ? savedProject : savedPersonal
+  const handleSave = isProject ? handleSaveProject : handleSavePersonal
+  const template = isProject ? PROJECT_TEMPLATE : PERSONAL_TEMPLATE
+
+  return (
+    <>
+      <SectionHeader title="Agent Rules" subtitle="Configure how the AI agent behaves in your project. Rules are injected as context in every conversation." />
+
+      {!hasProject ? (
+        <div className="rounded-xl p-5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: 'rgba(251, 191, 36, 0.06)', border: '1px solid rgba(251, 191, 36, 0.1)' }}>
+              <Info size={18} style={{ color: '#fbbf24' }} />
+            </div>
+            <div>
+              <p className="text-[12px] font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>No project open</p>
+              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>Open a project first to manage agent rules.</p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* Rules Hierarchy */}
+          <div className="rounded-xl p-5 mb-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <p className="text-[12px] font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>How rules work</p>
+            <p className="text-[11px] mb-4 leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              Artemis uses a layered rules system, like <code className="text-[10px] px-1 py-0.5 rounded" style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>CLAUDE.md</code> for Claude. Rules stack from general to specific — later rules take priority.
+            </p>
+            <div className="space-y-0">
+              {([
+                { num: '1', file: 'artemis.md', loc: 'Project root', desc: 'Shared project rules — committed to git, visible to the team', color: '#4ade80', tag: 'Shared' },
+                { num: '2', file: 'artemis.md', loc: 'Any subfolder', desc: 'Folder-specific overrides — apply when AI works in that directory', color: '#60a5fa', tag: 'Per-folder' },
+                { num: '3', file: '.artemis/rules', loc: 'Project root', desc: 'Your personal rules — local only, gitignored, highest priority', color: 'var(--accent)', tag: 'Personal' },
+              ] as const).map((rule, i) => (
+                <div key={rule.num} className="flex items-start gap-3">
+                  <div className="flex flex-col items-center shrink-0">
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold" style={{ backgroundColor: `${rule.color}15`, color: rule.color, border: `1.5px solid ${rule.color}30` }}>{rule.num}</div>
+                    {i < 2 && <div className="w-px h-4" style={{ backgroundColor: 'var(--border-subtle)' }} />}
+                  </div>
+                  <div className="pb-2 flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-0.5">
+                      <code className="text-[10px] px-1.5 py-0.5 rounded font-semibold" style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-primary)' }}>{rule.file}</code>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded-full font-semibold" style={{ backgroundColor: `${rule.color}12`, color: rule.color }}>{rule.tag}</span>
+                      <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>{rule.loc}</span>
+                    </div>
+                    <p className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{rule.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Tab Switcher */}
+          <div className="flex gap-1 p-1 rounded-lg mb-4" style={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)' }}>
+            {([
+              { id: 'project' as const, label: 'Project Rules', file: 'artemis.md', color: '#4ade80', hasContent: !!projectRules.trim() },
+              { id: 'personal' as const, label: 'Personal Rules', file: '.artemis/rules', color: 'var(--accent)', hasContent: !!personalRules.trim() },
+            ]).map(tab => {
+              const isActive = activeTab === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md text-[11px] font-semibold transition-all duration-150"
+                  style={{
+                    backgroundColor: isActive ? 'var(--bg-card)' : 'transparent',
+                    color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
+                    boxShadow: isActive ? 'var(--shadow-card)' : 'none',
+                  }}
+                >
+                  {tab.label}
+                  {tab.hasContent && (
+                    <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tab.color }} />
+                  )}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Tab description */}
+          <div className="rounded-xl p-3.5 mb-3 flex items-start gap-2.5" style={{ backgroundColor: isProject ? 'rgba(74, 222, 128, 0.04)' : 'rgba(var(--accent-rgb), 0.04)', border: `1px solid ${isProject ? 'rgba(74, 222, 128, 0.1)' : 'rgba(var(--accent-rgb), 0.1)'}` }}>
+            <FileText size={14} className="shrink-0 mt-0.5" style={{ color: isProject ? '#4ade80' : 'var(--accent)' }} />
+            <div className="text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              {isProject ? (
+                <span><strong style={{ color: 'var(--text-secondary)' }}>artemis.md</strong> — Shared project rules in your project root. Committed to git so your entire team follows the same AI conventions. You can also place <code className="px-1 py-0.5 rounded text-[9px]" style={{ backgroundColor: 'var(--bg-elevated)' }}>artemis.md</code> in any subfolder to define folder-specific rules.</span>
+              ) : (
+                <span><strong style={{ color: 'var(--text-secondary)' }}>.artemis/rules</strong> — Your personal rules, stored in the hidden <code className="px-1 py-0.5 rounded text-[9px]" style={{ backgroundColor: 'var(--bg-elevated)' }}>.artemis/</code> directory. Gitignored by default. These override project rules and are only for you.</span>
+              )}
+            </div>
+          </div>
+
+          {/* Editor */}
+          <div className="rounded-xl overflow-hidden" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <div className="flex items-center justify-between px-5 py-2.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+              <div className="flex items-center gap-2">
+                <FileText size={13} style={{ color: isProject ? '#4ade80' : 'var(--accent)' }} />
+                <span className="text-[12px] font-semibold font-mono" style={{ color: 'var(--text-primary)' }}>{isProject ? 'artemis.md' : '.artemis/rules'}</span>
+                {content.length > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ backgroundColor: 'var(--bg-elevated)', color: 'var(--text-muted)' }}>{content.split('\n').length} lines</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {!content.trim() && (
+                  <button
+                    onClick={() => setContent(template)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium transition-all duration-100"
+                    style={{ color: 'var(--accent)', backgroundColor: 'var(--accent-glow)' }}
+                    onMouseEnter={e => { e.currentTarget.style.backgroundColor = 'rgba(var(--accent-rgb), 0.15)' }}
+                    onMouseLeave={e => { e.currentTarget.style.backgroundColor = 'var(--accent-glow)' }}
+                  >
+                    <Sparkles size={10} />
+                    Use Template
+                  </button>
+                )}
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 px-3 py-1 rounded-md text-[10px] font-semibold transition-all duration-150"
+                  style={{ backgroundColor: saved ? 'rgba(74, 222, 128, 0.12)' : 'var(--accent)', color: saved ? '#4ade80' : '#000', opacity: saving ? 0.6 : 1 }}
+                >
+                  {saving ? <Loader2 size={10} className="animate-spin" /> : saved ? <Check size={10} /> : null}
+                  {saving ? 'Saving...' : saved ? 'Saved' : 'Save'}
+                </button>
+              </div>
+            </div>
+            <textarea
+              value={content}
+              onChange={e => setContent(e.target.value)}
+              placeholder={isProject ? '# Write shared project rules here...\n\nThese apply to everyone on the team.' : '# Write your personal rules here...\n\nThese are private to you and override project rules.'}
+              className="w-full bg-transparent border-none outline-none resize-none text-[12px] leading-relaxed font-mono px-5 py-4"
+              style={{ color: 'var(--text-primary)', caretColor: isProject ? '#4ade80' : 'var(--accent)', minHeight: 240 }}
+              spellCheck={false}
+            />
+          </div>
+
+          {/* What to include */}
+          <div className="rounded-xl p-5 mt-4" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <p className="text-[12px] font-semibold mb-3" style={{ color: 'var(--text-primary)' }}>What to include in rules</p>
+            <div className="space-y-2">
+              {[
+                { title: 'Project Context', desc: 'Brief description, tech stack, architecture overview' },
+                { title: 'Code Style', desc: 'Naming conventions, formatting, patterns to follow' },
+                { title: 'Restrictions', desc: 'Files/folders not to modify, actions to avoid' },
+                { title: 'Preferences', desc: 'Language choice, framework patterns, testing approach' },
+                { title: 'AI Behavior', desc: 'When to ask vs. act, verbosity, explanation style' },
+              ].map(item => (
+                <div key={item.title} className="flex items-start gap-2.5">
+                  <div className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: 'var(--accent)' }} />
+                  <div>
+                    <span className="text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>{item.title}</span>
+                    <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}> — {item.desc}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Tip */}
+          <div className="rounded-xl p-4 mt-3 flex items-start gap-2.5" style={{ backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
+            <Info size={13} className="shrink-0 mt-0.5" style={{ color: 'var(--text-muted)' }} />
+            <p className="text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              <strong style={{ color: 'var(--text-secondary)' }}>Tip:</strong> Use <code className="px-1 py-0.5 rounded text-[9px]" style={{ backgroundColor: 'var(--bg-elevated)' }}>/init</code> in chat to auto-generate an <code className="px-1 py-0.5 rounded text-[9px]" style={{ backgroundColor: 'var(--bg-elevated)' }}>artemis.md</code> from your project structure. Keep rules concise — they count against the AI context window.
+            </p>
+          </div>
+        </>
+      )}
     </>
   )
 }

@@ -464,6 +464,26 @@ export default function Editor({
               // ─── Register inline completion provider (once globally) ───
               registerInlineCompletionProvider(monacoInstance)
 
+              // ─── "Add Selection to Chat" context menu action ───
+              editor.addAction({
+                id: 'artemis.addSelectionToChat',
+                label: 'Add Selection to Chat',
+                contextMenuGroupId: '9_cutcopypaste',
+                contextMenuOrder: 99,
+                precondition: 'editorHasSelection',
+                run: (ed) => {
+                  const selection = ed.getSelection()
+                  if (!selection) return
+                  const selectedText = ed.getModel()?.getValueInRange(selection) || ''
+                  if (!selectedText.trim()) return
+                  const filePath = activeTab?.path || ''
+                  const language = activeTab?.language || ''
+                  window.dispatchEvent(new CustomEvent('artemis:add-selection-to-chat', {
+                    detail: { text: selectedText, filePath, language },
+                  }))
+                },
+              })
+
               // ─── Focus the editor ───
               editor.focus()
             }}

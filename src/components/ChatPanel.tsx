@@ -57,6 +57,29 @@ export default function ChatPanel({
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
   const attachImageRef = useRef<(() => void) | null>(null)
 
+  // Listen for "Add Selection to Chat" from the editor context menu
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { text, filePath, language } = (e as CustomEvent).detail
+      if (!text) return
+      const fileName = filePath ? filePath.split(/[\\/]/).pop() || 'selection' : 'selection'
+      const newFile: AttachedFile = {
+        id: `sel-${Date.now()}-${Math.random()}`,
+        name: fileName,
+        path: filePath || 'selection',
+        content: text,
+      }
+      setAttachedFiles(prev => [...prev, newFile])
+      // Focus the chat input
+      setTimeout(() => {
+        const chatInput = document.querySelector('[data-chat-input]') as HTMLTextAreaElement | null
+        chatInput?.focus()
+      }, 50)
+    }
+    window.addEventListener('artemis:add-selection-to-chat', handler)
+    return () => window.removeEventListener('artemis:add-selection-to-chat', handler)
+  }, [])
+
   const scrollRafRef = useRef<number>(0)
   useEffect(() => {
     cancelAnimationFrame(scrollRafRef.current)
@@ -110,8 +133,8 @@ export default function ChatPanel({
           return
         case '/init':
           onSendMessage(
-            '/init — Analyze this project and create an AGENTS.md file in the project root.',
-            `[System instruction]\nAnalyze the entire project structure, tech stack, entry points, key files, and architecture. Then create an AGENTS.md file in the project root directory with:\n\n1. **Project Overview** — What this project is, its purpose\n2. **Tech Stack** — Languages, frameworks, libraries, tools\n3. **Project Structure** — Directory layout with descriptions\n4. **Entry Points** — Main files that start the app\n5. **Key Components/Modules** — Important files and what they do\n6. **Development Setup** — How to install, run, build, test\n7. **Conventions** — Code style, naming, patterns used\n8. **AI Instructions** — Rules the AI should follow when editing this project (e.g., preserve comments, follow existing patterns, don't break imports)\n\nWrite the file using window.artemis tools (write_file). Make it comprehensive but concise. This file will be automatically read by the AI on every future message to maintain project context.`
+            '/init — Analyze this project and create an artemis.md file in the project root.',
+            `[System instruction]\nAnalyze the entire project structure, tech stack, entry points, key files, and architecture. Then create an artemis.md file in the project root directory with:\n\n1. **Project Overview** — What this project is, its purpose\n2. **Tech Stack** — Languages, frameworks, libraries, tools\n3. **Project Structure** — Directory layout with descriptions\n4. **Entry Points** — Main files that start the app\n5. **Key Components/Modules** — Important files and what they do\n6. **Development Setup** — How to install, run, build, test\n7. **Conventions** — Code style, naming, patterns used\n8. **AI Instructions** — Rules the AI should follow when editing this project (e.g., preserve comments, follow existing patterns, don't break imports)\n\nWrite the file using window.artemis tools (write_file). Make it comprehensive but concise. This file will be automatically read by the AI on every future message to maintain project context. The file is called artemis.md (like CLAUDE.md for Claude) — it defines project-wide rules for the Artemis AI agent.`
           )
           setInput('')
           setAttachedImages([])
@@ -474,7 +497,7 @@ export default function ChatPanel({
               </div>
               <div className="flex items-center gap-2">
                 <code className="px-1.5 py-0.5 rounded bg-[var(--bg-card)]" style={{ color: 'var(--accent)' }}>/init</code>
-                <span style={{ color: 'var(--text-muted)' }}>Analyze project &amp; create AGENTS.md</span>
+                <span style={{ color: 'var(--text-muted)' }}>Analyze project &amp; create artemis.md</span>
               </div>
               <div className="pt-1 mt-1 border-t border-[var(--border-subtle)]">
                 <span style={{ color: 'var(--text-muted)' }}>Type <code style={{ color: 'var(--accent)' }}>@</code> to mention files, <code style={{ color: 'var(--accent)' }}>@codebase</code> for full project</span>

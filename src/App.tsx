@@ -194,6 +194,15 @@ export default function App() {
         setKeybindMap(saved)
       }
     }).catch(() => {})
+
+    const handleKeybindsChanged = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      if (detail && typeof detail === 'object') {
+        setKeybindMap(detail)
+      }
+    }
+    window.addEventListener('artemis:keybinds-changed', handleKeybindsChanged)
+    return () => window.removeEventListener('artemis:keybinds-changed', handleKeybindsChanged)
   }, [])
 
   const handleSetupComplete = useCallback(
@@ -583,6 +592,12 @@ export default function App() {
       saveFile: 'Ctrl+S',
       closeTab: 'Ctrl+W',
       settings: 'Ctrl+,',
+      openProject: 'Ctrl+O',
+      focusChat: 'Ctrl+L',
+      showExplorer: 'Ctrl+Shift+E',
+      showGit: 'Ctrl+Shift+G',
+      showProblems: 'Ctrl+Shift+M',
+      clearChat: 'Ctrl+Shift+L',
     }
 
     const getBinding = (id: string) => keybindMap[id] || defaults[id] || ''
@@ -683,11 +698,52 @@ export default function App() {
         setActiveView('settings')
         return
       }
+
+      if (matchesBinding(e, getBinding('openProject'))) {
+        e.preventDefault()
+        addProject()
+        return
+      }
+
+      if (matchesBinding(e, getBinding('focusChat'))) {
+        e.preventDefault()
+        setChatVisible(true)
+        setActiveView('chat')
+        setTimeout(() => {
+          const chatInput = document.querySelector('[data-chat-input]') as HTMLTextAreaElement | null
+          chatInput?.focus()
+        }, 50)
+        return
+      }
+
+      if (matchesBinding(e, getBinding('showExplorer'))) {
+        e.preventDefault()
+        setActiveView('files')
+        return
+      }
+
+      if (matchesBinding(e, getBinding('showGit'))) {
+        e.preventDefault()
+        setActiveView('git')
+        return
+      }
+
+      if (matchesBinding(e, getBinding('showProblems'))) {
+        e.preventDefault()
+        setActiveView('problems')
+        return
+      }
+
+      if (matchesBinding(e, getBinding('clearChat'))) {
+        e.preventDefault()
+        opencode.clearMessages()
+        return
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [showCommandPalette, keybindMap, activeTabPath, editorTabs, saveFile, opencode, createTerminal, closeTab])
+  }, [showCommandPalette, keybindMap, activeTabPath, editorTabs, saveFile, opencode, createTerminal, closeTab, addProject])
 
 
   if (!isLoaded || setupComplete === null) {

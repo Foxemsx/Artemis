@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import type { Theme } from '../types'
 
 const ALL_THEMES: Theme[] = [
@@ -9,6 +9,7 @@ const ALL_THEMES: Theme[] = [
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>('dark')
   const [isLoaded, setIsLoaded] = useState(false)
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     window.artemis.store.get('theme').then((saved: Theme | undefined) => {
@@ -22,7 +23,11 @@ export function useTheme() {
   const setTheme = useCallback((newTheme: Theme) => {
     document.documentElement.setAttribute('data-theme', newTheme)
     setThemeState(newTheme)
-    window.artemis.store.set('theme', newTheme)
+    // Debounce the IPC store write to prevent lag on rapid theme switching
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      window.artemis.store.set('theme', newTheme)
+    }, 300)
   }, [])
 
   const toggleTheme = useCallback(() => {

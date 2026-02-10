@@ -954,6 +954,11 @@ ipcMain.handle('webSearch:search', async (_e, query: string) => {
   return webSearch(query)
 })
 
+ipcMain.handle('fetchUrl:fetch', async (_e, url: string) => {
+  const { fetchUrl } = await import('./services/urlFetchService')
+  return fetchUrl(url)
+})
+
 ipcMain.handle('linter:lint', async (_e, filePath: string, projectPath: string) => {
   return lintFile(filePath, projectPath)
 })

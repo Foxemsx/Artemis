@@ -161,6 +161,11 @@ contextBridge.exposeInMainWorld('artemis', {
       ipcRenderer.invoke('webSearch:search', query),
   },
 
+  fetchUrl: {
+    fetch: (url: string) =>
+      ipcRenderer.invoke('fetchUrl:fetch', url),
+  },
+
   linter: {
     lint: (filePath: string, projectPath: string) =>
       ipcRenderer.invoke('linter:lint', filePath, projectPath),

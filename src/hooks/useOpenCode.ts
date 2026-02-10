@@ -786,15 +786,27 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
         }
       } catch {}
 
-      // Auto-include AGENTS.md if it exists in the project root
+      // ─── Hierarchical artemis.md Rules ─────────────────────────
+      // 1) Project-root artemis.md (shared with team, committed to git)
       try {
-        const agentsPath = `${projectPath}/AGENTS.md`.replace(/\\/g, '/')
-        const agentsContent = await window.artemis.fs.readFile(agentsPath)
-        if (agentsContent && agentsContent.trim()) {
-          systemPrompt += `\n\n[AGENTS.md — Project rules and context, always follow these instructions]\n${agentsContent.slice(0, 15000)}`
+        const artemisPath = `${projectPath}/artemis.md`.replace(/\\/g, '/')
+        const artemisContent = await window.artemis.fs.readFile(artemisPath)
+        if (artemisContent && artemisContent.trim()) {
+          systemPrompt += `\n\n[Project Rules (artemis.md) — Always follow these instructions]\n${artemisContent.slice(0, 15000)}`
         }
       } catch {
-        // AGENTS.md doesn't exist yet — that's fine
+        // artemis.md doesn't exist — that's fine
+      }
+
+      // 2) Personal rules from .artemis/rules (local, gitignored, edited in Settings)
+      try {
+        const personalRulesPath = `${projectPath}/.artemis/rules`.replace(/\\/g, '/')
+        const personalRules = await window.artemis.fs.readFile(personalRulesPath)
+        if (personalRules && personalRules.trim()) {
+          systemPrompt += `\n\n[Personal Rules (.artemis/rules) — User-specific instructions, take priority]\n${personalRules.slice(0, 15000)}`
+        }
+      } catch {
+        // .artemis/rules doesn't exist — that's fine
       }
     }
 

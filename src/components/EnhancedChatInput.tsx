@@ -90,6 +90,7 @@ interface MentionItem {
 // Special mention items always shown at top
 const SPECIAL_MENTIONS: MentionItem[] = [
   { id: '__codebase__', name: 'codebase', path: '__codebase__', type: 'special' },
+  { id: '__url__', name: 'url', path: '__url__', type: 'special' },
 ]
 
 // Recursively index all text files in a project for @codebase context
@@ -239,7 +240,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
   {
     id: 'init',
     name: 'init',
-    description: 'Analyze project and create AGENTS.md',
+    description: 'Analyze project and create artemis.md',
     icon: BookOpen,
   },
 ]
@@ -293,54 +294,64 @@ export default function EnhancedChatInput({
     )
   }, [slashFilter])
 
-  // Filter mention items (with special mentions at top)
+  // Filter mention items (with special mentions at top) — fuzzy scored
   const filteredMentionItems = useMemo(() => {
     const specials = SPECIAL_MENTIONS.filter(s =>
       !mentionFilter || s.name.toLowerCase().includes(mentionFilter.toLowerCase())
     )
-    const files = mentionFilter
-      ? mentionItems.filter(
-          (item) =>
-            item.name.toLowerCase().includes(mentionFilter.toLowerCase()) ||
-            item.path.toLowerCase().includes(mentionFilter.toLowerCase())
-        ).slice(0, 18)
-      : mentionItems.slice(0, 18)
-    return [...specials, ...files]
+    if (!mentionFilter) return [...specials, ...mentionItems.slice(0, 24)]
+
+    const lower = mentionFilter.toLowerCase()
+    const scored: { item: MentionItem; score: number }[] = []
+    for (const item of mentionItems) {
+      const nameLower = item.name.toLowerCase()
+      const pathLower = item.path.toLowerCase()
+      if (nameLower.startsWith(lower)) {
+        scored.push({ item, score: 3 })
+      } else if (nameLower.includes(lower)) {
+        scored.push({ item, score: 2 })
+      } else if (pathLower.includes(lower)) {
+        scored.push({ item, score: 1 })
+      }
+    }
+    scored.sort((a, b) => b.score - a.score)
+    return [...specials, ...scored.map(s => s.item).slice(0, 24)]
   }, [mentionItems, mentionFilter])
 
-  // Load file tree for mentions
+  // Load file tree for mentions — deeper recursive scan for better coverage
   const loadFileTree = useCallback(async () => {
     if (!projectPath) return
-    
+
+    const ignoreDirs = new Set([
+      'node_modules', '.git', 'dist', 'dist-electron', 'build', '.next',
+      '__pycache__', '.venv', 'venv', '.cache', 'coverage', '.idea', '.vscode',
+    ])
+
     try {
-      const entries = await window.artemis.fs.readDir(projectPath)
       const items: MentionItem[] = []
-      
-      const processEntries = async (entries: { name: string; type: 'file' | 'directory' }[], parentPath: string) => {
-        for (const entry of entries) {
-          const fullPath = `${parentPath}/${entry.name}`.replace(/\\/g, '/')
-          items.push({
-            id: fullPath,
-            name: entry.name,
-            path: fullPath,
-            type: entry.type,
-          })
-          
-          // Limit depth and total items
-          if (items.length >= 100) break
-          
-          if (entry.type === 'directory' && items.length < 100) {
-            try {
-              const children = await window.artemis.fs.readDir(fullPath)
-              await processEntries(children.slice(0, 10), fullPath)
-            } catch {
-              // Ignore errors for restricted directories
+
+      const walk = async (dir: string, depth: number) => {
+        if (depth > 5 || items.length >= 300) return
+        try {
+          const entries = await window.artemis.fs.readDir(dir)
+          for (const entry of entries) {
+            if (items.length >= 300) break
+            const fullPath = `${dir}/${entry.name}`.replace(/\\/g, '/')
+            if (entry.type === 'directory' && (ignoreDirs.has(entry.name) || entry.name.startsWith('.'))) continue
+            items.push({
+              id: fullPath,
+              name: entry.name,
+              path: fullPath,
+              type: entry.type,
+            })
+            if (entry.type === 'directory') {
+              await walk(fullPath, depth + 1)
             }
           }
-        }
+        } catch { /* skip unreadable dirs */ }
       }
-      
-      await processEntries(entries, projectPath)
+
+      await walk(projectPath, 0)
       setMentionItems(items)
     } catch {
       setMentionItems([])
@@ -515,6 +526,27 @@ export default function EnhancedChatInput({
                 })
               } catch {
                 mentions.push({ name: 'codebase', path: projectPath, content: '[Failed to index codebase]' })
+              }
+              continue
+            }
+
+            // ─── @url or @https://... or @http://... : fetch web content ─
+            if (name === 'url') continue // placeholder, user needs to type the actual URL after
+            if (name.startsWith('http://') || name.startsWith('https://')) {
+              try {
+                const result = await window.artemis.fetchUrl.fetch(name)
+                if (result.error) {
+                  mentions.push({ name, path: name, content: `[Failed to fetch URL: ${name}] ${result.error}` })
+                } else {
+                  const title = result.title ? `Title: ${result.title}\n` : ''
+                  mentions.push({
+                    name: name,
+                    path: name,
+                    content: `[Fetched URL: ${name}]\n${title}${result.content.slice(0, 30000)}`,
+                  })
+                }
+              } catch {
+                mentions.push({ name, path: name, content: `[Failed to fetch URL: ${name}]` })
               }
               continue
             }
@@ -858,6 +890,7 @@ export default function EnhancedChatInput({
         </div>
       )}
       <textarea
+        data-chat-input
         ref={textareaRef}
         value={value}
         onChange={handleChange}
@@ -1019,7 +1052,7 @@ export default function EnhancedChatInput({
                         {isSpecial ? `@${item.name}` : item.name}
                       </span>
                       <span className="text-[10px] block truncate" style={{ color: 'var(--text-muted)', opacity: 0.7 }}>
-                        {isSpecial ? 'Search & index the entire project as context' : item.path.replace(projectPath || '', '').slice(1)}
+                        {isSpecial && item.id === '__codebase__' ? 'Search & index the entire project as context' : isSpecial && item.id === '__url__' ? 'Type @https://... to fetch a web page as context' : item.path.replace(projectPath || '', '').slice(1)}
                       </span>
                     </div>
                   </button>
