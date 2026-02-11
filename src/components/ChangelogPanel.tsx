@@ -270,19 +270,20 @@ export default function ChangelogPanel() {
                       </span>
                     </div>
                   </div>
-                  <button
+                  <div
+                    role="button"
                     onClick={(e) => {
                       e.stopPropagation()
                       window.artemis.shell.openExternal(entry.htmlUrl)
                     }}
-                    className="p-1.5 rounded-md transition-all"
+                    className="p-1.5 rounded-md transition-all cursor-pointer"
                     style={{ color: 'var(--text-muted)' }}
                     onMouseEnter={e => { e.currentTarget.style.color = 'var(--accent)' }}
                     onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-muted)' }}
                     title="View on GitHub"
                   >
                     <ExternalLink size={12} />
-                  </button>
+                  </div>
                 </button>
 
                 {/* Expanded content */}
