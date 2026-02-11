@@ -75,8 +75,19 @@ export const ALLOWED_EXECUTABLES = new Set([
   'python', 'python3', 'pip', 'pip3', 'cargo', 'rustc', 'go', 'java', 'javac', 'ruby', 'gem',
   'cat', 'echo', 'ls', 'dir', 'find', 'grep', 'rg', 'sed', 'awk', 'head', 'tail', 'wc',
   'mkdir', 'rm', 'cp', 'mv', 'touch', 'chmod', 'curl', 'wget',
+  'copy', 'xcopy', 'robocopy', 'move', 'rename', 'ren', 'del', 'type', 'where', 'whoami',
+  'powershell', 'pwsh', 'cmd',
+  'tar', 'unzip', 'zip', 'gzip', 'gunzip',
+  'env', 'printenv', 'which', 'realpath', 'basename', 'dirname', 'stat', 'file', 'diff',
+  'sort', 'uniq', 'tr', 'cut', 'tee', 'xargs', 'less', 'more',
   'docker', 'docker-compose', 'podman',
   'jest', 'vitest', 'mocha', 'pytest',
+  'dotnet', 'mvn', 'gradle', 'make', 'cmake', 'gcc', 'g++', 'clang',
+  'ssh', 'scp', 'rsync',
+  'netlify', 'vercel', 'firebase', 'heroku', 'flyctl',
+  'prisma', 'drizzle-kit', 'sequelize', 'typeorm',
+  'next', 'nuxt', 'astro', 'svelte-kit', 'remix',
+  'electron', 'electron-builder', 'tauri',
 ])
 
 // ─── Runtime Eval Flags ──────────────────────────────────────────────────────
