@@ -1,7 +1,7 @@
 {
   "name": "artemis",
-  "version": "0.1.1",
-  "description": "Artemis — AI-powered IDE with 13 providers, built-in terminal, and agentic coding",
+  "version": "0.1.2",
+  "description": "Artemis - IDE",
   "author": {
     "name": "Foxemsx",
     "url": "https://github.com/Foxemsx"

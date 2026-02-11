@@ -378,6 +378,11 @@ export function setActivity(presence: DiscordPresence): void {
     activity.assets.small_text = presence.smallImageText
   }
 
+  activity.buttons = [
+    { label: 'Get Artemis IDE', url: 'https://github.com/Foxemsx/Artemis' },
+    { label: 'Artemis Website', url: 'https://artemiside.vercel.app' },
+  ]
+
   const payload = JSON.stringify({
     cmd: 'SET_ACTIVITY',
     args: { pid: process.pid, activity },
