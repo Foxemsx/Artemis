@@ -1,5 +1,5 @@
 export type Theme = 'dark' | 'light' | 'cyberpunk' | 'nord' | 'monokai' | 'solarized' | 'dracula' | 'rosepine' | 'pine' | 'catppuccin' | 'gruvbox' | 'materialocean' | 'everforest' | 'sakura' | 'beach' | 'space'
-export type ActivityView = 'files' | 'chat' | 'terminal' | 'settings' | 'problems' | 'search' | 'mcp' | 'git'
+export type ActivityView = 'files' | 'chat' | 'terminal' | 'settings' | 'problems' | 'search' | 'mcp' | 'git' | 'changelog'
 export type AgentMode = 'builder' | 'planner' | 'chat' | 'ask'
 export type EditApprovalMode = 'allow-all' | 'session-only' | 'ask'
 export type AIProvider = 'zen' | 'zai' | 'anthropic' | 'openai' | 'openrouter' | 'moonshot' | 'google' | 'deepseek' | 'groq' | 'mistral' | 'perplexity' | 'synthetic' | 'ollama'

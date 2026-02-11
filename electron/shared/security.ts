@@ -18,6 +18,7 @@ export const ALLOWED_API_DOMAINS = new Set([
   'localhost',
   'html.duckduckgo.com',
   'webcache.googleusercontent.com',
+  'api.github.com',
 ])
 
 const LOCALHOST_ALLOWED_PORTS = new Set(['11434'])

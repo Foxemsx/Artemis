@@ -1,6 +1,6 @@
 {
   "name": "artemis",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Artemis — AI-powered IDE with 13 providers, built-in terminal, and agentic coding",
   "author": {
     "name": "Foxemsx",

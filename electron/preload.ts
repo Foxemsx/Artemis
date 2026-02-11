@@ -218,6 +218,12 @@ contextBridge.exposeInMainWorld('artemis', {
     fetchModels: (providerId: string) => ipcRenderer.invoke('commitMessage:fetchModels', providerId),
   },
 
+  update: {
+    check: () => ipcRenderer.invoke('update:check'),
+    getChangelog: () => ipcRenderer.invoke('update:getChangelog'),
+    getCurrentVersion: () => ipcRenderer.invoke('update:getCurrentVersion'),
+  },
+
   agent: {
     run: (request: any) =>
       ipcRenderer.invoke('agent:run', request),

@@ -230,6 +230,50 @@ interface ArtemisAPI {
     fetchModels: (providerId: string) => Promise<{ models: { id: string; name: string }[]; error?: string }>
   }
 
+  update: {
+    check: () => Promise<{
+      hasUpdate: boolean
+      currentVersion: string
+      latestVersion: string
+      latestRelease: {
+        tag_name: string
+        name: string
+        body: string
+        published_at: string
+        html_url: string
+        prerelease: boolean
+        assets: Array<{
+          name: string
+          browser_download_url: string
+          size: number
+          download_count: number
+        }>
+      } | null
+    }>
+    getChangelog: () => Promise<Array<{
+      tag: string
+      name: string
+      body: string
+      publishedAt: string
+      htmlUrl: string
+      prerelease: boolean
+      commits: Array<{
+        sha: string
+        message: string
+        author: string
+        date: string
+        htmlUrl: string
+      }>
+      assets: Array<{
+        name: string
+        downloadUrl: string
+        size: number
+        downloadCount: number
+      }>
+    }>>
+    getCurrentVersion: () => Promise<string>
+  }
+
   agent: {
     run: (request: AgentRunRequest) => Promise<AgentRunResponse>
     abort: (requestId: string) => Promise<{ success: boolean; error?: string }>

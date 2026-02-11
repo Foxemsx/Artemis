@@ -12,6 +12,7 @@ import * as discordRPC from './services/discordRPCService'
 import { inlineCompletionService } from './services/inlineCompletionService'
 import { commitMessageService } from './services/commitMessageService'
 import * as checkpointService from './services/checkpointService'
+import * as updateService from './services/updateService'
 import { initLogger, logError } from './shared/logger'
 import {
   isAllowedApiUrl, PROVIDER_BASE_URLS,
@@ -272,7 +273,7 @@ function createWindow() {
           `style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com; ` +
           `font-src 'self' https://fonts.gstatic.com data:; ` +
           `img-src 'self' data: https: blob:; ` +
-          `connect-src 'self' https://opencode.ai https://*.opencode.ai https://api.z.ai https://*.z.ai https://api.openai.com https://api.anthropic.com https://openrouter.ai https://*.openrouter.ai https://generativelanguage.googleapis.com https://api.deepseek.com https://api.groq.com https://api.mistral.ai https://api.moonshot.cn https://api.perplexity.ai https://api.synthetic.new https://html.duckduckgo.com https://webcache.googleusercontent.com http://localhost:11434; ` +
+          `connect-src 'self' https://opencode.ai https://*.opencode.ai https://api.z.ai https://*.z.ai https://api.openai.com https://api.anthropic.com https://openrouter.ai https://*.openrouter.ai https://generativelanguage.googleapis.com https://api.deepseek.com https://api.groq.com https://api.mistral.ai https://api.moonshot.cn https://api.perplexity.ai https://api.synthetic.new https://html.duckduckgo.com https://webcache.googleusercontent.com http://localhost:11434 https://api.github.com; ` +
           `frame-src 'self' file: preview: blob:; ` +
           `object-src 'none'; ` +
           `frame-ancestors 'none'; ` +
@@ -1429,6 +1430,35 @@ ipcMain.handle('commitMessage:fetchModels', async (_e, providerId: string) => {
     return { models }
   } catch (err: any) {
     return { models: [], error: err.message }
+  }
+})
+
+// ─── Changelog & Update Service ───────────────────────────────────────────
+ipcMain.handle('update:check', async () => {
+  try {
+    const pkg = require('../package.json')
+    return await updateService.checkForUpdate(pkg.version)
+  } catch (err: any) {
+    logError('update', 'Failed to check for updates', { error: err.message })
+    return { hasUpdate: false, currentVersion: '0.0.0', latestVersion: '0.0.0', latestRelease: null }
+  }
+})
+
+ipcMain.handle('update:getChangelog', async () => {
+  try {
+    return await updateService.fetchChangelog()
+  } catch (err: any) {
+    logError('update', 'Failed to fetch changelog', { error: err.message })
+    return []
+  }
+})
+
+ipcMain.handle('update:getCurrentVersion', () => {
+  try {
+    const pkg = require('../package.json')
+    return pkg.version
+  } catch {
+    return '0.0.0'
   }
 })
 

@@ -9,6 +9,7 @@ import Sidebar from './components/Sidebar'
 import PanelLayout from './components/PanelLayout'
 import StatusBar from './components/StatusBar'
 import CommandPalette from './components/CommandPalette'
+import UpdateNotification from './components/UpdateNotification'
 import WorkspaceTrustDialog, { RestrictedModeBanner } from './components/WorkspaceTrustDialog'
 import type { ActivityView, Project, EditorTab, PtySession } from './types'
 import { detectLanguage } from './types'
@@ -104,6 +105,15 @@ export default function App() {
   const [recentProjects, setRecentProjects] = useState<Project[]>([])
   const [inlineCompletionEnabled, setInlineCompletionEnabled] = useState(false)
 
+  // Update notification
+  const [updateInfo, setUpdateInfo] = useState<{
+    hasUpdate: boolean
+    currentVersion: string
+    latestVersion: string
+    latestRelease: any
+  } | null>(null)
+  const [showUpdateNotification, setShowUpdateNotification] = useState(false)
+
   // Workspace Trust: restricted mode disables editing, terminal, agent/chat
   const [isRestrictedMode, setIsRestrictedMode] = useState(false)
   const [showTrustDialog, setShowTrustDialog] = useState(false)
@@ -170,6 +180,21 @@ export default function App() {
         setSetupComplete(false)
       })
   }, [])
+
+  // Check for updates on startup (delayed to not block UI)
+  useEffect(() => {
+    if (!setupComplete) return
+    const timer = setTimeout(async () => {
+      try {
+        const info = await window.artemis.update.check()
+        if (info.hasUpdate) {
+          setUpdateInfo(info)
+          setShowUpdateNotification(true)
+        }
+      } catch {}
+    }, 5000) // 5s delay to let the app settle
+    return () => clearTimeout(timer)
+  }, [setupComplete])
 
   const { hasApiKey, projectSessions, createSession } = opencode
 
@@ -1011,6 +1036,18 @@ export default function App() {
             folderName={trustDialogFolder.name}
             onTrust={handleTrustWorkspace}
             onRestricted={handleRestrictedMode}
+          />
+        )}
+
+        {/* Update Notification Toast */}
+        {showUpdateNotification && updateInfo && (
+          <UpdateNotification
+            updateInfo={updateInfo}
+            onDismiss={() => setShowUpdateNotification(false)}
+            onViewChangelog={() => {
+              setShowUpdateNotification(false)
+              setActiveView('changelog')
+            }}
           />
         )}
       </div>

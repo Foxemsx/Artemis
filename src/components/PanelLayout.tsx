@@ -11,6 +11,7 @@ import ProblemsPanel from './ProblemsPanel'
 import SearchPanel from './SearchPanel'
 import MCPMarketplace from './MCPMarketplace'
 import SourceControlPanel from './SourceControlPanel'
+import ChangelogPanel from './ChangelogPanel'
 
 interface Props {
   activeView: ActivityView
@@ -254,6 +255,15 @@ export default function PanelLayout({
           soundSettings={soundSettings}
           onSetSoundSettings={onSetSoundSettings}
         />
+      </div>
+    )
+  }
+
+  // Changelog view — full-screen, own place
+  if (activeView === 'changelog') {
+    return (
+      <div className="flex-1 overflow-hidden">
+        <ChangelogPanel />
       </div>
     )
   }
