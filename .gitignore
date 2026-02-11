@@ -8,7 +8,6 @@ dist/
 dist-electron/
 build/
 out/
-release/
 
 # Environment variables
 .env
@@ -25,6 +24,9 @@ release/
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
+ehthumbs.db
+Icon?
 
 # Logs
 logs/
@@ -60,10 +62,19 @@ coverage/
 *.tsbuildinfo
 
 # Electron / electron-builder
+release/
 *.tgz
 *.zip
-release/
-build/
+*.exe
+*.dmg
+*.AppImage
+*.deb
+*.rpm
+*.snap
+*.asar
+*.blockmap
+*.nupkg
+*-unpacked/
 
 # Misc
 *.local

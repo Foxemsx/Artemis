@@ -68,7 +68,25 @@ export interface UpdateInfo {
   latestRelease: GitHubRelease | null
 }
 
+// ─── In-memory cache (5 min TTL) ──────────────────────────────────────────
+const CACHE_TTL = 5 * 60 * 1000
+const cache = new Map<string, { data: any; ts: number }>()
+
+function getCached(key: string): any | undefined {
+  const entry = cache.get(key)
+  if (entry && Date.now() - entry.ts < CACHE_TTL) return entry.data
+  if (entry) cache.delete(key)
+  return undefined
+}
+
+function setCache(key: string, data: any) {
+  cache.set(key, { data, ts: Date.now() })
+}
+
 async function githubFetch(endpoint: string): Promise<{ ok: boolean; data: any }> {
+  const cached = getCached(endpoint)
+  if (cached !== undefined) return { ok: true, data: cached }
+
   const url = `${GITHUB_API}${endpoint}`
   try {
     const controller = new AbortController()
@@ -102,6 +120,7 @@ async function githubFetch(endpoint: string): Promise<{ ok: boolean; data: any }
       })
     }
 
+    if (response.ok) setCache(endpoint, data)
     return { ok: response.ok, data }
   } catch (err: any) {
     logError('updateService', 'GitHub API request failed', { error: err.message, endpoint })

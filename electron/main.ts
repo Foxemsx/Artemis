@@ -1522,7 +1522,7 @@ app.whenReady().then(async () => {
     logError('commitMessage', 'Failed to sync API key on ready', { error: String(err) })
   }
 
-  if (store['discordRpcEnabled'] === true) {
+  if (store['discordRpcEnabled'] !== false) {
     console.log('[Artemis] Restoring Discord RPC from saved state...')
     discordRPC.toggle(true).catch((err) => {
       logError('discord', 'Failed to restore Discord RPC', { error: String(err) })
