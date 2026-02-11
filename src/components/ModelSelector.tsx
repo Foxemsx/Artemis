@@ -357,7 +357,7 @@ export default function ModelSelector({ providers, activeModel, onSelectModel }:
                 href="#"
                 className="flex items-center gap-1 text-[10px] hover:opacity-80 transition-opacity cursor-pointer"
                 style={{ color: 'var(--text-muted)' }}
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.artemis.shell.openExternal('https://opencode.ai/dashboard/models') }}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.artemis.shell.openExternal('https://opencode.ai/dashboard') }}
               >
                 <ExternalLink size={9} style={{ color: 'var(--accent)' }} />
                 Dashboard

@@ -36,8 +36,8 @@ export interface ProviderInfo {
 
 export const PROVIDER_REGISTRY: ProviderInfo[] = [
   {
-    id: 'zen', name: 'OpenCode Zen',
-    description: 'GPT, Claude, Gemini, DeepSeek, and 20+ models via OpenCode',
+    id: 'zen', name: 'Zen',
+    description: 'GPT, Claude, Gemini, DeepSeek, and 20+ models via Zen API',
     docsUrl: 'https://opencode.ai/docs', helpUrl: 'https://opencode.ai',
     placeholder: 'zen-... or sk-...', supportsModelList: true,
     defaultFormat: 'openai-chat', validationPath: '/models',
@@ -195,7 +195,7 @@ function parseApiError(status: number, data: string, provider?: AIProvider): Zen
         message: 'Invalid or expired API key',
         details: provider === 'zai'
           ? 'Please check your Z.AI API key in Settings.'
-          : 'Please check your API key in Settings. Make sure it starts with "zen-" for OpenCode Zen.',
+          : 'Please check your API key in Settings. Make sure it starts with "zen-" for Zen.',
       }
     }
 
@@ -205,7 +205,7 @@ function parseApiError(status: number, data: string, provider?: AIProvider): Zen
         message: 'Billing issue - insufficient credits or plan mismatch',
         details: provider === 'zai'
           ? 'If you have a Z.AI Coding Plan (Lite/Pro/Max), Artemis now routes through the Coding Plan endpoint automatically. If this error persists:\n\n1. Verify your Coding Plan is active at z.ai/manage-apikey/subscription\n2. Check your 5-hour usage quota hasn\'t been exhausted\n3. Make sure your API key is correct in Settings\n\nThe quota resets automatically at the start of the next 5-hour cycle.'
-          : 'Your account needs credits to use this model. Add billing at opencode.ai or try a free model.',
+          : 'Your account needs credits to use this model. Visit opencode.ai to add billing or try a free model.',
       }
     }
 
@@ -515,7 +515,7 @@ export class ZenClient {
     if (modelId.startsWith('llama') || modelId.startsWith('mixtral') || modelId.startsWith('gemma')) return 'Meta/Google'
     if (modelId.startsWith('mistral') || modelId.startsWith('codestral')) return 'Mistral'
     if (modelId.startsWith('sonar') || modelId.startsWith('pplx')) return 'Perplexity'
-    return 'OpenCode'
+    return 'Zen'
   }
 
   /** Return hardcoded model lists for providers that don't expose /models or as fallback.

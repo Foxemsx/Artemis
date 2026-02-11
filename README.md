@@ -31,7 +31,7 @@
 |--------|-------|--------|-------|
 | **Lines of Code** | 15,000+ | **AI Providers** | 13 |
 | **React Components** | 28 | **Built-in Tools** | 14 |
-| **IPC Handlers** | 50+ | **MCP Servers** | 12 |
+| **IPC Handlers** | 50+ | **MCP Servers** | 33 |
 | **Themes** | 16 | **Security Layers** | 12+ |
 
 ---
@@ -51,7 +51,7 @@ Artemis treats the AI as **untrusted code** — every action is validated, conta
 - **💬 Chat Mode** — Fast conversational help without tool execution
 - **❓ Ask Mode** — Quick Q&A with read-only context
 
-**13 AI Providers:** OpenAI, Anthropic, Google Gemini, DeepSeek, Groq, Mistral, OpenRouter, Moonshot, Perplexity, Synthetic, Z.AI, OpenCode Zen, and **Ollama** for fully local, private inference.
+**13 AI Providers:** OpenAI, Anthropic, Google Gemini, DeepSeek, Groq, Mistral, OpenRouter, Moonshot, Perplexity, Synthetic, Z.AI, Zen, and **Ollama** for fully local, private inference.
 
 **Smart Features:**
 - **@-Mentions** — Type `@filename` for context or `@codebase` to index your entire project
@@ -99,7 +99,7 @@ Artemis is built with a **defense-in-depth** security model:
 
 **One-Click Superpowers:**
 
-12 curated MCP servers ready to install:
+33 curated MCP servers ready to install:
 - **GitHub** — Repos, issues, PRs, code search
 - **Git** — Full version control via natural language
 - **SQLite/PostgreSQL** — Query databases directly
@@ -110,6 +110,27 @@ Artemis is built with a **defense-in-depth** security model:
 - **Memory** — Persistent knowledge graph
 - **Filesystem** — Enhanced file operations
 - **Context7** — Up-to-date library documentation
+- **Slack** — Channel messaging and search
+- **Linear** — Issue tracking and sprints
+- **Sentry** — Error tracking and monitoring
+- **Supabase** — Database, auth, and storage
+- **Redis** — Key-value store operations
+- **MongoDB** — Document database queries
+- **Vercel** — Deployment management
+- **Cloudflare** — Workers, KV, R2, DNS
+- **Stripe** — Payment data and products
+- **Tavily** — AI-optimized web search
+- **Exa** — Neural search engine
+- **Google Drive** — Files and documents
+- **Google Maps** — Geocoding and directions
+- **Figma** — Design inspection and tokens
+- **Jira** — Issue and project management
+- **Confluence** — Wiki and documentation
+- **Todoist** — Task management
+- **YouTube** — Transcripts and metadata
+- **AWS** — S3, DynamoDB, Lambda, CloudWatch
+- **Fetch** — HTTP requests and content extraction
+- **Sequential Thinking** — Structured problem-solving
 
 Add custom servers with your own configuration and environment variables.
 

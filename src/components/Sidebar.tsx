@@ -427,7 +427,7 @@ export default function Sidebar({
                 <div className="flex items-center gap-1">
                   <Server size={8} style={{ color: 'var(--text-muted)' }} />
                   <span className="text-[9px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
-                    {activeModel.providerName || (activeModel.aiProvider === 'zai' ? 'Z.AI' : 'OpenCode Zen')}
+                    {activeModel.providerName || (activeModel.aiProvider === 'zai' ? 'Z.AI' : 'Zen')}
                   </span>
                 </div>
                 {activeModel.free && (

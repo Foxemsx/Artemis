@@ -257,15 +257,19 @@ export default function ThemeSetup({ onComplete }: Props) {
               className="text-sm mb-8"
               style={{ color: ONBOARD.textDim }}
             >
-              Powered by{' '}
-              <a href="#" onClick={(e) => { e.preventDefault(); window.artemis.shell.openExternal('https://opencode.ai') }} style={{ color: ONBOARD.accent, cursor: 'pointer' }}
+              Supports 13 AI providers including{' '}
+              <a href="#" onClick={(e) => { e.preventDefault(); window.artemis.shell.openExternal('https://openai.com') }} style={{ color: ONBOARD.accent, cursor: 'pointer' }}
                 onMouseEnter={(e) => e.currentTarget.style.textDecoration = 'underline'}
                 onMouseLeave={(e) => e.currentTarget.style.textDecoration = 'none'}
-              >OpenCode Zen</a>{' '}and{' '}
-              <a href="#" onClick={(e) => { e.preventDefault(); window.artemis.shell.openExternal('https://z.ai') }} style={{ color: ONBOARD.accent, cursor: 'pointer' }}
+              >OpenAI</a>,{' '}
+              <a href="#" onClick={(e) => { e.preventDefault(); window.artemis.shell.openExternal('https://anthropic.com') }} style={{ color: ONBOARD.accent, cursor: 'pointer' }}
                 onMouseEnter={(e) => e.currentTarget.style.textDecoration = 'underline'}
                 onMouseLeave={(e) => e.currentTarget.style.textDecoration = 'none'}
-              >Z.AI</a>
+              >Anthropic</a>,{' '}and{' '}
+              <a href="#" onClick={(e) => { e.preventDefault(); window.artemis.shell.openExternal('https://ollama.com') }} style={{ color: ONBOARD.accent, cursor: 'pointer' }}
+                onMouseEnter={(e) => e.currentTarget.style.textDecoration = 'underline'}
+                onMouseLeave={(e) => e.currentTarget.style.textDecoration = 'none'}
+              >Ollama</a>
             </motion.p>
 
             {/* Feature cards with staggered animation */}

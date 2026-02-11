@@ -388,7 +388,7 @@ export default function ChatPanel({
               No API key configured
             </p>
             <p className="text-[11px] text-center" style={{ color: 'var(--text-muted)' }}>
-              Add your OpenCode Zen API key in Settings to start chatting
+              Add an API key in Settings to start chatting
             </p>
           </div>
         ) : error ? (

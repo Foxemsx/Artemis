@@ -313,7 +313,7 @@ function ProvidersSection({ providers, onKeyChange, onSave }: {
           <div>
             <p className="text-[12px] font-semibold mb-0.5" style={{ color: 'var(--text-primary)' }}>Get started</p>
             <p className="text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-              Add at least one API key below. <strong style={{ color: 'var(--text-secondary)' }}>OpenCode Zen</strong> and <strong style={{ color: 'var(--text-secondary)' }}>Groq</strong> offer free models. <strong style={{ color: 'var(--text-secondary)' }}>Ollama</strong> runs locally with no key needed.
+              Add at least one API key below. <strong style={{ color: 'var(--text-secondary)' }}>Groq</strong> and <strong style={{ color: 'var(--text-secondary)' }}>Zen</strong> offer free models. <strong style={{ color: 'var(--text-secondary)' }}>Ollama</strong> runs locally with no key needed.
             </p>
           </div>
         </div>
@@ -2118,7 +2118,7 @@ function AboutSection() {
 
         <div className="flex items-center gap-2 flex-wrap mb-5">
           {[
-            { url: 'https://opencode.ai', label: 'OpenCode' },
+            { url: 'https://opencode.ai', label: 'Zen' },
             { url: 'https://z.ai', label: 'Z.AI' },
             { url: 'https://docs.anthropic.com', label: 'Anthropic' },
             { url: 'https://platform.openai.com', label: 'OpenAI' },

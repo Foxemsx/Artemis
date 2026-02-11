@@ -1,11 +1,26 @@
 {
   "name": "artemis",
   "version": "0.1.0",
-  "description": "Artemis — AI-powered development environment for OpenCode sessions",
+  "description": "Artemis — AI-powered IDE with 13 providers, built-in terminal, and agentic coding",
+  "author": {
+    "name": "Foxemsx",
+    "url": "https://github.com/Foxemsx"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/Foxemsx/Artemis",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Foxemsx/Artemis.git"
+  },
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:icons": "node scripts/generate-icons.js",
+    "dist": "npm run build && npm run build:icons && electron-builder --config electron-builder.yml",
+    "dist:win": "npm run build && npm run build:icons && electron-builder --win --config electron-builder.yml",
+    "dist:mac": "npm run build && npm run build:icons && electron-builder --mac --config electron-builder.yml",
+    "dist:linux": "npm run build && npm run build:icons && electron-builder --linux --config electron-builder.yml",
     "postinstall": "node scripts/rebuild-pty.js"
   },
   "dependencies": {
@@ -36,8 +51,11 @@
     "@vitejs/plugin-react": "4.2.1",
     "autoprefixer": "10.4.17",
     "electron": "35.1.0",
+    "electron-builder": "^25.1.8",
+    "png2icons": "^2.0.1",
     "postcss": "8.4.33",
     "postcss-nesting": "^14.0.0",
+    "sharp": "^0.33.5",
     "tailwindcss": "3.4.1",
     "typescript": "5.3.3",
     "vite": "5.0.11",

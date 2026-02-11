@@ -59,9 +59,11 @@ coverage/
 # TypeScript build info
 *.tsbuildinfo
 
-# Electron
+# Electron / electron-builder
 *.tgz
 *.zip
+release/
+build/
 
 # Misc
 *.local

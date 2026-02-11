@@ -1,0 +1,120 @@
+appId: com.foxemsx.artemis
+productName: Artemis IDE
+copyright: Copyright © 2026 Foxemsx
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - node_modules/**/*
+  - "!node_modules/.cache"
+  - "!node_modules/*/{CHANGELOG.md,README.md,readme.md,LICENSE,license}"
+  - "!node_modules/*/{test,__tests__,tests,powered-test,example,examples}"
+  - "!node_modules/.bin"
+  - "!**/*.map"
+  - "!**/*.ts"
+  - "!**/*.tsx"
+
+extraResources:
+  - from: resources/
+    to: resources/
+    filter:
+      - "**/*"
+
+asar: true
+asarUnpack:
+  - "node_modules/node-pty/**/*"
+
+# ─── Windows ─────────────────────────────────────────────────────────────────
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: "Artemis-IDE-${version}-Setup.${ext}"
+  publisherName: Foxemsx
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  installerSidebar: build/installerSidebar.bmp
+  uninstallerSidebar: build/installerSidebar.bmp
+  deleteAppDataOnUninstall: false
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Artemis IDE
+  license: LICENSE
+  displayLanguageSelector: false
+  installerLanguages:
+    - en_US
+  runAfterFinish: true
+  menuCategory: Development
+
+# ─── macOS ───────────────────────────────────────────────────────────────────
+mac:
+  icon: build/icon.icns
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  artifactName: "Artemis-IDE-${version}-${arch}.${ext}"
+  darkModeSupport: true
+  hardenedRuntime: true
+  gatekeeperAssess: false
+
+dmg:
+  title: "Artemis IDE ${version}"
+  artifactName: "Artemis-IDE-${version}-${arch}.${ext}"
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+  window:
+    width: 540
+    height: 380
+  backgroundColor: "#0a0a0a"
+
+# ─── Linux ───────────────────────────────────────────────────────────────────
+linux:
+  icon: build/icons
+  category: Development
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  artifactName: "Artemis-IDE-${version}-${arch}.${ext}"
+  synopsis: AI-Powered Development Environment
+  description: >-
+    Artemis IDE is a free, open-source AI-powered development environment 
+    with 13 AI providers, built-in terminal, Git integration, MCP marketplace,
+    and a defense-in-depth security model.
+  desktop:
+    Name: Artemis IDE
+    Comment: AI-Powered Development Environment
+    Categories: Development;IDE;TextEditor
+    Keywords: ide;editor;ai;code;development
+    StartupWMClass: artemis
+    MimeType: text/plain;text/x-python;text/x-java;text/x-csrc;text/x-c++src;application/javascript;text/x-typescript
+
+# ─── Publish (GitHub Releases) ───────────────────────────────────────────────
+publish:
+  - provider: github
+    owner: Foxemsx
+    repo: Artemis
+    releaseType: release
