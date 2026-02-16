@@ -35,7 +35,10 @@ win:
     - target: nsis
       arch:
         - x64
-  artifactName: "Artemis-IDE-${version}-Setup.${ext}"
+    - target: zip
+      arch:
+        - x64
+  artifactName: "Artemis-IDE-${version}-${arch}.${ext}"
   publisherName: Foxemsx
 
 nsis:
