@@ -17,6 +17,8 @@ const PROVIDER_BASE_URLS: Record<string, string> = {
   ollama: 'http://localhost:11434/v1',
 }
 
+const NO_KEY_PROVIDERS = new Set<AIProvider>(['ollama'])
+
 export interface ProviderInfo {
   id: AIProvider
   name: string
@@ -250,6 +252,7 @@ function parseApiError(status: number, data: string, provider?: AIProvider): Zen
 export class ZenClient {
   private apiKeys: Map<AIProvider, string> = new Map()
   private customBaseUrls: Map<AIProvider, string> = new Map()
+  private configuredNoKeyProviders: Set<AIProvider> = new Set()
 
   private getDefaultProvider(): AIProvider {
     const configured = this.getConfiguredProviders()
@@ -257,24 +260,41 @@ export class ZenClient {
   }
 
   setApiKey(provider: AIProvider, key: string) {
-    this.apiKeys.set(provider, key)
+    if (key) {
+      this.apiKeys.set(provider, key)
+    } else {
+      this.apiKeys.delete(provider)
+    }
+    if (NO_KEY_PROVIDERS.has(provider)) {
+      this.configuredNoKeyProviders.add(provider)
+    }
   }
 
   hasApiKey(provider?: AIProvider): boolean {
     if (provider) {
+      if (NO_KEY_PROVIDERS.has(provider) && this.configuredNoKeyProviders.has(provider)) return true
       return this.apiKeys.has(provider) && !!this.apiKeys.get(provider)
     }
-    return Array.from(this.apiKeys.values()).some(key => !!key)
+    return Array.from(this.apiKeys.values()).some(key => !!key) || this.configuredNoKeyProviders.size > 0
   }
 
   getConfiguredProviders(): AIProvider[] {
-    return Array.from(this.apiKeys.entries())
+    const keyed = Array.from(this.apiKeys.entries())
       .filter(([_, key]) => !!key)
       .map(([provider, _]) => provider)
+    return Array.from(new Set([...keyed, ...Array.from(this.configuredNoKeyProviders)]))
   }
 
   setBaseUrl(provider: AIProvider, url: string) {
-    this.customBaseUrls.set(provider, url)
+    const normalized = url.trim().replace(/\/+$/, '')
+    if (normalized) {
+      this.customBaseUrls.set(provider, normalized)
+    } else {
+      this.customBaseUrls.delete(provider)
+    }
+    if (NO_KEY_PROVIDERS.has(provider)) {
+      this.configuredNoKeyProviders.add(provider)
+    }
   }
 
   getBaseUrl(provider: AIProvider): string {
@@ -561,6 +581,7 @@ export class ZenClient {
     if (aiProvider === 'ollama') {
       const baseUrl = this.getBaseUrl('ollama')
       const result = await this.proxyRequest(`${baseUrl}/models`, 'GET', undefined, 'ollama')
+      if (result.ok) this.configuredNoKeyProviders.add('ollama')
       return result.ok
     }
 

@@ -9,7 +9,7 @@
  *           with content: [{ type: "tool_result", ... }]
  */
 
-import { BaseProvider, capMaxTokens, type ProviderResponse } from '../BaseProvider'
+import { BaseProvider, capMaxTokens, mergeProviderHeaders, type ProviderResponse } from '../BaseProvider'
 import type {
   CompletionRequest,
   StreamDelta,
@@ -67,33 +67,12 @@ export class AnthropicAdapter extends BaseProvider {
   buildHeaders(request: CompletionRequest): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'x-api-key': request.provider.apiKey,
       'anthropic-version': '2023-06-01',
     }
-    // Security: Safely merge extra headers to prevent prototype pollution
-    if (request.provider.extraHeaders) {
-      for (const [key, value] of Object.entries(request.provider.extraHeaders)) {
-        // Block prototype pollution keys
-        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
-          continue
-        }
-        if (typeof value === 'string') {
-          headers[key] = value
-        }
-      }
+    if (request.provider.apiKey) {
+      headers['x-api-key'] = request.provider.apiKey
     }
-    if (request.model.extraHeaders) {
-      for (const [key, value] of Object.entries(request.model.extraHeaders)) {
-        // Block prototype pollution keys
-        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
-          continue
-        }
-        if (typeof value === 'string') {
-          headers[key] = value
-        }
-      }
-    }
-    return headers
+    return mergeProviderHeaders(headers, request.provider.extraHeaders, request.model.extraHeaders)
   }
 
   buildUrl(request: CompletionRequest): string {
@@ -102,6 +81,8 @@ export class AnthropicAdapter extends BaseProvider {
   }
 
   parseStreamEvent(json: any): StreamDelta | null {
+    if (!json || typeof json !== 'object') return null
+
     // Anthropic SSE event types:
     // - message_start: metadata
     // - content_block_start: new content block (text or tool_use)

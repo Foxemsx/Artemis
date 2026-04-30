@@ -22,6 +22,7 @@ export const ALLOWED_API_DOMAINS = new Set([
 ])
 
 const LOCALHOST_ALLOWED_PORTS = new Set(['11434'])
+const LOCALHOST_NAMES = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
 
 export function isAllowedApiUrl(url: string): boolean {
   try {
@@ -29,7 +30,7 @@ export function isAllowedApiUrl(url: string): boolean {
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false
     const hostname = parsed.hostname.toLowerCase()
 
-    if (hostname === 'localhost' || hostname.endsWith('.localhost')) {
+    if (LOCALHOST_NAMES.has(hostname) || hostname.endsWith('.localhost')) {
       const port = parsed.port || (parsed.protocol === 'https:' ? '443' : '80')
       return LOCALHOST_ALLOWED_PORTS.has(port)
     }

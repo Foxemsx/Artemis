@@ -17,7 +17,7 @@ import { initLogger, logError } from './shared/logger'
 import {
   isAllowedApiUrl, PROVIDER_BASE_URLS,
   DANGEROUS_SHELL_CHARS, ALLOWED_EXECUTABLES, RUNTIME_EVAL_FLAGS,
-  parseCommandTokens, validateFsPath, enforceProjectContainment,
+  parseCommandTokens, validateFsPath, enforceProjectContainment, resolveCommand,
 } from './shared/security'
 
 type Capability = 'terminal' | 'commands'
@@ -307,6 +307,25 @@ ipcMain.handle('store:set', (_e, key: string, value: any) => {
   if (!isStoreKeyAllowed(key)) {
     throw new Error(`Access denied: store key '${key}' is not writable from the renderer`)
   }
+  if (key.startsWith('baseUrl:') && typeof value === 'string') {
+    let normalized = value.trim().replace(/\/+$/, '')
+    if (!normalized) {
+      value = ''
+    } else if (key === 'baseUrl:ollama' && !normalized.endsWith('/v1')) {
+      normalized = `${normalized}/v1`
+      const validationUrl = `${normalized}/models`
+      if (!isAllowedApiUrl(validationUrl)) {
+        throw new Error(`Access denied: base URL '${value}' is not an allowed provider endpoint`)
+      }
+      value = normalized
+    } else {
+      const validationUrl = `${normalized}/models`
+      if (!isAllowedApiUrl(validationUrl)) {
+        throw new Error(`Access denied: base URL '${value}' is not an allowed provider endpoint`)
+      }
+      value = normalized
+    }
+  }
   if (isSensitiveKey(key) && typeof value === 'string' && value) {
     store[key] = encryptValue(value)
     const providerMatch = key.match(/^apiKey:(.+)$/)
@@ -588,9 +607,19 @@ ipcMain.handle('tools:runCommand', async (_e, command: string, cwd: string) => {
       }
     }
   }
+
+  let spawnExe = exe
+  let spawnArgs = args
+  if (process.platform === 'win32') {
+    spawnExe = await resolveCommand(exe)
+    if (/\.(cmd|bat)$/i.test(spawnExe)) {
+      spawnArgs = ['/c', spawnExe, ...args]
+      spawnExe = process.env.ComSpec || 'cmd.exe'
+    }
+  }
   
   return new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
-    const child = spawn(exe, args, {
+    const child = spawn(spawnExe, spawnArgs, {
       cwd,
       env: { ...process.env },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -1276,6 +1305,10 @@ ipcMain.handle('inlineCompletion:fetchModels', async (_e, providerId: string) =>
     const customUrl = store[`baseUrl:${providerId}`] as string | undefined
     const baseUrl = customUrl || PROVIDER_BASE_URLS[providerId] || ''
     if (!baseUrl) return { models: [], error: 'Unknown provider' }
+    const modelsUrl = `${baseUrl}/models`
+    if (!isAllowedApiUrl(modelsUrl)) {
+      return { models: [], error: 'Provider URL is not allowed' }
+    }
 
     let apiKey = ''
     const encKey = store[`apiKey:${providerId}`]
@@ -1298,7 +1331,7 @@ ipcMain.handle('inlineCompletion:fetchModels', async (_e, providerId: string) =>
 
     const { net } = require('electron')
     const result = await new Promise<{ ok: boolean; data: any }>((resolve) => {
-      const req = net.request({ method: 'GET', url: `${baseUrl}/models` })
+      const req = net.request({ method: 'GET', url: modelsUrl })
       for (const [k, v] of Object.entries(headers)) req.setHeader(k, v)
       let body = ''
       req.on('response', (res: any) => {
@@ -1382,6 +1415,10 @@ ipcMain.handle('commitMessage:fetchModels', async (_e, providerId: string) => {
     const customUrl = store[`baseUrl:${providerId}`] as string | undefined
     const baseUrl = customUrl || PROVIDER_BASE_URLS[providerId] || ''
     if (!baseUrl) return { models: [], error: 'Unknown provider' }
+    const modelsUrl = `${baseUrl}/models`
+    if (!isAllowedApiUrl(modelsUrl)) {
+      return { models: [], error: 'Provider URL is not allowed' }
+    }
 
     let apiKey = ''
     const encKey = store[`apiKey:${providerId}`]
@@ -1404,7 +1441,7 @@ ipcMain.handle('commitMessage:fetchModels', async (_e, providerId: string) => {
 
     const { net } = require('electron')
     const result = await new Promise<{ ok: boolean; data: any }>((resolve) => {
-      const req = net.request({ method: 'GET', url: `${baseUrl}/models` })
+      const req = net.request({ method: 'GET', url: modelsUrl })
       for (const [k, v] of Object.entries(headers)) req.setHeader(k, v)
       let body = ''
       req.on('response', (res: any) => {
@@ -1479,14 +1516,20 @@ protocol.registerSchemesAsPrivileged([
 app.whenReady().then(async () => {
   // Register preview:// protocol handler to serve local files
   protocol.handle('preview', (request) => {
-    // URL format: preview://file/C:/path/to/file.html
-    const url = new URL(request.url)
-    let filePath = decodeURIComponent(url.pathname)
-    // On Windows, pathname starts with / before drive letter, e.g. /C:/...
-    if (process.platform === 'win32' && filePath.startsWith('/')) {
-      filePath = filePath.slice(1)
+    try {
+      // URL format: preview://file/C:/path/to/file.html
+      const url = new URL(request.url)
+      let filePath = decodeURIComponent(url.pathname)
+      // On Windows, pathname starts with / before drive letter, e.g. /C:/...
+      if (process.platform === 'win32' && filePath.startsWith('/')) {
+        filePath = filePath.slice(1)
+      }
+      const resolved = validateFsPath(filePath, 'preview')
+      enforceProjectContainmentLocal(resolved, 'preview')
+      return net.fetch('file:///' + resolved.replace(/\\/g, '/'))
+    } catch (err: any) {
+      return new Response(`Preview blocked: ${err.message || 'access denied'}`, { status: 403 })
     }
-    return net.fetch('file:///' + filePath.replace(/\\/g, '/'))
   })
 
   createWindow()

@@ -373,10 +373,12 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
           if (p.id === 'ollama') {
             if (ollamaCustomUrl && typeof ollamaCustomUrl === 'string') {
               zenClient.setBaseUrl('ollama', ollamaCustomUrl)
+              newApiKeys[p.id] = { key: '', isConfigured: true }
             }
             const ollamaKey = (typeof key === 'string' && key) ? key : ''
             if (ollamaKey) {
               zenClient.setApiKey('ollama', ollamaKey)
+              newApiKeys[p.id] = { key: ollamaKey, isConfigured: true }
             }
             continue
           }
@@ -499,6 +501,9 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
       
       if (valid) {
         await window.artemis.store.set(`apiKey:${provider}`, key)
+        if (provider === 'ollama') {
+          await window.artemis.store.set('baseUrl:ollama', zenClient.getBaseUrl('ollama'))
+        }
         await window.artemis.store.set('pendingApiKeys', null)
         
         setApiKeys(prev => ({
@@ -807,8 +812,8 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
 
     if (projectPath) {
       systemPrompt += `\nThe user has the following project open: ${projectPath}`
-      if (effectiveMode === 'planner') {
-        systemPrompt += `\nYou are in PLANNER mode (read-only). You can read files, list directories, and search code to help the user plan and review. You CANNOT create, edit, or delete files, and you CANNOT run commands. If the user asks you to create or modify files, tell them to switch to Builder mode. Do NOT attempt to use write_file, str_replace, execute_command, or any write tools — they are not available to you.`
+      if (effectiveMode === 'planner' || effectiveMode === 'ask') {
+        systemPrompt += `\nYou are in ${effectiveMode.toUpperCase()} mode (read-only). You can read files, list directories, search code, view git diff, and list code definitions. You CANNOT create, edit, or delete files, and you CANNOT run commands. If the user asks you to create or modify files, tell them to switch to Builder mode. Do NOT attempt to use write_file, str_replace, execute_command, or any write tools - they are not available to you.`
       } else {
         systemPrompt += `\nYou are an AI coding assistant working inside an IDE. You have access to the user's codebase. When the user asks you to create files, edit code, or do anything with their project, use your tools (write_file, str_replace, read_file, list_directory, execute_command, etc.) to actually do it — do NOT just output code in chat.`
         if (modeOverride && modeOverride !== agentMode) {
@@ -854,7 +859,7 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     }
 
     // ─── Agent Tool Hints ─────────────────────────────────────────
-    if (effectiveMode !== 'planner') {
+    if (effectiveMode === 'builder' || effectiveMode === 'chat') {
       systemPrompt += `\nYou have access to web_search (DuckDuckGo, no API key) and fetch_url (fetch any web page) tools. Use web_search when the user asks you to look something up. Use fetch_url when the user shares a URL or you need to read a web page, docs, or article.`
 
       // Provider-specific docs search tool: scope fetch_url to the active provider's documentation
@@ -864,9 +869,10 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     }
 
     // ─── MCP Tool Awareness ──────────────────────────────────────
-    try {
-      const mcpTools = await window.artemis.mcp.getConnectedTools()
-      if (mcpTools && mcpTools.length > 0) {
+    if (effectiveMode === 'builder' || effectiveMode === 'chat') {
+      try {
+        const mcpTools = await window.artemis.mcp.getConnectedTools()
+        if (mcpTools && mcpTools.length > 0) {
         const toolsByServer: Record<string, string[]> = {}
         for (const t of mcpTools) {
           if (!toolsByServer[t.serverId]) toolsByServer[t.serverId] = []
@@ -882,11 +888,15 @@ export function useOpenCode(activeProjectId: string | null = null): UseOpenCodeR
     }
 
     // ─── URL Auto-Detection ───────────────────────────────────────
-    const urlRegex = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi
-    const detectedUrls = text.match(urlRegex)
-    if (detectedUrls && detectedUrls.length > 0) {
-      const uniqueUrls = [...new Set(detectedUrls)]
-      systemPrompt += `\n\nThe user's message contains ${uniqueUrls.length === 1 ? 'a URL' : 'URLs'}. You SHOULD use the fetch_url tool to read ${uniqueUrls.length === 1 ? 'it' : 'them'} and incorporate the content into your response. URLs detected: ${uniqueUrls.join(', ')}`
+    }
+
+    if (effectiveMode === 'builder' || effectiveMode === 'chat') {
+      const urlRegex = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi
+      const detectedUrls = text.match(urlRegex)
+      if (detectedUrls && detectedUrls.length > 0) {
+        const uniqueUrls = [...new Set(detectedUrls)]
+        systemPrompt += `\n\nThe user's message contains ${uniqueUrls.length === 1 ? 'a URL' : 'URLs'}. You SHOULD use the fetch_url tool to read ${uniqueUrls.length === 1 ? 'it' : 'them'} and incorporate the content into your response. URLs detected: ${uniqueUrls.join(', ')}`
+      }
     }
 
     // ─── Build Conversation History ────────────────────────────

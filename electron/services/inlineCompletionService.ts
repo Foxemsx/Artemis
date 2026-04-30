@@ -1,4 +1,5 @@
 import { net } from 'electron'
+import { isAllowedApiUrl } from '../shared/security'
 
 export interface InlineCompletionRequest {
   prefix: string
@@ -222,6 +223,10 @@ class InlineCompletionService {
       }
 
       const url = `${baseUrl}/chat/completions`
+      if (!isAllowedApiUrl(url)) {
+        resolve({ completion: '' })
+        return
+      }
       const body = JSON.stringify({
         model: this.config.model,
         messages: [
@@ -284,6 +289,10 @@ class InlineCompletionService {
       }
 
       const url = `${baseUrl}/messages`
+      if (!isAllowedApiUrl(url)) {
+        resolve({ completion: '' })
+        return
+      }
       const body = JSON.stringify({
         model: this.config.model,
         system,

@@ -56,6 +56,7 @@ export class AgentLoop {
   private httpAdapter: HttpAdapter
   private eventSeq: number = 0
   private aborted: boolean = false
+  private activeStreamCancel: (() => void) | null = null
 
   constructor(httpAdapter: HttpAdapter) {
     this.httpAdapter = httpAdapter
@@ -75,11 +76,14 @@ export class AgentLoop {
       ? toolRegistry.getByNames(request.toolNames)
       : toolRegistry.getToolsForMode(request.agentMode || 'builder')
 
-    const mcpTools: UniversalToolDefinition[] = mcpClientManager.getAllTools().map(t => ({
-      name: t.name,
-      description: `[MCP] ${t.description}`,
-      parameters: t.inputSchema as any,
-    }))
+    const includeMcpTools = request.agentMode !== 'planner' && request.agentMode !== 'ask'
+    const mcpTools: UniversalToolDefinition[] = includeMcpTools
+      ? mcpClientManager.getAllTools().map(t => ({
+        name: t.name,
+        description: `[MCP] ${t.description}`,
+        parameters: t.inputSchema as any,
+      }))
+      : []
     const tools = [...builtinTools, ...mcpTools]
 
     const conversation = new ConversationManager(request.conversationHistory)
@@ -250,6 +254,9 @@ export class AgentLoop {
 
   abort(): void {
     this.aborted = true
+    if (this.activeStreamCancel) {
+      try { this.activeStreamCancel() } catch {}
+    }
   }
 
   isAborted(): boolean {
@@ -288,6 +295,7 @@ export class AgentLoop {
           finishReason: result.finishReason,
           usage: result.usage,
         })
+        this.activeStreamCancel = null
       }
 
       this.httpAdapter.streamRequest(
@@ -343,9 +351,20 @@ export class AgentLoop {
             }
           }
         }
-      ).then(({ ok, status }) => {
+      ).then(({ ok, status, cancel }) => {
+        if (resolved) {
+          this.activeStreamCancel = null
+          return
+        }
+        this.activeStreamCancel = cancel
+        if (this.aborted) {
+          cancel()
+          finish()
+          return
+        }
         if (!ok && !resolved) {
           resolved = true
+          this.activeStreamCancel = null
           const error = adapter.parseError(status, 'Stream request failed')
           resolve({
             content: '',
@@ -358,6 +377,7 @@ export class AgentLoop {
       }).catch((err: any) => {
         if (!resolved) {
           resolved = true
+          this.activeStreamCancel = null
           resolve({
             content: processor.getCurrentContent(),
             reasoningContent: processor.getCurrentReasoningContent(),

@@ -9,7 +9,7 @@
  * Messages: standard role/content with tool_calls array
  */
 
-import { BaseProvider, capMaxTokens, type ProviderResponse } from '../BaseProvider'
+import { BaseProvider, capMaxTokens, mergeProviderHeaders, type ProviderResponse } from '../BaseProvider'
 import type {
   CompletionRequest,
   StreamDelta,
@@ -72,32 +72,11 @@ export class OpenAIChatAdapter extends BaseProvider {
   buildHeaders(request: CompletionRequest): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${request.provider.apiKey}`,
     }
-    // Security: Safely merge extra headers to prevent prototype pollution
-    if (request.provider.extraHeaders) {
-      for (const [key, value] of Object.entries(request.provider.extraHeaders)) {
-        // Block prototype pollution keys
-        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
-          continue
-        }
-        if (typeof value === 'string') {
-          headers[key] = value
-        }
-      }
+    if (request.provider.apiKey) {
+      headers.Authorization = `Bearer ${request.provider.apiKey}`
     }
-    if (request.model.extraHeaders) {
-      for (const [key, value] of Object.entries(request.model.extraHeaders)) {
-        // Block prototype pollution keys
-        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
-          continue
-        }
-        if (typeof value === 'string') {
-          headers[key] = value
-        }
-      }
-    }
-    return headers
+    return mergeProviderHeaders(headers, request.provider.extraHeaders, request.model.extraHeaders)
   }
 
   buildUrl(request: CompletionRequest): string {
@@ -106,6 +85,8 @@ export class OpenAIChatAdapter extends BaseProvider {
   }
 
   parseStreamEvent(json: any): StreamDelta | null {
+    if (!json || typeof json !== 'object') return null
+
     // Standard OpenAI Chat Completions streaming format:
     // { choices: [{ delta: { content, tool_calls, ... }, finish_reason }] }
 
@@ -148,7 +129,9 @@ export class OpenAIChatAdapter extends BaseProvider {
     if (choice.finish_reason) {
       delta.finishReason = choice.finish_reason === 'tool_calls'
         ? 'tool_calls'
-        : choice.finish_reason as StreamDelta['finishReason']
+        : choice.finish_reason === 'function_call'
+          ? 'tool_calls'
+          : choice.finish_reason as StreamDelta['finishReason']
     }
 
     // Extract usage if present on a normal chunk (some providers include it here)

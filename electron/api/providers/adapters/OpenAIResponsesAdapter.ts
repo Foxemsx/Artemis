@@ -9,7 +9,7 @@
  * System: uses "instructions" top-level param
  */
 
-import { BaseProvider, capMaxTokens, type ProviderResponse } from '../BaseProvider'
+import { BaseProvider, capMaxTokens, mergeProviderHeaders, type ProviderResponse } from '../BaseProvider'
 import type {
   CompletionRequest,
   StreamDelta,
@@ -72,32 +72,11 @@ export class OpenAIResponsesAdapter extends BaseProvider {
   buildHeaders(request: CompletionRequest): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${request.provider.apiKey}`,
     }
-    // Security: Safely merge extra headers to prevent prototype pollution
-    if (request.provider.extraHeaders) {
-      for (const [key, value] of Object.entries(request.provider.extraHeaders)) {
-        // Block prototype pollution keys
-        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
-          continue
-        }
-        if (typeof value === 'string') {
-          headers[key] = value
-        }
-      }
+    if (request.provider.apiKey) {
+      headers.Authorization = `Bearer ${request.provider.apiKey}`
     }
-    if (request.model.extraHeaders) {
-      for (const [key, value] of Object.entries(request.model.extraHeaders)) {
-        // Block prototype pollution keys
-        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
-          continue
-        }
-        if (typeof value === 'string') {
-          headers[key] = value
-        }
-      }
-    }
-    return headers
+    return mergeProviderHeaders(headers, request.provider.extraHeaders, request.model.extraHeaders)
   }
 
   buildUrl(request: CompletionRequest): string {
@@ -106,6 +85,8 @@ export class OpenAIResponsesAdapter extends BaseProvider {
   }
 
   parseStreamEvent(json: any): StreamDelta | null {
+    if (!json || typeof json !== 'object') return null
+
     // Responses API SSE event types:
     // - response.output_text.delta: text chunk
     // - response.output_item.added: new item (function_call, message, etc.)
@@ -144,9 +125,18 @@ export class OpenAIResponsesAdapter extends BaseProvider {
     if (json.type === 'response.completed' || json.type === 'response.done') {
       const output = json.response?.output || []
       const hasFunctionCalls = output.some((o: any) => o.type === 'function_call')
-      return {
+      const delta: StreamDelta = {
         finishReason: hasFunctionCalls ? 'tool_calls' : 'stop',
       }
+      if (json.response?.usage) {
+        const usage = json.response.usage
+        delta.usage = {
+          promptTokens: usage.input_tokens || 0,
+          completionTokens: usage.output_tokens || 0,
+          totalTokens: usage.total_tokens || ((usage.input_tokens || 0) + (usage.output_tokens || 0)),
+        }
+      }
+      return delta
     }
 
     // Skip all other response.* events

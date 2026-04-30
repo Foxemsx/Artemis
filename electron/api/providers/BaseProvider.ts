@@ -27,7 +27,7 @@ export interface ProviderResponse {
 }
 
 const SAFETY_BUFFER = 2000
-const MIN_OUTPUT_TOKENS = 1000
+const MIN_OUTPUT_TOKENS = 1
 
 export function capMaxTokens(
   maxTokens: number,
@@ -38,6 +38,22 @@ export function capMaxTokens(
   const estimatedInputTokens = Math.ceil(serializedInput.length / 3.5)
   const available = contextWindow - estimatedInputTokens - SAFETY_BUFFER
   return Math.max(MIN_OUTPUT_TOKENS, Math.min(maxTokens, available))
+}
+
+export function mergeProviderHeaders(
+  target: Record<string, string>,
+  ...sources: Array<Record<string, string> | undefined>
+): Record<string, string> {
+  for (const source of sources) {
+    if (!source) continue
+    for (const [key, value] of Object.entries(source)) {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue
+      if (typeof value === 'string') {
+        target[key] = value
+      }
+    }
+  }
+  return target
 }
 
 export abstract class BaseProvider {

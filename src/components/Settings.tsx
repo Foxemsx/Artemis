@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Key, Shield, ExternalLink, Check, X, Loader2, Zap, Server, Sparkles, Palette, Settings2, Info, Volume2, Bell, Play, RotateCcw, Keyboard, ChevronDown, FileText, FolderOpen, Search, Terminal, GitBranch, Code, FolderPlus, Trash2, Move, Edit3, MessageSquare, Layout, Eye, Gamepad2, Circle, Globe } from 'lucide-react'
 import type { Theme, AIProvider } from '../types'
 import { type SoundSettings, DEFAULT_SOUND_SETTINGS, previewSound, type SoundType } from '../lib/sounds'
-import { PROVIDER_REGISTRY, type ProviderInfo } from '../lib/zenClient'
+import { PROVIDER_REGISTRY, zenClient, type ProviderInfo } from '../lib/zenClient'
 import { invalidateInlineCompletionConfigCache } from './Editor'
 import modelsConfig from '../lib/models.json'
 import { getProviderIcon } from './ProviderIcons'
@@ -251,8 +251,13 @@ function OllamaBaseUrlInput() {
   }, [])
 
   const handleSave = async () => {
-    const url = baseUrl.trim().replace(/\/+$/, '')
+    let url = baseUrl.trim().replace(/\/+$/, '')
+    if (url && !url.endsWith('/v1')) {
+      url = `${url}/v1`
+    }
     await window.artemis.store.set('baseUrl:ollama', url)
+    zenClient.setBaseUrl('ollama', url)
+    setBaseUrl(url)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }

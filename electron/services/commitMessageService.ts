@@ -1,4 +1,5 @@
 import { net } from 'electron'
+import { isAllowedApiUrl } from '../shared/security'
 
 export interface CommitMessageConfig {
   enabled: boolean
@@ -101,6 +102,10 @@ class CommitMessageService {
   private generateOpenAI(baseUrl: string, provider: string, system: string, user: string): Promise<{ message: string; error?: string }> {
     return new Promise((resolve) => {
       const url = `${baseUrl}/chat/completions`
+      if (!isAllowedApiUrl(url)) {
+        resolve({ message: '', error: 'Provider URL is not allowed' })
+        return
+      }
       const body = JSON.stringify({
         model: this.config.model,
         messages: [
@@ -151,6 +156,10 @@ class CommitMessageService {
   private generateAnthropic(baseUrl: string, system: string, user: string, headerProvider: string = 'anthropic'): Promise<{ message: string; error?: string }> {
     return new Promise((resolve) => {
       const url = `${baseUrl}/messages`
+      if (!isAllowedApiUrl(url)) {
+        resolve({ message: '', error: 'Provider URL is not allowed' })
+        return
+      }
       const body = JSON.stringify({
         model: this.config.model,
         system,

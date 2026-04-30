@@ -137,7 +137,7 @@ export interface AgentRequest {
   provider: ProviderConfig
   systemPrompt?: string
   toolNames?: string[]
-  agentMode?: 'builder' | 'planner' | 'chat'
+  agentMode?: 'builder' | 'planner' | 'chat' | 'ask'
   maxIterations?: number
   projectPath?: string
   conversationHistory?: UniversalMessage[]

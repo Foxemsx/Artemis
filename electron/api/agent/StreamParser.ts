@@ -8,28 +8,7 @@ export class SSEParser {
 
   feed(chunk: string): string[] {
     this.buffer += chunk
-    const payloads: string[] = []
-
-    const lastNewline = this.buffer.lastIndexOf('\n')
-    if (lastNewline === -1) return payloads
-
-    const complete = this.buffer.slice(0, lastNewline + 1)
-    this.buffer = this.buffer.slice(lastNewline + 1)
-
-    const lines = complete.split('\n')
-    for (const line of lines) {
-      const trimmed = line.trim()
-
-      if (!trimmed || trimmed.startsWith(':') || trimmed.startsWith('event:')) continue
-
-      if (trimmed === 'data: [DONE]') continue
-
-      if (trimmed.startsWith('data: ')) {
-        payloads.push(trimmed.slice(6))
-      }
-    }
-
-    return payloads
+    return this.drainCompleteEvents(false)
   }
 
   flush(): string[] {
@@ -37,19 +16,44 @@ export class SSEParser {
       this.buffer = ''
       return []
     }
-    const remaining = this.buffer
-    this.buffer = ''
+    return this.drainCompleteEvents(true)
+  }
+
+  private drainCompleteEvents(flush: boolean): string[] {
+    const normalized = this.buffer.replace(/\r\n/g, '\n')
+    const events: string[] = []
+    let cursor = 0
+
+    while (true) {
+      const boundary = normalized.indexOf('\n\n', cursor)
+      if (boundary === -1) break
+      events.push(normalized.slice(cursor, boundary))
+      cursor = boundary + 2
+    }
+
+    if (flush && cursor < normalized.length) {
+      events.push(normalized.slice(cursor))
+      cursor = normalized.length
+    }
+
+    this.buffer = normalized.slice(cursor)
 
     const payloads: string[] = []
-    const lines = remaining.split('\n')
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed || trimmed.startsWith(':') || trimmed.startsWith('event:')) continue
-      if (trimmed === 'data: [DONE]') continue
-      if (trimmed.startsWith('data: ')) {
-        payloads.push(trimmed.slice(6))
+    for (const event of events) {
+      const dataLines: string[] = []
+      for (const line of event.split('\n')) {
+        const trimmed = line.trim()
+        if (!trimmed || trimmed.startsWith(':') || trimmed.startsWith('event:')) continue
+        if (trimmed === 'data: [DONE]') continue
+        if (trimmed.startsWith('data:')) {
+          dataLines.push(trimmed.slice(5).trimStart())
+        }
+      }
+      if (dataLines.length > 0) {
+        payloads.push(dataLines.join('\n'))
       }
     }
+
     return payloads
   }
 
@@ -60,32 +64,33 @@ export class SSEParser {
 
 
 export class ToolCallAccumulator {
-  private pending: Map<number, { id: string; name: string; arguments: string }> = new Map()
+  private pending: Map<number, { id?: string; name?: string; arguments: string }> = new Map()
 
   feed(deltas: StreamToolCallDelta[]): void {
     for (const delta of deltas) {
       const idx = delta.index
+      const existing = this.pending.get(idx) || { arguments: '' }
 
-      if (delta.id && delta.name) {
-        this.pending.set(idx, {
-          id: delta.id,
-          name: delta.name,
-          arguments: delta.arguments || '',
-        })
-      } else if (delta.arguments) {
-        const existing = this.pending.get(idx)
-        if (existing) {
-          existing.arguments += delta.arguments
-        }
+      if (delta.id) {
+        existing.id = delta.id
       }
+      if (delta.name) {
+        existing.name = delta.name
+      }
+      if (delta.arguments) {
+        existing.arguments += delta.arguments
+      }
+
+      this.pending.set(idx, existing)
     }
   }
 
   flush(): ToolCall[] {
     const calls: ToolCall[] = []
-    const entries = Array.from(this.pending.values())
+    const entries = Array.from(this.pending.entries())
 
-    for (const tc of entries) {
+    for (const [index, tc] of entries) {
+      if (!tc.name) continue
       let args: Record<string, any> = {}
       try {
         args = JSON.parse(tc.arguments)
@@ -98,7 +103,7 @@ export class ToolCallAccumulator {
       }
 
       calls.push({
-        id: tc.id,
+        id: tc.id || `tool-${index}`,
         name: tc.name,
         arguments: args,
       })
@@ -153,6 +158,7 @@ export class StreamProcessor {
       try {
         json = JSON.parse(payload)
       } catch {
+        continue
       }
 
       const delta = this.adapter.parseStreamEvent(json)
@@ -199,6 +205,14 @@ export class StreamProcessor {
           if (delta.reasoningContent) this.reasoningContent += delta.reasoningContent
           if (delta.toolCalls) this.toolAccumulator.feed(delta.toolCalls)
           if (delta.finishReason) this.finishReason = delta.finishReason
+          if (delta.usage) {
+            if (!this.usage) {
+              this.usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+            }
+            this.usage.promptTokens += delta.usage.promptTokens
+            this.usage.completionTokens += delta.usage.completionTokens
+            this.usage.totalTokens += delta.usage.totalTokens
+          }
         }
       } catch {}
     }
